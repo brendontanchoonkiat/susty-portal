@@ -109,8 +109,10 @@ router.patch('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res, 
   const { team, kg, notes, week, date, session } = req.body;
 
   if (team !== undefined) {
-    if (!Array.isArray(team) || team.length < 1 || team.length > 5)
-      return res.status(400).json({ error: 'team must be an array of 1–5 names' });
+    if (!Array.isArray(team) || team.length < 1 || team.length > 10)
+      return res.status(400).json({ error: 'team must be an array of 1–10 names' });
+    if (team.some(t => String(t).length > 60))
+      return res.status(400).json({ error: 'Each team member name must be under 60 chars' });
     slot.team = team.map(t => sanitise(String(t)));
   }
   if (kg !== undefined) {
@@ -122,8 +124,8 @@ router.patch('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res, 
   if (week   !== undefined) slot.week    = sanitise(String(week));
   if (date   !== undefined) slot.date    = sanitise(String(date));
   if (session !== undefined) {
-    if (!['SAT','SUN'].includes(session.toUpperCase()))
-      return res.status(400).json({ error: 'session must be SAT or SUN' });
+    if (!['SAT','SUN','GPC'].includes(session.toUpperCase()))
+      return res.status(400).json({ error: 'session must be SAT, SUN, or GPC' });
     slot.session = session.toUpperCase();
   }
 

@@ -4,6 +4,9 @@ const validator = require('validator');
 const MAX_NAME_LEN   = 60;
 const MAX_DATE_LEN   = 40;
 const MAX_REASON_LEN = 300;
+const MAX_THEME_LEN  = 200;
+const MAX_NOTES_LEN  = 500;
+const MAX_OWNER_LEN  = 60;
 
 function sanitise(str) {
   if (typeof str !== 'string') return '';
@@ -62,4 +65,50 @@ function validateSwapId(req, res, next) {
   next();
 }
 
-module.exports = { validateSwapRequest, validateSwapMatch, validateEnergyUpdate, validateSwapId, sanitise };
+// Validates a comms POST (new entry) — requires theme; owner/notes/date optional
+function validateCommsPost(req, res, next) {
+  const { theme, owner, notes, date } = req.body;
+  if (!theme || typeof theme !== 'string' || !theme.trim())
+    return res.status(400).json({ error: 'theme is required' });
+  if (theme.length > MAX_THEME_LEN)
+    return res.status(400).json({ error: `theme must be under ${MAX_THEME_LEN} chars` });
+  if (owner !== undefined && (typeof owner !== 'string' || owner.length > MAX_OWNER_LEN))
+    return res.status(400).json({ error: `owner must be a string under ${MAX_OWNER_LEN} chars` });
+  if (notes !== undefined && (typeof notes !== 'string' || notes.length > MAX_NOTES_LEN))
+    return res.status(400).json({ error: `notes must be a string under ${MAX_NOTES_LEN} chars` });
+  if (date !== undefined && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())))
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  req.body.theme = sanitise(theme);
+  if (owner !== undefined) req.body.owner = sanitise(owner);
+  if (notes !== undefined) req.body.notes = sanitise(notes);
+  if (date  !== undefined) req.body.date  = date.trim();
+  next();
+}
+
+// Validates a comms PATCH (status update + optional field edits)
+function validateCommsPatch(req, res, next) {
+  const { theme, owner, notes, date } = req.body;
+  if (theme !== undefined) {
+    if (typeof theme !== 'string' || !theme.trim() || theme.length > MAX_THEME_LEN)
+      return res.status(400).json({ error: `theme must be a non-empty string under ${MAX_THEME_LEN} chars` });
+    req.body.theme = sanitise(theme);
+  }
+  if (owner !== undefined) {
+    if (typeof owner !== 'string' || owner.length > MAX_OWNER_LEN)
+      return res.status(400).json({ error: `owner must be a string under ${MAX_OWNER_LEN} chars` });
+    req.body.owner = sanitise(owner);
+  }
+  if (notes !== undefined) {
+    if (typeof notes !== 'string' || notes.length > MAX_NOTES_LEN)
+      return res.status(400).json({ error: `notes must be a string under ${MAX_NOTES_LEN} chars` });
+    req.body.notes = sanitise(notes);
+  }
+  if (date !== undefined) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim()))
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    req.body.date = date.trim();
+  }
+  next();
+}
+
+module.exports = { validateSwapRequest, validateSwapMatch, validateEnergyUpdate, validateSwapId, validateCommsPost, validateCommsPatch, sanitise };

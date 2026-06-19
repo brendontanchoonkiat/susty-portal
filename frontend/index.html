@@ -488,6 +488,13 @@ const API = 'https://susty-portal-production.up.railway.app/api';
 // ═══ STATE ═══════════════════════════════════════════════════════════════════
 let adminKey   = '';
 let isAdmin    = false;
+// XSS-safe HTML escaping — always use when injecting API data into innerHTML
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 let rosterData = [];
 let calData    = [];
 let cbData     = [], plData = [];
@@ -978,9 +985,9 @@ function renderCommsCalendar(filter, containerId, opts={}) {
     const postBtn = showActions
       ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem;margin-top:4px;white-space:nowrap">✅ Mark posted</button>`
       : '';
-    return `<div class="cal-item status-${e.status}${isPast ? ' past-pending' : ''}">
+    return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div><div class="cal-theme">${e.theme}</div><div class="cal-meta">👤 ${e.owner} · ${e.notes||''}</div></div>
+      <div><div class="cal-theme">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)} · ${esc(e.notes||'')}</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}${postBtn}</div>
     </div>`;
   }).join('');
@@ -1003,7 +1010,7 @@ function renderPostedComms() {
     const d = new Date(e.date + 'T00:00:00');
     return `<div class="cal-item" style="opacity:.65;border-left-color:#95D5A0">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div><div class="cal-theme" style="text-decoration:line-through;color:var(--tm)">${e.theme}</div><div class="cal-meta">👤 ${e.owner}</div></div>
+      <div><div class="cal-theme" style="text-decoration:line-through;color:var(--tm)">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)}</div></div>
       <span class="status-tag badge-posted">✅ posted</span>
     </div>`;
   }).join('');
@@ -1051,9 +1058,9 @@ function renderOverviewRoster() {
   if (!upcoming.length) { tbody.innerHTML = '<tr><td colspan="3" class="loading">No upcoming slots</td></tr>'; return; }
   tbody.innerHTML = upcoming.map(s=>`
     <tr>
-      <td>${s.date}</td>
-      <td><span class="badge badge-${s.session.toLowerCase()}">${s.session}</span></td>
-      <td>${s.team.join(', ')}</td>
+      <td>${esc(s.date)}</td>
+      <td><span class="badge badge-${esc(s.session.toLowerCase())}">${esc(s.session)}</span></td>
+      <td>${s.team.map(esc).join(', ')}</td>
     </tr>`).join('');
 }
 
@@ -1066,21 +1073,21 @@ function renderRoster(filter) {
 
   tbody.innerHTML = data.map(s=>{
     const kgCell = s.kg !== null
-      ? `<div class="weight-cell"><span class="kg-val">${s.kg} kg</span></div>`
+      ? `<div class="weight-cell"><span class="kg-val">${esc(s.kg)} kg</span></div>`
       : `<div class="weight-cell"><span class="kg-pending">Not logged</span></div>`;
 
     const actionCell = isAdmin
       ? `<td><div style="display:flex;gap:6px">
-          <button class="action-btn" onclick="openEditSlot(${s.id})">✏️ Edit</button>
-          <button class="action-btn" onclick="quickLogWeight(${s.id})">⚖️ Log kg</button>
+          <button class="action-btn" onclick="openEditSlot(${Number(s.id)})">✏️ Edit</button>
+          <button class="action-btn" onclick="quickLogWeight(${Number(s.id)})">⚖️ Log kg</button>
          </div></td>`
       : `<td class="admin-only" style="display:none"></td>`;
 
     return `<tr>
-      <td>${s.week}</td>
-      <td>${s.date}</td>
-      <td><span class="badge badge-${s.session.toLowerCase()}">${s.session}</span></td>
-      <td>${s.team.join(', ')}</td>
+      <td>${esc(s.week)}</td>
+      <td>${esc(s.date)}</td>
+      <td><span class="badge badge-${esc(s.session.toLowerCase())}">${esc(s.session)}</span></td>
+      <td>${s.team.map(esc).join(', ')}</td>
       <td>${kgCell}</td>
       ${actionCell}
     </tr>`;
@@ -1114,7 +1121,7 @@ function removeTag(idx) {
 function renderTags() {
   const wrap = document.getElementById('team-tags');
   wrap.innerHTML = teamTags.map((t,i) =>
-    `<span class="member-tag">${t}<button onclick="removeTag(${i})" type="button">×</button></span>`
+    `<span class="member-tag">${esc(t)}<button onclick="removeTag(${i})" type="button">×</button></span>`
   ).join('');
 }
 

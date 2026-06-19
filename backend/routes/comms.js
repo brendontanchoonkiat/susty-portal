@@ -3,6 +3,7 @@ const express = require('express');
 const router  = express.Router();
 const fs      = require('fs');
 const path    = require('path');
+const { validateCommsPost, validateCommsPatch, sanitise } = require('../middleware/validate');
 
 const COMMS_FILE = path.join(__dirname, '../data/comms.json');
 
@@ -44,17 +45,30 @@ router.get('/upcoming', (_req, res) => {
   res.json(loadComms().filter(e => e.date >= today && e.status !== 'posted'));
 });
 
-// POST — add new entry
-router.post('/', (req, res) => {
-  const comms = loadComms();
-  const entry = { id: Date.now(), ...req.body };
-  comms.push(entry);
-  saveComms(comms);
-  res.status(201).json(entry);
-});
+// POST — add new entry (admin only)
+router.post('/',
+  (req, res, next) => req.app.get('requireApiKey')(req, res, next),
+  validateCommsPost,
+  (req, res) => {
+    const { theme, owner, notes, date, status } = req.body;
+    const VALID_STATUS = ['planned', 'draft', 'idea', 'posted', 'archived'];
+    const comms = loadComms();
+    const entry = {
+      id:     Date.now(),
+      date:   date   || '',
+      theme:  theme,
+      owner:  owner  || '',
+      notes:  notes  || '',
+      status: VALID_STATUS.includes(status) ? status : 'planned',
+    };
+    comms.push(entry);
+    saveComms(comms);
+    res.status(201).json(entry);
+  }
+);
 
-// PATCH /:id — update status (mark as posted, etc.)
-router.patch('/:id', (req, res) => {
+// PATCH /:id — update status (mark as posted, etc.) — no auth required (intentional)
+router.patch('/:id', validateCommsPatch, (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 

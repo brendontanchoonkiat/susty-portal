@@ -1,6 +1,7 @@
 'use strict';
 const express = require('express');
 const router  = express.Router();
+const { cardboardData, plasticData } = require('../data/recycling');
 
 // ─── Google Sheets live sync ──────────────────────────────────────────────────
 // Sheet ID from Google Drive
@@ -11,24 +12,18 @@ const API_KEY   = process.env.GOOGLE_SHEETS_API_KEY;
 let cache = { cardboard: [], plastic: [], lastFetched: null };
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-// Hardcoded fallback (used if Sheets API key not configured)
-const FALLBACK = {
-  cardboard: [
-    { month: 'Mar 2025', kg: 71 }, { month: 'Apr 2025', kg: 25 },
-    { month: 'May 2025', kg: 33 }, { month: 'Jun 2025', kg: 60 },
-    { month: 'Jul 2025', kg: 292 },{ month: 'Aug 2025', kg: 52 },
-    { month: 'Sep 2025', kg: 83 }, { month: 'Oct 2025', kg: 54 },
-    { month: 'Nov 2025', kg: 46 }, { month: 'Dec 2025', kg: 58 },
-    { month: 'Jan 2026', kg: 280 },{ month: 'Feb 2026', kg: 48 },
-    { month: 'Mar 2026', kg: 64 },
-  ],
-  plastic: [
-    { month: 'Jul 2025', kg: 40 }, { month: 'Sep 2025', kg: 8 },
-    { month: 'Oct 2025', kg: 9 },  { month: 'Nov 2025', kg: 3 },
-    { month: 'Dec 2025', kg: 4 },  { month: 'Jan 2026', kg: 13.09 },
-    { month: 'Feb 2026', kg: 1 },  { month: 'Mar 2026', kg: 8 },
-  ],
-};
+// Fallback sourced from backend/data/recycling.js (Sep 2025 – present)
+// If GOOGLE_SHEETS_API_KEY is not set, this is what the API returns.
+const FALLBACK = { cardboard: cardboardData, plastic: plasticData };
+
+// Only include months at or after formal tracking start (Sep 2025)
+const TRACKING_START = new Date('2025-09-01');
+function filterFromTrackingStart(arr) {
+  return arr.filter(r => {
+    const d = new Date(r.month + ' 1');
+    return !isNaN(d) && d >= TRACKING_START;
+  });
+}
 
 async function fetchFromSheets() {
   if (!API_KEY) return null; // no key = use fallback
@@ -88,8 +83,8 @@ async function getData() {
     const live = await fetchFromSheets();
     if (live && live.cardboard.length > 0) {
       cache = {
-        cardboard:   aggregateByMonth(live.cardboard),
-        plastic:     aggregateByMonth(live.plastic || FALLBACK.plastic),
+        cardboard:   aggregateByMonth(filterFromTrackingStart(live.cardboard)),
+        plastic:     aggregateByMonth(filterFromTrackingStart(live.plastic || FALLBACK.plastic)),
         lastFetched: now,
         source:      'live',
       };
