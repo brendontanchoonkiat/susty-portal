@@ -116,6 +116,10 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .status-planned{background:var(--gp);color:var(--gd)}
 .status-draft{background:#FFF3CD;color:#856404}
 .status-idea{background:#EEE;color:#555}
+.status-posted{background:#D4EDDA;color:#155724}
+.badge-pending{background:#FFEBEE;color:#C62828}
+.badge-posted{background:#D4EDDA;color:#155724}
+.cal-item.past-pending{border-left-color:#E57373;background:#FFF8F8}
 
 /* ROSTER CALENDAR */
 .roster-view-tabs{display:flex;gap:6px;margin-bottom:14px}
@@ -258,6 +262,15 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <button class="btn btn-outline btn-sm" onclick="filterCal('idea')">💡 Ideas</button>
   </div>
   <div class="cal-grid" id="comms-cal"><div class="loading">Loading…</div></div>
+
+  <details style="margin-top:24px" id="comms-archive-details">
+    <summary style="cursor:pointer;font-family:Georgia,serif;font-size:1rem;color:var(--gd);padding-bottom:8px;border-bottom:2px solid var(--gp);display:flex;align-items:center;gap:8px;list-style:none">
+      ✅ Posted / Archived <span id="comms-archive-count" style="background:var(--gp);color:var(--gd);font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:12px">0</span>
+    </summary>
+    <div class="cal-grid" id="comms-posted" style="margin-top:12px">
+      <div class="loading" style="color:var(--tm)">No posted items yet.</div>
+    </div>
+  </details>
 </div>
 
 <!-- ═══ ROSTER ═══════════════════════════════════════════════════════════════ -->
@@ -490,6 +503,11 @@ async function loadRecycling() {
   }
 }
 
+// Sort recycling/energy data arrays by month string chronologically
+function sortByMonth(arr) {
+  return [...arr].sort((a, b) => new Date(a.month + ' 1') - new Date(b.month + ' 1'));
+}
+
 function buildBar(id, labels, data, label, color, height=220) {
   if (chartsBuilt[id]) chartsBuilt[id].destroy();
   const ctx = document.getElementById(id);
@@ -509,10 +527,13 @@ function buildBar(id, labels, data, label, color, height=220) {
 }
 
 function buildRecyclingCharts() {
-  buildBar('cb-chart', cbData.map(r=>r.month), cbData.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F', 300);
-  buildBar('pl-chart', plData.map(r=>r.month), plData.map(r=>r.kg), 'Plastic (kg)',   '#52B788', 300);
+  const sortedCb = sortByMonth(cbData);
+  const sortedPl = sortByMonth(plData);
+  buildBar('cb-chart', sortedCb.map(r=>r.month), sortedCb.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F', 300);
+  buildBar('pl-chart', sortedPl.map(r=>r.month), sortedPl.map(r=>r.kg), 'Plastic (kg)',   '#52B788', 300);
 
-  const allMonths = [...new Set([...cbData.map(r=>r.month),...plData.map(r=>r.month)])];
+  const allMonths = [...new Set([...sortedCb.map(r=>r.month),...sortedPl.map(r=>r.month)])];
+  allMonths.sort((a, b) => new Date(a + ' 1') - new Date(b + ' 1'));
   const cbMap = Object.fromEntries(cbData.map(r=>[r.month,r.kg]));
   const plMap = Object.fromEntries(plData.map(r=>[r.month,r.kg]));
   const ctx = document.getElementById('combined-chart');
@@ -529,7 +550,7 @@ function buildRecyclingCharts() {
 }
 
 function buildOverviewChart() {
-  const recent = cbData.slice(-6);
+  const recent = sortByMonth(cbData).slice(-6);
   buildBar('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
 }
 
@@ -539,8 +560,11 @@ async function loadEnergy() {
     const [eRes,wRes] = await Promise.all([fetch(`${API}/energy/electricity`), fetch(`${API}/energy/water`)]);
     const eData = await eRes.json();
     const wData = await wRes.json();
-    const hasE = eData.some(r=>r.kwh!==null);
-    document.getElementById('ov-energy').textContent = hasE ? 'Live ✓' : 'Pending';
+    const hasE  = eData.some(r=>r.kwh!==null);
+    const latestE = eData.filter(r=>r.kwh!==null).slice(-1)[0];
+    document.getElementById('ov-energy').textContent = latestE
+      ? `${(latestE.kwh/1000).toFixed(1)}k kWh (${latestE.month})`
+      : 'Pending';
     if(hasE) {
       const ef = eData.filter(r=>r.kwh!==null);
       buildBar('elec-chart', ef.map(r=>r.month), ef.map(r=>r.kwh), 'kWh', '#E9C46A', 300);
@@ -556,28 +580,93 @@ async function loadComms() {
     const res = await fetch(`${API}/comms`);
     calData = await res.json();
     document.getElementById('ov-posts').textContent = calData.filter(e=>e.status==='planned').length;
-    renderCommsCalendar('all','comms-cal');
-    renderCommsCalendar('planned','ov-cal',3);
+
+    // Comms page: full active list with post actions
+    renderCommsCalendar('all', 'comms-cal', { showActions: true });
+    renderPostedComms();
+
+    // Overview: items from 1 week ago onwards, no actions, max 3
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 7);
+    renderCommsCalendar('all', 'ov-cal', { limit: 3, dateFrom: cutoff.toISOString().split('T')[0] });
   } catch(e) {}
 }
 
-function renderCommsCalendar(filter, containerId, limit) {
+// opts: { limit, dateFrom, showActions }
+function renderCommsCalendar(filter, containerId, opts={}) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  let items = filter==='all' ? calData : calData.filter(e=>e.status===filter);
+  const { limit, dateFrom, showActions } = opts;
+
+  let items = calData.filter(e => e.status !== 'posted');
+  if (filter !== 'all') items = items.filter(e => e.status === filter);
+  if (dateFrom) items = items.filter(e => e.date >= dateFrom);
   if (limit) items = items.slice(0, limit);
+
   if (!items.length) { el.innerHTML = '<div class="loading">No posts found.</div>'; return; }
-  el.innerHTML = items.map(e=>{
-    const d = new Date(e.date);
-    return `<div class="cal-item status-${e.status}">
+
+  const today = new Date().toISOString().split('T')[0];
+  el.innerHTML = items.map(e => {
+    const d       = new Date(e.date + 'T00:00:00');
+    const isPast  = e.date < today;
+    const statusTag = isPast
+      ? `<span class="status-tag badge-pending">⚠️ pending</span>`
+      : `<span class="status-tag status-${e.status}">${e.status}</span>`;
+    const postBtn = showActions
+      ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem;margin-top:4px;white-space:nowrap">✅ Mark posted</button>`
+      : '';
+    return `<div class="cal-item status-${e.status}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
       <div><div class="cal-theme">${e.theme}</div><div class="cal-meta">👤 ${e.owner} · ${e.notes||''}</div></div>
-      <span class="status-tag status-${e.status}">${e.status}</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}${postBtn}</div>
     </div>`;
   }).join('');
 }
 
-function filterCal(status) { renderCommsCalendar(status,'comms-cal'); }
+function renderPostedComms() {
+  const el = document.getElementById('comms-posted');
+  if (!el) return;
+  const posted = calData.filter(e => e.status === 'posted');
+
+  // Update archive count badge
+  const countEl = document.getElementById('comms-archive-count');
+  if (countEl) countEl.textContent = posted.length;
+
+  if (!posted.length) {
+    el.innerHTML = '<div class="loading" style="color:var(--tm)">No posted items yet. Use "Mark posted" on items above when they go live.</div>';
+    return;
+  }
+  el.innerHTML = posted.map(e => {
+    const d = new Date(e.date + 'T00:00:00');
+    return `<div class="cal-item" style="opacity:.65;border-left-color:#95D5A0">
+      <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
+      <div><div class="cal-theme" style="text-decoration:line-through;color:var(--tm)">${e.theme}</div><div class="cal-meta">👤 ${e.owner}</div></div>
+      <span class="status-tag badge-posted">✅ posted</span>
+    </div>`;
+  }).join('');
+}
+
+async function markAsPosted(id) {
+  try {
+    const res = await fetch(`${API}/comms/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'posted' }),
+    });
+    if (res.ok) {
+      toast('✅ Archived as posted!');
+      await loadComms();
+    } else {
+      toast('Failed to update', true);
+    }
+  } catch(e) {
+    toast('❌ Connection error', true);
+  }
+}
+
+function filterCal(status) {
+  renderCommsCalendar(status, 'comms-cal', { showActions: true });
+}
 
 // ═══ ROSTER ══════════════════════════════════════════════════════════════════
 async function loadRoster() {
