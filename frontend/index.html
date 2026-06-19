@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sustainability Ministry Portal</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* ─── Tokens ─────────────────────────────────────────────────────────── */
+  :root {
+    --green-deep:   #1B4332;
+    --green-mid:    #2D6A4F;
+    --green-soft:   #52B788;
+    --green-pale:   #D8F3DC;
+    --amber:        #E9C46A;
+    --clay:         #F4A261;
+    --bg:           #F7F9F7;
+    --surface:      #FFFFFF;
+    --text:         #1A2E1A;
+    --text-muted:   #5C6E5C;
+    --border:       #D0E8D4;
+    --radius:       12px;
+    --radius-lg:    20px;
+    --shadow:       0 2px 12px rgba(27,67,50,0.09);
+    --shadow-lg:    0 8px 32px rgba(27,67,50,0.13);
+    --font-display: 'Georgia', serif;
+    --font-body:    'Segoe UI', system-ui, sans-serif;
+    --nav-h:        60px;
+  }
+
+  /* ─── Reset & Base ───────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font-body);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ─── Nav ────────────────────────────────────────────────────────────── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: var(--green-deep);
+    height: var(--nav-h);
+    display: flex; align-items: center;
+    padding: 0 24px;
+    gap: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  }
+  .nav-logo {
+    font-family: var(--font-display);
+    font-size: 1rem;
+    color: var(--green-pale);
+    font-weight: bold;
+    letter-spacing: 0.02em;
+    margin-right: 16px;
+    white-space: nowrap;
+  }
+  .nav-logo span { color: var(--green-soft); }
+  .nav-tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
+  .nav-tab {
+    background: transparent;
+    border: none; cursor: pointer;
+    color: rgba(216,243,220,0.65);
+    font-size: 0.82rem;
+    font-family: var(--font-body);
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 20px;
+    white-space: nowrap;
+    transition: background 0.18s, color 0.18s;
+  }
+  .nav-tab:hover   { background: rgba(255,255,255,0.08); color: #fff; }
+  .nav-tab.active  { background: var(--green-soft); color: var(--green-deep); font-weight: 700; }
+
+  /* ─── Pages ──────────────────────────────────────────────────────────── */
+  .page { display: none; padding: 28px 24px 60px; max-width: 1100px; margin: 0 auto; }
+  .page.active { display: block; animation: fadeIn 0.22s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ─── Hero Banner ────────────────────────────────────────────────────── */
+  .hero {
+    background: linear-gradient(135deg, var(--green-deep) 0%, var(--green-mid) 100%);
+    border-radius: var(--radius-lg);
+    padding: 36px 32px 32px;
+    margin-bottom: 28px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '🌿';
+    position: absolute; right: 32px; top: 20px;
+    font-size: 5rem; opacity: 0.12;
+  }
+  .hero h1 { font-family: var(--font-display); font-size: 1.8rem; margin-bottom: 4px; }
+  .hero p  { color: var(--green-pale); font-size: 0.9rem; margin-bottom: 20px; }
+  .hero-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+  }
+  .hero-stat {
+    background: rgba(255,255,255,0.1);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    border: 1px solid rgba(255,255,255,0.12);
+  }
+  .hero-stat .val { font-size: 1.5rem; font-weight: 700; color: var(--green-soft); }
+  .hero-stat .lbl { font-size: 0.75rem; color: var(--green-pale); margin-top: 2px; }
+
+  /* ─── Cards ──────────────────────────────────────────────────────────── */
+  .section-title {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    color: var(--green-deep);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--green-pale);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  /* ─── Chart containers ───────────────────────────────────────────────── */
+  .chart-wrap { position: relative; height: 220px; }
+  .chart-wrap-tall { position: relative; height: 300px; }
+
+  /* ─── Stat pill ──────────────────────────────────────────────────────── */
+  .stat-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--green-pale);
+    color: var(--green-deep);
+    font-size: 0.78rem; font-weight: 600;
+    padding: 4px 12px; border-radius: 20px;
+    margin-top: 8px;
+  }
+
+  /* ─── Roster table ───────────────────────────────────────────────────── */
+  .roster-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  .roster-table th {
+    background: var(--green-deep); color: var(--green-pale);
+    padding: 10px 12px; text-align: left; font-weight: 600;
+    font-size: 0.78rem; letter-spacing: 0.04em;
+  }
+  .roster-table th:first-child { border-radius: 8px 0 0 0; }
+  .roster-table th:last-child  { border-radius: 0 8px 0 0; }
+  .roster-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  .roster-table tr:last-child td { border-bottom: none; }
+  .roster-table tr:nth-child(even) td { background: #F7FBF7; }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem; font-weight: 700;
+    padding: 2px 8px; border-radius: 12px;
+  }
+  .badge-sat { background: #FFF3CD; color: #856404; }
+  .badge-sun { background: #D4EDDA; color: #155724; }
+
+  /* ─── Calendar ───────────────────────────────────────────────────────── */
+  .cal-grid { display: grid; gap: 10px; }
+  .cal-item {
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    align-items: center;
+    gap: 14px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    border-left: 4px solid var(--green-soft);
+  }
+  .cal-item.status-draft  { border-left-color: var(--amber); }
+  .cal-item.status-idea   { border-left-color: var(--border); }
+  .cal-date { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
+  .cal-date strong { display: block; font-size: 1rem; color: var(--green-deep); font-weight: 700; }
+  .cal-theme { font-size: 0.88rem; font-weight: 600; color: var(--text); }
+  .cal-meta  { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+  .status-tag {
+    font-size: 0.68rem; font-weight: 700; padding: 3px 9px; border-radius: 12px;
+    white-space: nowrap;
+  }
+  .status-planned { background: var(--green-pale); color: var(--green-deep); }
+  .status-draft   { background: #FFF3CD; color: #856404; }
+  .status-idea    { background: #EEE; color: #555; }
+
+  /* ─── Swap form ──────────────────────────────────────────────────────── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .form-field label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .form-field input,
+  .form-field textarea,
+  .form-field select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-size: 0.88rem;
+    color: var(--text);
+    background: var(--bg);
+    transition: border-color 0.15s;
+  }
+  .form-field input:focus,
+  .form-field textarea:focus { outline: none; border-color: var(--green-soft); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 22px;
+    border: none; border-radius: 8px; cursor: pointer;
+    font-family: var(--font-body); font-size: 0.88rem; font-weight: 600;
+    transition: transform 0.12s, box-shadow 0.12s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary { background: var(--green-deep); color: #fff; box-shadow: 0 2px 8px rgba(27,67,50,0.25); }
+  .btn-primary:hover { background: var(--green-mid); }
+  .btn-sm { padding: 6px 14px; font-size: 0.78rem; }
+  .btn-outline { background: transparent; border: 1.5px solid var(--green-deep); color: var(--green-deep); }
+  .btn-outline:hover { background: var(--green-pale); }
+
+  .swap-list { display: grid; gap: 10px; margin-top: 16px; }
+  .swap-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap;
+  }
+  .swap-info .name { font-weight: 700; font-size: 0.9rem; }
+  .swap-info .meta { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+
+  /* ─── Toast ──────────────────────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--green-deep); color: #fff;
+    padding: 12px 20px; border-radius: 10px;
+    font-size: 0.85rem; font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    opacity: 0; transform: translateY(12px);
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none; z-index: 999;
+  }
+  #toast.show { opacity: 1; transform: translateY(0); }
+
+  /* ─── Loading ────────────────────────────────────────────────────────── */
+  .loading { text-align: center; padding: 40px; color: var(--text-muted); font-size: 0.9rem; }
+
+  /* ─── Responsive ──────────────────────────────────────────────────────── */
+  @media (max-width: 600px) {
+    .form-grid { grid-template-columns: 1fr; }
+    .hero { padding: 24px 18px; }
+    .hero h1 { font-size: 1.4rem; }
+    .cal-item { grid-template-columns: 64px 1fr; }
+    .cal-item .status-tag { display: none; }
+    nav { padding: 0 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ─── Navigation ─────────────────────────────────────────────────────────── -->
+<nav>
+  <div class="nav-logo">🌱 <span>Susty</span> Ministry</div>
+  <div class="nav-tabs">
+    <button class="nav-tab active" data-page="overview">Overview</button>
+    <button class="nav-tab" data-page="energy">⚡ Energy</button>
+    <button class="nav-tab" data-page="recycling">♻️ W2R</button>
+    <button class="nav-tab" data-page="comms">📢 Comms</button>
+    <button class="nav-tab" data-page="roster">📋 Roster & Swaps</button>
+  </div>
+</nav>
+
+<!-- ─── Overview Page ─────────────────────────────────────────────────────── -->
+<div class="page active" id="page-overview">
+  <div class="hero">
+    <h1>Ministry at a Glance</h1>
+    <p>Tracking our collective impact — Energy · W2R · Comms</p>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="val" id="ov-cardboard">—</div>
+        <div class="lbl">📦 Cardboard recycled (kg)</div>
+      </div>
+      <div class="hero-stat">
+        <div class="val" id="ov-plastic">—</div>
+        <div class="lbl">🍶 Plastics recycled (kg)</div>
+      </div>
+      <div class="hero-stat">
+        <div class="val" id="ov-energy">—</div>
+        <div class="lbl">⚡ Energy data status</div>
+      </div>
+      <div class="hero-stat">
+        <div class="val" id="ov-posts">—</div>
+        <div class="lbl">📅 Posts scheduled</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <!-- W2R mini chart -->
+    <div class="card">
+      <div class="section-title">♻️ Recycling Trend</div>
+      <div class="chart-wrap"><canvas id="ov-chart"></canvas></div>
+    </div>
+    <!-- Upcoming roster -->
+    <div class="card">
+      <div class="section-title">📋 Next W2R Slots</div>
+      <table class="roster-table" id="ov-roster">
+        <thead><tr><th>Date</th><th>Team</th><th></th></tr></thead>
+        <tbody><tr><td colspan="3" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Upcoming comms -->
+  <div class="section-title">📢 Upcoming Posts</div>
+  <div class="cal-grid" id="ov-cal">
+    <div class="loading">Loading…</div>
+  </div>
+</div>
+
+<!-- ─── Energy Page ───────────────────────────────────────────────────────── -->
+<div class="page" id="page-energy">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">⚡ Energy & Emissions Tracker</div>
+
+  <div class="card" style="background:linear-gradient(135deg,#FFF8E7,#FFFBF0);border-color:#F5DFA0;">
+    <strong>📂 Awaiting data from Energy Team</strong>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-top:6px;">
+      Send your monthly electricity (kWh) and water (m³) readings to populate this dashboard.
+      Data will appear as charts once loaded.
+    </p>
+  </div>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="section-title">⚡ Electricity (kWh)</div>
+      <div class="chart-wrap-tall"><canvas id="elec-chart"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="section-title">💧 Water (m³)</div>
+      <div class="chart-wrap-tall"><canvas id="water-chart"></canvas></div>
+    </div>
+  </div>
+</div>
+
+<!-- ─── W2R / Recycling Page ─────────────────────────────────────────────── -->
+<div class="page" id="page-recycling">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">♻️ Waste to Resource (W2R)</div>
+
+  <div class="card-grid">
+    <div class="card">
+      <div class="section-title">📦 Cardboard</div>
+      <div class="chart-wrap-tall"><canvas id="cb-chart"></canvas></div>
+      <div class="stat-pill" id="cb-total">Total: loading…</div>
+    </div>
+    <div class="card">
+      <div class="section-title">🍶 Plastic Bottles</div>
+      <div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div>
+      <div class="stat-pill" id="pl-total">Total: loading…</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-title">📊 Combined Monthly View</div>
+    <div class="chart-wrap-tall"><canvas id="combined-chart"></canvas></div>
+  </div>
+</div>
+
+<!-- ─── Comms Page ────────────────────────────────────────────────────────── -->
+<div class="page" id="page-comms">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">📢 Comms Posting Schedule</div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">
+    <button class="btn btn-outline btn-sm" onclick="filterCal('all')">All</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('planned')">✅ Planned</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('draft')">✏️ Draft</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('idea')">💡 Ideas</button>
+  </div>
+
+  <div class="cal-grid" id="comms-cal">
+    <div class="loading">Loading…</div>
+  </div>
+</div>
+
+<!-- ─── Roster & Swaps Page ───────────────────────────────────────────────── -->
+<div class="page" id="page-roster">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">📋 Ministry Roster & Swap Requests</div>
+
+  <!-- Full Roster -->
+  <div class="card" style="margin-bottom:20px;">
+    <div class="section-title">W2R Weekend Roster</div>
+    <table class="roster-table" id="full-roster">
+      <thead><tr><th>Week</th><th>Date</th><th>Session</th><th>Team Members</th></tr></thead>
+      <tbody><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Swap Request Form -->
+  <div class="card">
+    <div class="section-title">🔄 Request a Roster Swap</div>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;">
+      Submit your request below. The bot will notify the ministry group and auto-match you with a volunteer.
+    </p>
+    <div class="form-grid">
+      <div class="form-field">
+        <label>Your Name</label>
+        <input type="text" id="sw-name" placeholder="e.g. Clara Cheong" />
+      </div>
+      <div class="form-field">
+        <label>Your Rostered Date</label>
+        <input type="text" id="sw-date" placeholder="e.g. 28 Jun (Sat)" />
+      </div>
+    </div>
+    <div class="form-field" style="margin-bottom:14px;">
+      <label>Reason (optional)</label>
+      <textarea id="sw-reason" rows="2" placeholder="e.g. overseas trip, family commitment…"></textarea>
+    </div>
+    <button class="btn btn-primary" onclick="submitSwap()">📤 Submit Swap Request</button>
+  </div>
+
+  <!-- Open Swap Requests -->
+  <div style="margin-top:24px;">
+    <div class="section-title">🟢 Open Swap Requests</div>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;">
+      See someone who needs help? Click "Volunteer" to offer your slot — the bot will notify both of you.
+    </p>
+    <div class="swap-list" id="swap-list">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+// ─── API base ──────────────────────────────────────────────────────────────
+const API = '/api'; // change to e.g. 'http://localhost:3001/api' for local dev
+
+// ─── Nav routing ───────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+  });
+});
+
+// ─── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3200);
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+const GREEN_PALETTE = ['#2D6A4F','#52B788','#95D5B2','#B7E4C7','#D8F3DC'];
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-SG', { day:'numeric', month:'short' });
+}
+
+// ─── Recycling ─────────────────────────────────────────────────────────────
+let cbData = [], plData = [];
+
+async function loadRecycling() {
+  try {
+    const [cbRes, plRes] = await Promise.all([
+      fetch(`${API}/recycling/cardboard`),
+      fetch(`${API}/recycling/plastic`),
+    ]);
+    cbData = await cbRes.json();
+    plData = await plRes.json();
+
+    const cbTotal = cbData.reduce((s,r) => s + r.kg, 0).toFixed(1);
+    const plTotal = plData.reduce((s,r) => s + r.kg, 0).toFixed(1);
+    document.getElementById('ov-cardboard').textContent = cbTotal + ' kg';
+    document.getElementById('ov-plastic').textContent   = plTotal + ' kg';
+    document.getElementById('cb-total').textContent     = `Total recycled: ${cbTotal} kg`;
+    document.getElementById('pl-total').textContent     = `Total recycled: ${plTotal} kg`;
+
+    buildRecyclingCharts();
+    buildOverviewChart();
+  } catch(e) {
+    document.getElementById('ov-cardboard').textContent = 'N/A';
+  }
+}
+
+function buildChart(id, labels, data, label, color) {
+  const ctx = document.getElementById(id);
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label, data, backgroundColor: color + 'CC', borderColor: color, borderWidth: 1.5, borderRadius: 6 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: '#E8F5E9' }, ticks: { font: { size: 11 } } },
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } }
+      }
+    }
+  });
+}
+
+function buildRecyclingCharts() {
+  buildChart('cb-chart', cbData.map(r=>r.month), cbData.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F');
+  buildChart('pl-chart', plData.map(r=>r.month), plData.map(r=>r.kg), 'Plastic (kg)', '#52B788');
+
+  // Combined
+  const allMonths = [...new Set([...cbData.map(r=>r.month), ...plData.map(r=>r.month)])];
+  const cbMap = Object.fromEntries(cbData.map(r=>[r.month,r.kg]));
+  const plMap = Object.fromEntries(plData.map(r=>[r.month,r.kg]));
+  const ctx = document.getElementById('combined-chart');
+  if (!ctx) return;
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: allMonths,
+      datasets: [
+        { label: 'Cardboard (kg)', data: allMonths.map(m=>cbMap[m]||0), backgroundColor: '#2D6A4F99', borderColor: '#2D6A4F', borderWidth:1.5, borderRadius:5, stack:'a' },
+        { label: 'Plastic (kg)',   data: allMonths.map(m=>plMap[m]||0), backgroundColor: '#52B78899', borderColor: '#52B788', borderWidth:1.5, borderRadius:5, stack:'a' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top', labels: { font:{size:11} } } },
+      scales: {
+        y: { beginAtZero: true, stacked: true, grid:{color:'#E8F5E9'} },
+        x: { stacked: true, grid:{display:false}, ticks:{font:{size:10}, maxRotation:45} }
+      }
+    }
+  });
+}
+
+function buildOverviewChart() {
+  // Show last 6 months of cardboard only for overview
+  const recent = cbData.slice(-6);
+  buildChart('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
+}
+
+// ─── Energy ────────────────────────────────────────────────────────────────
+async function loadEnergy() {
+  try {
+    const [eRes, wRes] = await Promise.all([
+      fetch(`${API}/energy/electricity`),
+      fetch(`${API}/energy/water`),
+    ]);
+    const eData = await eRes.json();
+    const wData = await wRes.json();
+
+    const hasData = eData.some(r => r.kwh !== null);
+    document.getElementById('ov-energy').textContent = hasData ? 'Live ✓' : 'Pending';
+
+    buildEnergyCharts(eData, wData);
+  } catch(e) {}
+}
+
+function buildEnergyCharts(eData, wData) {
+  const eFiltered = eData.filter(r => r.kwh !== null);
+  const wFiltered = wData.filter(r => r.m3 !== null);
+
+  if (eFiltered.length) buildChart('elec-chart', eFiltered.map(r=>r.month), eFiltered.map(r=>r.kwh), 'kWh', '#E9C46A');
+  if (wFiltered.length) buildChart('water-chart', wFiltered.map(r=>r.month), wFiltered.map(r=>r.m3),  'm³', '#4CC9F0');
+}
+
+// ─── Comms calendar ────────────────────────────────────────────────────────
+let calData = [];
+
+async function loadComms() {
+  try {
+    const res = await fetch(`${API}/comms`);
+    calData = await res.json();
+    document.getElementById('ov-posts').textContent = calData.filter(e=>e.status==='planned').length;
+    renderCommsCalendar('all', 'comms-cal');
+    renderCommsCalendar('planned', 'ov-cal', 3);
+  } catch(e) {}
+}
+
+function renderCommsCalendar(filter, containerId, limit) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  let items = filter === 'all' ? calData : calData.filter(e => e.status === filter);
+  if (limit) items = items.slice(0, limit);
+  if (!items.length) { el.innerHTML = '<div class="loading">No posts found.</div>'; return; }
+
+  el.innerHTML = items.map(e => {
+    const d = new Date(e.date);
+    const day = d.getDate();
+    const mon = d.toLocaleDateString('en-SG',{month:'short'});
+    return `
+      <div class="cal-item status-${e.status}">
+        <div class="cal-date"><strong>${day} ${mon}</strong>${d.getFullYear()}</div>
+        <div>
+          <div class="cal-theme">${e.theme}</div>
+          <div class="cal-meta">👤 ${e.owner} · ${e.notes}</div>
+        </div>
+        <span class="status-tag status-${e.status}">${e.status}</span>
+      </div>`;
+  }).join('');
+}
+
+function filterCal(status) { renderCommsCalendar(status, 'comms-cal'); }
+
+// ─── Roster ────────────────────────────────────────────────────────────────
+async function loadRoster() {
+  try {
+    const res = await fetch(`${API}/roster/w2r`);
+    const data = await res.json();
+
+    // Overview (next 4)
+    const ovTbody = document.querySelector('#ov-roster tbody');
+    ovTbody.innerHTML = data.slice(0,4).map(r => `
+      <tr>
+        <td>${r.date}</td>
+        <td>${r.team.join(', ')}</td>
+        <td><span class="badge badge-${r.session.toLowerCase()}">${r.session}</span></td>
+      </tr>`).join('');
+
+    // Full roster
+    const tbody = document.querySelector('#full-roster tbody');
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td>${r.week}</td>
+        <td>${r.date}</td>
+        <td><span class="badge badge-${r.session.toLowerCase()}">${r.session}</span></td>
+        <td>${r.team.join(', ')}</td>
+      </tr>`).join('');
+  } catch(e) {}
+}
+
+// ─── Swap requests ─────────────────────────────────────────────────────────
+async function loadSwaps() {
+  try {
+    const res = await fetch(`${API}/swap`);
+    const data = await res.json();
+    const el = document.getElementById('swap-list');
+    if (!data.length) {
+      el.innerHTML = '<div class="loading">No open swap requests 🎉</div>';
+      return;
+    }
+    el.innerHTML = data.map(s => `
+      <div class="swap-card">
+        <div class="swap-info">
+          <div class="name">${s.requesterName}</div>
+          <div class="meta">📅 ${s.requesterDate}${s.reason ? ' · ' + s.reason : ''}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="volunteerSwap(${s.id}, '${s.requesterDate}')">
+          🤝 Volunteer
+        </button>
+      </div>`).join('');
+  } catch(e) {
+    document.getElementById('swap-list').innerHTML = '<div class="loading">Backend not connected yet.</div>';
+  }
+}
+
+async function submitSwap() {
+  const name   = document.getElementById('sw-name').value.trim();
+  const date   = document.getElementById('sw-date').value.trim();
+  const reason = document.getElementById('sw-reason').value.trim();
+  if (!name || !date) { toast('⚠️ Please fill in your name and rostered date.'); return; }
+
+  try {
+    const res = await fetch(`${API}/swap`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ requesterName: name, requesterDate: date, reason }),
+    });
+    if (res.ok) {
+      toast('✅ Swap request submitted! The ministry group has been notified.');
+      document.getElementById('sw-name').value = '';
+      document.getElementById('sw-date').value = '';
+      document.getElementById('sw-reason').value = '';
+      loadSwaps();
+    }
+  } catch(e) {
+    toast('❌ Could not connect to server. Check your backend is running.');
+  }
+}
+
+async function volunteerSwap(id, requesterDate) {
+  const name = prompt('Your name?');
+  if (!name) return;
+  const date = prompt('Your date to swap? (e.g. 5 Jul Sat)');
+  if (!date) return;
+
+  try {
+    const res = await fetch(`${API}/swap/${id}/match`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ volunteerName: name, volunteerDate: date }),
+    });
+    if (res.ok) {
+      toast('🎉 Swap matched! Both parties will be notified on Telegram.');
+      loadSwaps();
+    }
+  } catch(e) {
+    toast('❌ Match failed. Try again.');
+  }
+}
+
+// ─── Init ──────────────────────────────────────────────────────────────────
+(async () => {
+  await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
+})();
+</script>
+</body>
+</html>
