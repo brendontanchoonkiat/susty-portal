@@ -4,29 +4,38 @@ const router  = express.Router();
 const fs      = require('fs');
 const path    = require('path');
 const { sanitise } = require('../middleware/validate');
+const { notifyTelegram } = require('../utils/telegram');
+const { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg } = require('../data/messages');
 
 const ROSTER_FILE = path.join(__dirname, '../data/roster.json');
 
-// ─── Seed data from Google Drive (Sun team: 6C2 pairs, Sat team: 5C2 pairs) ──
+// ─── Seed data ────────────────────────────────────────────────────────────────
+// June dates corrected (-1 day from original off-by-one).
+// July schedule revised: team leaders assigned from Jul onwards (Wee Shing, Brendon, Judy).
+// GPC 2026: GenerationS Pastors' Conference 23–27 Jul, Wee Shing leads all days.
 const SEED = [
-  // June 2026
-  { id: 1, week: 'Jun W1',  date: '7 Jun 2026',  session: 'SAT', team: ['Matthew', 'Shing'],    kg: null, notes: '' },
-  { id: 2, week: 'Jun W1',  date: '8 Jun 2026',  session: 'SUN', team: ['Jiayu', 'Jeslyn'],     kg: null, notes: '' },
-  { id: 3, week: 'Jun W2',  date: '14 Jun 2026', session: 'SAT', team: ['Candice', 'Clara'],    kg: null, notes: '' },
-  { id: 4, week: 'Jun W2',  date: '15 Jun 2026', session: 'SUN', team: ['Jace', 'Clarice'],     kg: null, notes: '' },
-  { id: 5, week: 'Jun W3',  date: '21 Jun 2026', session: 'SAT', team: ['Matthew', 'Pamela'],   kg: null, notes: '' },
-  { id: 6, week: 'Jun W3',  date: '22 Jun 2026', session: 'SUN', team: ['Kai Jie', 'Brendon'],  kg: null, notes: '' },
-  { id: 7, week: 'Jun W4',  date: '28 Jun 2026', session: 'SAT', team: ['Candice', 'Shing'],    kg: null, notes: '' },
-  { id: 8, week: 'Jun W4',  date: '29 Jun 2026', session: 'SUN', team: ['Jace', 'Jiayu'],       kg: null, notes: '' },
-  // July 2026
-  { id: 9,  week: 'Jul W1', date: '5 Jul 2026',  session: 'SAT', team: ['Clara', 'Matthew'],    kg: null, notes: '' },
-  { id: 10, week: 'Jul W1', date: '6 Jul 2026',  session: 'SUN', team: ['Brendon', 'Jeslyn'],   kg: null, notes: '' },
-  { id: 11, week: 'Jul W2', date: '12 Jul 2026', session: 'SAT', team: ['Candice', 'Pamela'],   kg: null, notes: '' },
-  { id: 12, week: 'Jul W2', date: '13 Jul 2026', session: 'SUN', team: ['Jiayu', 'Clarice'],    kg: null, notes: '' },
-  { id: 13, week: 'Jul W3', date: '19 Jul 2026', session: 'SAT', team: ['Clara', 'Shing'],      kg: null, notes: '' },
-  { id: 14, week: 'Jul W3', date: '20 Jul 2026', session: 'SUN', team: ['Kai Jie', 'Jace'],     kg: null, notes: '' },
-  { id: 15, week: 'Jul W4', date: '26 Jul 2026', session: 'SAT', team: ['Candice', 'Matthew'],  kg: null, notes: '' },
-  { id: 16, week: 'Jul W4', date: '27 Jul 2026', session: 'SUN', team: ['Clarice', 'Jeslyn'],   kg: null, notes: '' },
+  // June 2026 (Sat/Sun corrected)
+  { id: 1,  week: 'Jun W1',  date: '6 Jun 2026',  session: 'SAT', team: ['Matthew', 'Wee Shing'],              kg: null, notes: '' },
+  { id: 2,  week: 'Jun W1',  date: '7 Jun 2026',  session: 'SUN', team: ['Jia Yu', 'Jeslyn'],                  kg: null, notes: '' },
+  { id: 3,  week: 'Jun W2',  date: '13 Jun 2026', session: 'SAT', team: ['Candice', 'Clara'],                  kg: null, notes: '' },
+  { id: 4,  week: 'Jun W2',  date: '14 Jun 2026', session: 'SUN', team: ['Jace', 'Debs'],                      kg: null, notes: '' },
+  { id: 5,  week: 'Jun W3',  date: '20 Jun 2026', session: 'SAT', team: ['Matthew', 'Pamela'],                 kg: null, notes: '' },
+  { id: 6,  week: 'Jun W3',  date: '21 Jun 2026', session: 'SUN', team: ['Kai Jie', 'Brendon'],                kg: null, notes: '' },
+  { id: 7,  week: 'Jun W4',  date: '27 Jun 2026', session: 'SAT', team: ['Candice', 'Wee Shing'],              kg: null, notes: '' },
+  { id: 8,  week: 'Jun W4',  date: '28 Jun 2026', session: 'SUN', team: ['Jace', 'Jia Yu'],                    kg: null, notes: '' },
+  // July 2026 — weekends (team leaders assigned from here)
+  { id: 9,  week: 'Jul W1',  date: '4 Jul 2026',  session: 'SAT', team: ['Brendon', 'Pamela', 'Esther'],       kg: null, notes: 'TL: Brendon' },
+  { id: 10, week: 'Jul W1',  date: '5 Jul 2026',  session: 'SUN', team: ['Wee Shing', 'Candice', 'Jiayi'],    kg: null, notes: 'TL: Wee Shing' },
+  { id: 11, week: 'Jul W2',  date: '11 Jul 2026', session: 'SAT', team: ['Judy', 'Victor', 'Berry'],            kg: null, notes: 'TL: Judy' },
+  { id: 12, week: 'Jul W2',  date: '12 Jul 2026', session: 'SUN', team: ['Brendon', 'Jonathan Poon', 'Sok Min'],kg: null, notes: 'TL: Brendon' },
+  { id: 13, week: 'Jul W3',  date: '18 Jul 2026', session: 'SAT', team: ['Wee Shing', 'Jeslyn', 'Jia Yu'],    kg: null, notes: 'TL: Wee Shing' },
+  { id: 14, week: 'Jul W3',  date: '19 Jul 2026', session: 'SUN', team: ['Judy', 'Jace', 'Matthew'],           kg: null, notes: 'TL: Judy' },
+  // GPC 2026 — GenerationS Pastors' Conference (23–27 Jul)
+  { id: 15, week: 'GPC D1',  date: '23 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Clara', 'Debs'],        kg: null, notes: 'GPC Day 1 (Thu) — TL: Wee Shing' },
+  { id: 16, week: 'GPC D2',  date: '24 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Jiayi', 'Victor'],     kg: null, notes: 'GPC Day 2 (Fri) — TL: Wee Shing' },
+  { id: 17, week: 'GPC D3',  date: '25 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Alan Low', 'Elaine C'],kg: null, notes: 'GPC Day 3 (Sat) — TL: Wee Shing' },
+  { id: 18, week: 'GPC D4',  date: '26 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Pamela', 'Candice'],   kg: null, notes: 'GPC Day 4 (Sun) — TL: Wee Shing' },
+  { id: 19, week: 'GPC D5',  date: '27 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Jonathan Poon', 'Berry'],kg: null, notes: 'GPC Day 5 (Mon) — TL: Wee Shing' },
 ];
 
 // ─── Storage helpers ──────────────────────────────────────────────────────────
@@ -67,8 +76,8 @@ router.post('/', (req, res, next) => req.app.get('requireApiKey')(req, res, next
   const { week, date, session, team, notes } = req.body;
   if (!week || !date || !session || !Array.isArray(team))
     return res.status(400).json({ error: 'week, date, session, and team[] are required' });
-  if (!['SAT','SUN'].includes(session.toUpperCase()))
-    return res.status(400).json({ error: 'session must be SAT or SUN' });
+  if (!['SAT','SUN','GPC'].includes(session.toUpperCase()))
+    return res.status(400).json({ error: 'session must be SAT, SUN, or GPC' });
   if (team.length < 1 || team.length > 5)
     return res.status(400).json({ error: 'team must have 1–5 members' });
 
@@ -133,6 +142,60 @@ router.delete('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res,
   roster.splice(idx, 1);
   saveRoster(roster);
   res.json({ ok: true });
+});
+
+// ─── POST /remind — send 5-day and 1-day reminders (admin) ──────────────────
+// Scans the full roster for slots exactly 5 or 1 day(s) away and sends reminders.
+// Body: {} (no params needed — uses today's date)
+// Returns: list of slots messaged
+router.post('/remind', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
+  const roster = loadRoster();
+
+  // Compute today at midnight local time, ignoring time-of-day
+  const now    = new Date();
+  const today  = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const results = [];
+
+  for (const slot of roster) {
+    const slotDate = new Date(slot.date);
+    if (isNaN(slotDate)) continue;
+    const slotDay = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate());
+    const daysAway = Math.round((slotDay - today) / 86400000);
+
+    let msg = null;
+    if (daysAway === 5) msg = fiveDayReminderMsg(slot);
+    if (daysAway === 1) msg = oneDayReminderMsg(slot);
+
+    if (msg) {
+      const result = await notifyTelegram(msg);
+      results.push({ slotId: slot.id, date: slot.date, session: slot.session, daysAway, telegram: result });
+    }
+  }
+
+  res.json({ ok: true, reminders_sent: results.length, results });
+});
+
+// ─── POST /notify-change — send change notification for one person (admin) ───
+// Body: { name, newSlotId, oldSlot?: { date, session } }
+// `newSlotId` must match an id in the current roster.
+router.post('/notify-change', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (req, res) => {
+  const { name, newSlotId, oldSlot } = req.body;
+
+  if (!name || !newSlotId)
+    return res.status(400).json({ error: 'name and newSlotId are required' });
+
+  const roster  = loadRoster();
+  const newSlot = roster.find(s => s.id === Number(newSlotId));
+  if (!newSlot)
+    return res.status(404).json({ error: 'Slot not found' });
+  if (!newSlot.team.includes(name))
+    return res.status(400).json({ error: `${name} is not in the team for slot ${newSlotId}` });
+
+  const msg    = rosterChangeMsg(name, newSlot, oldSlot || null);
+  const result = await notifyTelegram(msg);
+
+  res.json({ ok: result.ok, name, slot: newSlot, telegram: result });
 });
 
 module.exports = router;

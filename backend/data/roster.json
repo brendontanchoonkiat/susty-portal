@@ -1,1 +1,21 @@
-[]
+[
+  { "id": 1,  "week": "Jun W1",  "date": "6 Jun 2026",  "session": "SAT", "team": ["Matthew", "Wee Shing"],               "kg": null, "notes": "" },
+  { "id": 2,  "week": "Jun W1",  "date": "7 Jun 2026",  "session": "SUN", "team": ["Jia Yu", "Jeslyn"],                   "kg": null, "notes": "" },
+  { "id": 3,  "week": "Jun W2",  "date": "13 Jun 2026", "session": "SAT", "team": ["Candice", "Clara"],                   "kg": null, "notes": "" },
+  { "id": 4,  "week": "Jun W2",  "date": "14 Jun 2026", "session": "SUN", "team": ["Jace", "Debs"],                       "kg": null, "notes": "" },
+  { "id": 5,  "week": "Jun W3",  "date": "20 Jun 2026", "session": "SAT", "team": ["Matthew", "Pamela"],                  "kg": null, "notes": "" },
+  { "id": 6,  "week": "Jun W3",  "date": "21 Jun 2026", "session": "SUN", "team": ["Kai Jie", "Brendon"],                 "kg": null, "notes": "" },
+  { "id": 7,  "week": "Jun W4",  "date": "27 Jun 2026", "session": "SAT", "team": ["Candice", "Wee Shing"],               "kg": null, "notes": "" },
+  { "id": 8,  "week": "Jun W4",  "date": "28 Jun 2026", "session": "SUN", "team": ["Jace", "Jia Yu"],                     "kg": null, "notes": "" },
+  { "id": 9,  "week": "Jul W1",  "date": "4 Jul 2026",  "session": "SAT", "team": ["Brendon", "Pamela", "Esther"],        "kg": null, "notes": "TL: Brendon" },
+  { "id": 10, "week": "Jul W1",  "date": "5 Jul 2026",  "session": "SUN", "team": ["Wee Shing", "Candice", "Jiayi"],     "kg": null, "notes": "TL: Wee Shing" },
+  { "id": 11, "week": "Jul W2",  "date": "11 Jul 2026", "session": "SAT", "team": ["Judy", "Victor", "Berry"],             "kg": null, "notes": "TL: Judy" },
+  { "id": 12, "week": "Jul W2",  "date": "12 Jul 2026", "session": "SUN", "team": ["Brendon", "Jonathan Poon", "Sok Min"],"kg": null, "notes": "TL: Brendon" },
+  { "id": 13, "week": "Jul W3",  "date": "18 Jul 2026", "session": "SAT", "team": ["Wee Shing", "Jeslyn", "Jia Yu"],     "kg": null, "notes": "TL: Wee Shing" },
+  { "id": 14, "week": "Jul W3",  "date": "19 Jul 2026", "session": "SUN", "team": ["Judy", "Jace", "Matthew"],            "kg": null, "notes": "TL: Judy" },
+  { "id": 15, "week": "GPC D1",  "date": "23 Jul 2026", "session": "GPC", "team": ["Wee Shing", "Clara", "Debs"],         "kg": null, "notes": "GPC Day 1 (Thu) — TL: Wee Shing" },
+  { "id": 16, "week": "GPC D2",  "date": "24 Jul 2026", "session": "GPC", "team": ["Wee Shing", "Jiayi", "Victor"],      "kg": null, "notes": "GPC Day 2 (Fri) — TL: Wee Shing" },
+  { "id": 17, "week": "GPC D3",  "date": "25 Jul 2026", "session": "GPC", "team": ["Wee Shing", "Alan Low", "Elaine C"], "kg": null, "notes": "GPC Day 3 (Sat) — TL: Wee Shing" },
+  { "id": 18, "week": "GPC D4",  "date": "26 Jul 2026", "session": "GPC", "team": ["Wee Shing", "Pamela", "Candice"],    "kg": null, "notes": "GPC Day 4 (Sun) — TL: Wee Shing" },
+  { "id": 19, "week": "GPC D5",  "date": "27 Jul 2026", "session": "GPC", "team": ["Wee Shing", "Jonathan Poon", "Berry"],"kg": null, "notes": "GPC Day 5 (Mon) — TL: Wee Shing" }
+]

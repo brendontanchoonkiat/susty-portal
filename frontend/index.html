@@ -67,6 +67,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .badge{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:12px}
 .badge-sat{background:#FFF3CD;color:#856404}
 .badge-sun{background:#D4EDDA;color:#155724}
+.badge-gpc{background:#E8D5F5;color:#6A1B9A}
 
 /* ACTION BTNS in table */
 .action-btn{background:none;border:1px solid var(--br);border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:var(--tm);transition:all .15s}
@@ -139,6 +140,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .cal-slot{border-radius:6px;padding:2px 5px;font-size:.66rem;font-weight:600;margin-bottom:3px;cursor:default;line-height:1.35;word-break:break-word}
 .cal-slot.sat{background:#FFF3CD;color:#856404;border:1px solid #F0D080}
 .cal-slot.sun{background:#D4EDDA;color:#155724;border:1px solid #90CFA0}
+.cal-slot.gpc{background:#F3E5F5;color:#6A1B9A;border:1px solid #CE93D8}
 .cal-slot.editable{cursor:pointer}
 .cal-slot.editable:hover{opacity:.8;transform:scale(1.01)}
 .cal-slot .kg-tag{font-size:.58rem;background:rgba(0,0,0,.08);border-radius:4px;padding:0 3px;margin-left:2px}
@@ -227,10 +229,40 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 
 <!-- ═══ ENERGY ═══════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-energy">
-  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">⚡ Energy & Emissions Tracker</div>
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:14px">⚡ Energy & Emissions Tracker</div>
+
+  <!-- Filter bar -->
+  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+    <div class="roster-view-tabs" style="margin-bottom:0">
+      <button class="view-tab active" data-eyear="all"  onclick="setEnergyYear('all')" >All Years</button>
+      <button class="view-tab"        data-eyear="2024" onclick="setEnergyYear('2024')">2024</button>
+      <button class="view-tab"        data-eyear="2025" onclick="setEnergyYear('2025')">2025</button>
+      <button class="view-tab"        data-eyear="2026" onclick="setEnergyYear('2026')">2026</button>
+    </div>
+  </div>
+
+  <!-- Events filter -->
+  <div class="card" style="margin-bottom:16px;padding:14px 18px">
+    <div class="section-title" style="margin-bottom:10px;font-size:.9rem">🎪 Big Events <span style="font-size:.72rem;font-weight:400;color:var(--tm)">— high-footfall events drive ↑ energy consumption</span></div>
+    <div id="energy-events-pills" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div id="energy-events-detail" style="display:none;margin-top:12px;padding:10px 14px;background:var(--gp);border-radius:8px;font-size:.82rem;color:var(--gd)"></div>
+  </div>
+
   <div class="card-grid">
     <div class="card"><div class="section-title">⚡ Electricity (kWh)</div><div class="chart-wrap-tall"><canvas id="elec-chart"></canvas></div></div>
     <div class="card"><div class="section-title">💧 Water (m³)</div><div class="chart-wrap-tall"><canvas id="water-chart"></canvas></div></div>
+  </div>
+
+  <!-- Event Impact Analysis (shown when event selected) -->
+  <div class="card" id="energy-impact-card" style="display:none;margin-top:4px">
+    <div class="section-title" id="energy-impact-title" style="font-size:.9rem;margin-bottom:12px"></div>
+    <div id="energy-impact-content"></div>
+  </div>
+
+  <!-- Monthly events detail (shown when a month is highlighted) -->
+  <div class="card" id="energy-month-detail" style="display:none;margin-top:4px">
+    <div class="section-title" id="energy-month-detail-title" style="font-size:.9rem;margin-bottom:10px"></div>
+    <div id="energy-month-detail-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
   </div>
 </div>
 
@@ -469,19 +501,95 @@ let w2rYearFilter  = 'all';   // 'all' | '2025' | '2026'
 let w2rEventFilter = null;    // event id or null
 
 const W2R_EVENTS = [
-  { id: 'gpc25',   name: 'GPC 2025',       month: 'Jul 2025', emoji: '⛪', description: 'General Prayer Conference – week-long congregation camp. High footfall leads to significantly more cardboard & plastic waste collected.' },
-  { id: 'camp26',  name: 'NY Camp 2026',    month: 'Jan 2026', emoji: '🏕️', description: 'New Year Ministry Camp – large-scale overnight camp at the start of 2026, producing a spike in recycling volume.' },
+  { id: 'youth_jun24', name: 'Youth Camp Jun \'24', month: 'Jun 2024', emoji: '🏕️', description: 'Youth Camp + YA Camp + Water Baptism in June 2024 – a triple-event month with very high footfall and recycling volume.' },
+  { id: 'gpc24',      name: 'GPC 2024',            month: 'Jul 2024', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2024 – week-long congregation gathering. High footfall drives significantly more cardboard & plastic waste.' },
+  { id: 'youth_nov24',name: 'Youth Camp Nov \'24',  month: 'Nov 2024', emoji: '🏕️', description: 'Youth Camp + Dr Robi Weekend + AGM in November 2024 – extended multi-event period with sustained high footfall.' },
+  { id: 'gpc25',      name: 'GPC 2025',            month: 'Jul 2025', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2025 – week-long congregation camp. High footfall leads to significantly more cardboard & plastic waste collected.' },
+  { id: 'ur_camp25',  name: 'UR Camp Aug \'25',    month: 'Aug 2025', emoji: '🏔️', description: 'UR Camp – large-scale young adults overnight camp. Plus GPC Volunteer Night and Chinese Gold Services adding to an already high-footfall month.' },
+  { id: 'youth_nov25',name: 'Youth Camp Nov \'25',  month: 'Nov 2025', emoji: '🏕️', description: 'Youth Camp + Youth VBS + AGM in November 2025 – multi-event month expected to produce elevated recycling volumes.' },
+  { id: 'camp26',     name: 'NY Camp 2026',         month: 'Jan 2026', emoji: '🏕️', description: 'New Year Ministry Camp – large-scale overnight camp at the start of 2026, producing a spike in recycling volume.' },
+  { id: 'gpc26',      name: 'GPC 2026',            month: 'Jul 2026', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2026 (23–27 Jul) – upcoming high-footfall event. Prepare extra bins and additional W2R manpower.' },
 ];
 
+// Energy filters
+let eData = [], wData = [];
+let energyYearFilter  = 'all';
+let energyEventFilter = null;
+
+// Big recurring events mapped to the months they affect (sourced from IM Utility For ESG Team)
+const ENERGY_EVENTS = [
+  { id: 'gpc',       name: 'GPC',           emoji: '⛪', months: ['Jul 2024', 'Jul 2025', 'Jul 2026'], impact: 'high',
+    description: 'GenerationS Pastors\' Conference – week-long congregation-wide gathering. Extended facility use across all levels drives electricity & water spikes. Jul 2026 GPC runs 23–27 Jul.' },
+  { id: 'youth_camp', name: 'Youth Camp',   emoji: '🏕️', months: ['Jun 2024', 'Nov 2024', 'Jun 2025', 'Nov 2025'], impact: 'high',
+    description: 'Youth Camp – large-scale overnight events (June & November each year). Includes rehearsals, Water Baptism & extended evening programmes driving sustained high energy load.' },
+  { id: 'easter',    name: 'Easter',        emoji: '✝️', months: ['Mar 2024', 'Apr 2024', 'Apr 2025'], impact: 'high',
+    description: 'Easter period – Big Day services, POLITE Camp, hangouts, retention events & rehearsals. Apr 2025 recorded the highest L3 monthly kWh (8,900 kWh) coinciding with Easter + Water Baptism.' },
+  { id: 'christmas', name: 'Christmas & NYE', emoji: '🎄', months: ['Dec 2024', 'Dec 2025'], impact: 'medium',
+    description: 'Christmas services and New Year\'s Countdown – extended evening events across multiple weekends of December.' },
+  { id: 'ur_camp',  name: 'UR Camp',        emoji: '🏔️', months: ['Aug 2025'], impact: 'medium',
+    description: 'UR Camp – large-scale young adults overnight camp in August 2025. Combined with GPC Volunteer Night and Chinese Gold Services.' },
+  { id: 'ae_wknd',  name: 'AE Weekend',     emoji: '🎤', months: ['Aug 2024'], impact: 'medium',
+    description: 'All Ears Weekend – special guest speaker event with extended large-congregation sessions in August 2024.' },
+  { id: 'water_bap', name: 'Water Baptism', emoji: '💧', months: ['Jun 2024', 'Apr 2025'], impact: 'medium',
+    description: 'Water Baptism events – high attendance drives notable spikes in water & electricity use. Jun 2024 coincided with Youth Camp for a compounded effect.' },
+  { id: 'cny',      name: 'CNY Break',      emoji: '🧧', months: ['Feb 2024', 'Feb 2025'], impact: 'low',
+    description: 'Chinese New Year break – reduced church activity; typically the lowest electricity and water usage months of the year. Useful as a consumption baseline.' },
+];
+
+// Monthly events data sourced from IM Utility spreadsheet (rows 26/25/25 for 2024/2025/2026)
+const ENERGY_MONTHLY_EVENTS = {
+  'Jan 2024': ['Services','Leaders\' Meeting','Chinese Gold Service','Altar Call Training','Leadership Training'],
+  'Feb 2024': ['Services','CNY Break','Staff Recharge','UR RN','Leaders\' Meeting','CGL Training','Service X'],
+  'Mar 2024': ['Services','POLITE Camp','Easter Weekend','Teens Stayover','Monday Dance & WT Rehearsals'],
+  'Apr 2024': ['Easter Services','Leaders\' Meeting','Service X','Chinese Gold Service','Matt Redman\'s Weekend + Rehearsals'],
+  'May 2024': ['Services','PT Weekend','Basic Leadership Training','Follow-Up Training','Intro to HOGC','Nova Trip Rehearsals'],
+  'Jun 2024': ['Services','Leaders\' Meeting','Water Baptism Class','UR VBS','Service X','YA Camp','Water Baptism','Youth Camp'],
+  'Jul 2024': ['Services','IdR Launch & Reno','Leaders\' Meeting','GPC Conference','GPC Rehearsals'],
+  'Aug 2024': ['Services','AE Weekend','Service X','Chinese Gold Service','TLR Reno','Basic Leadership Training'],
+  'Sep 2024': ['BF Services','Hkz Stayover','Leaders\' Meeting','HOGC Scattered','Financial Excellence'],
+  'Oct 2024': ['Services','Teens Carnival / Inflatable','Service X','Elle Limebear Rehearsals','Encounters Night','TL Challenge'],
+  'Nov 2024': ['Blood Donation Drive','Services','CGL Training','GPC-R','Dr Robi Weekend','Youth Camp 2024','Chinese Gold Service','AGM'],
+  'Dec 2024': ['Services','Christmas Services','Countdown Party','Youth Heart Awards'],
+  'Jan 2025': ['Services','Encounters Night (Q&A w Sean McDowell)','TLR Weddings','WT Training','GE Volunteer Meeting','Service X'],
+  'Feb 2025': ['Services (3 Weekends)','CNY Break (2 Weeks)','Youth CNY Reunion','Staff Recharge','Leaders\' Meeting','Service X'],
+  'Mar 2025': ['K.Shan Community Night','POLITE Camp + Revival Nights','Youth Zone Prayer Meetings','SOW/WT Training','YA Bus Tour','Services'],
+  'Apr 2025': ['Easter Big Day + Hangouts + Retention','Water Baptism','Leaders\' Meeting','Chinese Gold Service','Services'],
+  'May 2025': ['Services (EXIT Launch)','Music X','Basic Leadership Training','UR VBS'],
+  'Jun 2025': ['Services','Service X','Youth MTS','Pitstop & Training Weekend','Youth Camp','Encounters Night'],
+  'Jul 2025': ['Services','Time with God (TWG)','GPC','Leaders\' Meeting','Church Break'],
+  'Aug 2025': ['Services','UR Camp','Chinese Gold Services','Young Business Leader Meeting','GPC Volunteer Night'],
+  'Sep 2025': ['Services','Heartkidz Camp','Leaders\' Meeting','Financial Excellence','Encounters Night'],
+  'Oct 2025': ['Services','Teens Carnival','Financial Excellence','Young Business Leaders Seminar','Chinese Gold Service'],
+  'Nov 2025': ['Services','Service X','Youth VBS','Leaders\' Meeting','AGM','Youth Camp'],
+  'Dec 2025': ['Services','Christmas Services','New Year\'s Countdown'],
+  'Jan 2026': ['Services'],
+  'Feb 2026': ['Services'],
+  'Mar 2026': ['Services'],
+  'Apr 2026': ['Services'],
+  'Jul 2026': ['GPC – GenerationS Pastors\' Conference (23–27 Jul)'],
+};
+
 // ═══ NAV ═════════════════════════════════════════════════════════════════════
+function navigateTo(pageId) {
+  document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  const tab = document.querySelector(`.nav-tab[data-page="${pageId}"]`);
+  const page = document.getElementById('page-' + pageId);
+  if (tab)  tab.classList.add('active');
+  if (page) page.classList.add('active');
+  location.hash = pageId;
+}
+
 document.querySelectorAll('.nav-tab').forEach(t => {
-  t.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
-    t.classList.add('active');
-    document.getElementById('page-' + t.dataset.page).classList.add('active');
-  });
+  t.addEventListener('click', () => navigateTo(t.dataset.page));
 });
+
+// Restore tab from URL hash on load/refresh
+(function restoreTab() {
+  const hash = location.hash.replace('#', '');
+  const valid = ['overview','energy','recycling','comms','roster','test'];
+  if (hash && valid.includes(hash)) navigateTo(hash);
+})();
 
 // ═══ TOAST ═══════════════════════════════════════════════════════════════════
 function toast(msg, isError=false) {
@@ -676,21 +784,159 @@ function buildOverviewChart() {
 // ═══ ENERGY ══════════════════════════════════════════════════════════════════
 async function loadEnergy() {
   try {
-    const [eRes,wRes] = await Promise.all([fetch(`${API}/energy/electricity`), fetch(`${API}/energy/water`)]);
-    const eData = await eRes.json();
-    const wData = await wRes.json();
-    const hasE  = eData.some(r=>r.kwh!==null);
-    const latestE = eData.filter(r=>r.kwh!==null).slice(-1)[0];
+    const [eRes, wRes] = await Promise.all([
+      fetch(`${API}/energy/electricity`),
+      fetch(`${API}/energy/water`),
+    ]);
+    eData = await eRes.json();
+    wData = await wRes.json();
+
+    const latestE = eData.filter(r => r.kwh !== null).slice(-1)[0];
     document.getElementById('ov-energy').textContent = latestE
-      ? `${(latestE.kwh/1000).toFixed(1)}k kWh (${latestE.month})`
+      ? `${(latestE.kwh / 1000).toFixed(1)}k kWh (${latestE.month})`
       : 'Pending';
-    if(hasE) {
-      const ef = eData.filter(r=>r.kwh!==null);
-      buildBar('elec-chart', ef.map(r=>r.month), ef.map(r=>r.kwh), 'kWh', '#E9C46A', 300);
-    }
-    const wf = wData.filter(r=>r.m3!==null);
-    if(wf.length) buildBar('water-chart', wf.map(r=>r.month), wf.map(r=>r.m3), 'm³', '#4CC9F0', 300);
+
+    renderEnergyEventPills();
+    buildEnergyCharts();
   } catch(e) {}
+}
+
+function applyEnergyYearFilter(arr, key) {
+  if (energyYearFilter === 'all') return arr.filter(r => r[key] !== null);
+  return arr.filter(r => r[key] !== null && r.month.includes(energyYearFilter));
+}
+
+function energyEventColors(months, baseColor) {
+  const ev = energyEventFilter ? ENERGY_EVENTS.find(e => e.id === energyEventFilter) : null;
+  if (!ev) return null;
+  return months.map(m => ev.months.includes(m) ? '#F4A261CC' : baseColor + '44');
+}
+
+function buildEnergyCharts() {
+  const ef = applyEnergyYearFilter(eData, 'kwh');
+  const wf = applyEnergyYearFilter(wData, 'm3');
+  const eMonths = ef.map(r => r.month);
+  const wMonths = wf.map(r => r.month);
+  buildBar('elec-chart',  eMonths, ef.map(r => r.kwh), 'kWh', '#E9C46A', 300, energyEventColors(eMonths, '#E9C46A'));
+  buildBar('water-chart', wMonths, wf.map(r => r.m3),  'm³',  '#4CC9F0', 300, energyEventColors(wMonths, '#4CC9F0'));
+  updateEnergyMonthDetail();
+  renderEnergyImpact();
+}
+
+function setEnergyYear(year) {
+  energyYearFilter = year;
+  document.querySelectorAll('[data-eyear]').forEach(b =>
+    b.classList.toggle('active', b.dataset.eyear === year));
+  buildEnergyCharts();
+}
+
+function setEnergyEvent(id) {
+  energyEventFilter = (energyEventFilter === id) ? null : id;
+  renderEnergyEventPills();
+  buildEnergyCharts();
+  renderEnergyImpact();
+}
+
+function renderEnergyEventPills() {
+  const container = document.getElementById('energy-events-pills');
+  if (!container) return;
+  const impactColor = { high: '#C62828', medium: '#856404', low: '#155724' };
+  const impactBg    = { high: '#FFEBEE', medium: '#FFF3CD', low: '#D4EDDA' };
+  container.innerHTML = ENERGY_EVENTS.map(ev => {
+    const active = energyEventFilter === ev.id;
+    const yrs    = [...new Set(ev.months.map(m => m.split(' ')[1]))].join('/');
+    const ic     = impactColor[ev.impact||'medium'];
+    const ib     = impactBg[ev.impact||'medium'];
+    return `<button onclick="setEnergyEvent('${ev.id}')" style="
+      display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;
+      border:1.5px solid ${active ? '#F4A261' : 'var(--br)'};cursor:pointer;font-size:.8rem;font-weight:600;
+      background:${active ? '#FFF0E6' : 'var(--sf)'};color:${active ? '#9A4A00' : 'var(--tx)'};
+      font-family:inherit;transition:all .15s">
+      ${ev.emoji} ${ev.name}
+      <span style="font-size:.68rem;color:${active?'#9A4A00':'var(--tm)'}">· ${yrs}</span>
+      <span style="font-size:.62rem;font-weight:700;padding:1px 5px;border-radius:8px;background:${ib};color:${ic}">${(ev.impact||'med').toUpperCase()}</span>
+    </button>`;
+  }).join('');
+
+  const detailEl = document.getElementById('energy-events-detail');
+  const ev = energyEventFilter ? ENERGY_EVENTS.find(e => e.id === energyEventFilter) : null;
+  if (ev && detailEl) {
+    detailEl.style.display = 'block';
+    detailEl.innerHTML = `<strong>${ev.emoji} ${ev.name}</strong> (${ev.months.join(', ')}) — ${ev.description}`;
+  } else if (detailEl) {
+    detailEl.style.display = 'none';
+  }
+}
+
+function updateEnergyMonthDetail() {
+  const panel   = document.getElementById('energy-month-detail');
+  const titleEl = document.getElementById('energy-month-detail-title');
+  const listEl  = document.getElementById('energy-month-detail-list');
+  if (!panel) return;
+
+  const ev = energyEventFilter ? ENERGY_EVENTS.find(e => e.id === energyEventFilter) : null;
+  if (!ev) { panel.style.display = 'none'; return; }
+
+  // Use embedded ENERGY_MONTHLY_EVENTS (sourced from IM Utility sheet)
+  const months = ev.months.filter(m => ENERGY_MONTHLY_EVENTS[m]);
+  if (!months.length) { panel.style.display = 'none'; return; }
+
+  panel.style.display = 'block';
+  titleEl.textContent = `📋 What happened in ${months.join(' · ')}`;
+  listEl.innerHTML = months.map(m => {
+    const items = ENERGY_MONTHLY_EVENTS[m] || [];
+    const kwh   = (eData.find(r => r.month === m) || {}).kwh;
+    const kwhBadge = kwh ? `<span style="float:right;font-size:.7rem;background:var(--am);color:#5a3a00;padding:1px 6px;border-radius:8px">${kwh.toLocaleString()} kWh</span>` : '';
+    return `<div style="background:var(--bg);border-radius:8px;padding:10px 14px;min-width:180px;flex:1">
+      <div style="font-weight:700;font-size:.82rem;color:var(--gd);margin-bottom:6px">${m} ${kwhBadge}</div>
+      ${items.map(i => `<div style="font-size:.76rem;color:var(--tx);padding:2px 0;border-bottom:1px solid var(--br)">• ${i}</div>`).join('')}
+    </div>`;
+  }).join('');
+}
+
+function renderEnergyImpact() {
+  const card = document.getElementById('energy-impact-card');
+  if (!card) return;
+  const ev = energyEventFilter ? ENERGY_EVENTS.find(e => e.id === energyEventFilter) : null;
+  if (!ev || !eData.length) { card.style.display = 'none'; return; }
+
+  const validE = eData.filter(r => r.kwh !== null && r.kwh > 0);
+  if (!validE.length) { card.style.display = 'none'; return; }
+  const avgKwh = validE.reduce((s, r) => s + r.kwh, 0) / validE.length;
+  const maxKwh = Math.max(...validE.map(r => r.kwh));
+
+  const eventMonths = ev.months
+    .map(m => ({ month: m, kwh: (eData.find(r => r.month === m)||{}).kwh || null }))
+    .filter(r => r.kwh !== null && r.kwh > 0);
+
+  if (!eventMonths.length) { card.style.display = 'none'; return; }
+
+  card.style.display = 'block';
+  document.getElementById('energy-impact-title').innerHTML =
+    `📈 ${ev.emoji} ${ev.name} — Energy Impact`;
+
+  const rows = eventMonths.map(d => {
+    const pct    = ((d.kwh - avgKwh) / avgKwh * 100).toFixed(1);
+    const isHigh = d.kwh > avgKwh;
+    const barW   = Math.round(d.kwh / maxKwh * 100);
+    return `<div style="display:grid;grid-template-columns:90px 1fr 110px;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--br)">
+      <span style="font-size:.8rem;font-weight:600;color:var(--gd)">${d.month}</span>
+      <div style="background:var(--br);border-radius:4px;height:10px">
+        <div style="background:${isHigh?'#F4A261':'#52B788'};width:${barW}%;height:100%;border-radius:4px;transition:width .3s"></div>
+      </div>
+      <span style="font-size:.78rem;font-weight:700;color:${isHigh?'#9A4A00':'#155724'};text-align:right">
+        ${d.kwh.toLocaleString()} kWh &nbsp;${isHigh?'▲':'▼'}${Math.abs(pct)}%
+      </span>
+    </div>`;
+  }).join('');
+
+  const avgLine = `<div style="font-size:.75rem;color:var(--tm);margin-bottom:10px">
+    Avg monthly baseline: <strong>${Math.round(avgKwh).toLocaleString()} kWh</strong> ·
+    Peak month: <strong>${maxKwh.toLocaleString()} kWh</strong>
+    ${ev.months.includes('Jul 2026') ? '<span style="background:#FFF0E6;color:#9A4A00;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:12px;margin-left:8px">⚠ GPC 2026 upcoming — prepare capacity</span>' : ''}
+  </div>`;
+
+  document.getElementById('energy-impact-content').innerHTML = avgLine + rows;
 }
 
 // ═══ COMMS ═══════════════════════════════════════════════════════════════════
