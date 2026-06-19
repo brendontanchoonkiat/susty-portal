@@ -36,7 +36,7 @@ app.use(cors({
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     cb(new Error(`CORS blocked: ${origin}`));
   },
-  methods:     ['GET', 'POST'],
+  methods:     ['GET', 'POST', 'PATCH', 'DELETE'],
   credentials: false,
 }));
 

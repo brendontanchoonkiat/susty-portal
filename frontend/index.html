@@ -501,14 +501,12 @@ let w2rYearFilter  = 'all';   // 'all' | '2025' | '2026'
 let w2rEventFilter = null;    // event id or null
 
 const W2R_EVENTS = [
-  { id: 'youth_jun24', name: 'Youth Camp Jun \'24', month: 'Jun 2024', emoji: '🏕️', description: 'Youth Camp + YA Camp + Water Baptism in June 2024 – a triple-event month with very high footfall and recycling volume.' },
-  { id: 'gpc24',      name: 'GPC 2024',            month: 'Jul 2024', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2024 – week-long congregation gathering. High footfall drives significantly more cardboard & plastic waste.' },
-  { id: 'youth_nov24',name: 'Youth Camp Nov \'24',  month: 'Nov 2024', emoji: '🏕️', description: 'Youth Camp + Dr Robi Weekend + AGM in November 2024 – extended multi-event period with sustained high footfall.' },
-  { id: 'gpc25',      name: 'GPC 2025',            month: 'Jul 2025', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2025 – week-long congregation camp. High footfall leads to significantly more cardboard & plastic waste collected.' },
-  { id: 'ur_camp25',  name: 'UR Camp Aug \'25',    month: 'Aug 2025', emoji: '🏔️', description: 'UR Camp – large-scale young adults overnight camp. Plus GPC Volunteer Night and Chinese Gold Services adding to an already high-footfall month.' },
-  { id: 'youth_nov25',name: 'Youth Camp Nov \'25',  month: 'Nov 2025', emoji: '🏕️', description: 'Youth Camp + Youth VBS + AGM in November 2025 – multi-event month expected to produce elevated recycling volumes.' },
-  { id: 'camp26',     name: 'NY Camp 2026',         month: 'Jan 2026', emoji: '🏕️', description: 'New Year Ministry Camp – large-scale overnight camp at the start of 2026, producing a spike in recycling volume.' },
-  { id: 'gpc26',      name: 'GPC 2026',            month: 'Jul 2026', emoji: '⛪', description: 'GenerationS Pastors\' Conference 2026 (23–27 Jul) – upcoming high-footfall event. Prepare extra bins and additional W2R manpower.' },
+  { id: 'gpc',        name: 'GPC',        emoji: '⛪', months: ['Jul 2024', 'Jul 2025', 'Jul 2026'],
+    description: 'GenerationS Pastors\' Conference – annual week-long congregation gathering driving significantly elevated recycling volumes. Bulk mid-week cardboard collected and sent to GHS recycling partner. GPC 2026: 23–27 Jul — prepare extra bins and additional W2R manpower.' },
+  { id: 'ur_camp',    name: 'UR Camp',    emoji: '🏔️', months: ['Aug 2025'],
+    description: 'UR Camp – large-scale young adults overnight camp combined with GPC Volunteer Night and Chinese Gold Services, generating high multi-day recycling volumes.' },
+  { id: 'youth_camp', name: 'Youth Camp', emoji: '🏕️', months: ['Jun 2024', 'Nov 2024', 'Nov 2025'],
+    description: 'Youth Camp – biannual overnight events in Jun & Nov seasons. Multi-event months with elevated footfall and sustained recycling across cardboard and plastic.' },
 ];
 
 // Energy filters
@@ -680,7 +678,7 @@ function eventColors(months, baseColor) {
   const ev = w2rEventFilter ? W2R_EVENTS.find(e => e.id === w2rEventFilter) : null;
   if (!ev) return null; // null = use default solid color
   return months.map(m =>
-    m === ev.month ? '#F4A261CC' : baseColor + '44'
+    ev.months.includes(m) ? '#F4A261CC' : baseColor + '44'
   );
 }
 
@@ -701,10 +699,10 @@ function buildRecyclingCharts() {
   // Event highlighting for combined chart
   const ev = w2rEventFilter ? W2R_EVENTS.find(e => e.id === w2rEventFilter) : null;
   const cbBg = ev
-    ? allMonths.map(m => m === ev.month ? '#2D6A4FDD' : '#2D6A4F33')
+    ? allMonths.map(m => ev.months.includes(m) ? '#2D6A4FDD' : '#2D6A4F33')
     : '#2D6A4F99';
   const plBg = ev
-    ? allMonths.map(m => m === ev.month ? '#52B788DD' : '#52B78833')
+    ? allMonths.map(m => ev.months.includes(m) ? '#52B788DD' : '#52B78833')
     : '#52B78899';
 
   const ctx = document.getElementById('combined-chart');
@@ -763,14 +761,14 @@ function renderEventPills() {
       border:1.5px solid ${active?'#F4A261':'var(--br)'};cursor:pointer;font-size:.8rem;font-weight:600;
       background:${active?'#FFF0E6':'var(--sf)'};color:${active?'#9A4A00':'var(--tx)'};
       font-family:inherit;transition:all .15s">
-      ${ev.emoji} ${ev.name} <span style="font-size:.7rem;color:${active?'#9A4A00':'var(--tm)'}">· ${ev.month}</span>
+      ${ev.emoji} ${ev.name} <span style="font-size:.7rem;color:${active?'#9A4A00':'var(--tm)'}">· ${ev.months.join(', ')}</span>
     </button>`;
   }).join('');
   // Show/hide detail
   const ev = w2rEventFilter ? W2R_EVENTS.find(e=>e.id===w2rEventFilter) : null;
   if (ev) {
     detail.style.display = 'block';
-    detail.innerHTML = `<strong>${ev.emoji} ${ev.name} (${ev.month})</strong> — ${ev.description}`;
+    detail.innerHTML = `<strong>${ev.emoji} ${ev.name} (${ev.months.join(', ')})</strong> — ${ev.description}`;
   } else {
     detail.style.display = 'none';
   }
