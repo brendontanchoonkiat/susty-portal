@@ -117,6 +117,32 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .status-draft{background:#FFF3CD;color:#856404}
 .status-idea{background:#EEE;color:#555}
 
+/* ROSTER CALENDAR */
+.roster-view-tabs{display:flex;gap:6px;margin-bottom:14px}
+.view-tab{padding:6px 16px;border:1.5px solid var(--br);border-radius:20px;background:transparent;cursor:pointer;font-size:.8rem;font-weight:600;color:var(--tm);transition:all .15s;font-family:inherit}
+.view-tab.active{background:var(--gd);color:#fff;border-color:var(--gd)}
+.cal-month-nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.cal-month-title{font-family:Georgia,serif;font-size:1rem;color:var(--gd);font-weight:700}
+.cal-nav-btn{background:none;border:1.5px solid var(--br);border-radius:8px;padding:5px 12px;cursor:pointer;color:var(--gm);font-size:1rem;transition:all .15s}
+.cal-nav-btn:hover{background:var(--gp);border-color:var(--gs)}
+.cal-weekgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-day-header{text-align:center;font-size:.68rem;font-weight:700;color:var(--tm);padding:6px 0;text-transform:uppercase;letter-spacing:.04em}
+.cal-cell{min-height:76px;border-radius:8px;border:1px solid var(--br);padding:6px 5px;background:var(--sf);position:relative;transition:background .15s}
+.cal-cell.empty{background:transparent;border:none}
+.cal-cell.today{border-color:var(--gs);background:#F0FAF2}
+.cal-day-num{font-size:.72rem;font-weight:600;color:var(--tm);margin-bottom:4px}
+.cal-cell.today .cal-day-num{background:var(--gs);color:var(--gd);border-radius:50%;width:20px;height:20px;display:inline-flex;align-items:center;justify-content:center}
+.cal-slot{border-radius:6px;padding:2px 5px;font-size:.66rem;font-weight:600;margin-bottom:3px;cursor:default;line-height:1.35;word-break:break-word}
+.cal-slot.sat{background:#FFF3CD;color:#856404;border:1px solid #F0D080}
+.cal-slot.sun{background:#D4EDDA;color:#155724;border:1px solid #90CFA0}
+.cal-slot.editable{cursor:pointer}
+.cal-slot.editable:hover{opacity:.8;transform:scale(1.01)}
+.cal-slot .kg-tag{font-size:.58rem;background:rgba(0,0,0,.08);border-radius:4px;padding:0 3px;margin-left:2px}
+@media(max-width:600px){
+  .cal-cell{min-height:56px;padding:3px}
+  .cal-slot{font-size:.58rem}
+}
+
 /* SWAP */
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
 .swap-list{display:grid;gap:10px;margin-top:16px}
@@ -249,15 +275,44 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     </div>
   </div>
 
-  <!-- Roster table -->
-  <div class="card">
+  <!-- View toggle -->
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px">
+    <div class="roster-view-tabs">
+      <button class="view-tab active" data-view="calendar" onclick="switchRosterView('calendar')">📅 Calendar</button>
+      <button class="view-tab" data-view="list" onclick="switchRosterView('list')">☰ List</button>
+    </div>
+    <button class="btn btn-primary btn-sm admin-only" onclick="openAddSlot()" style="display:none">+ Add Slot</button>
+  </div>
+
+  <!-- Calendar view -->
+  <div id="roster-calendar-view" class="card">
+    <div class="cal-month-nav">
+      <button class="cal-nav-btn" onclick="prevMonth()">‹</button>
+      <span class="cal-month-title" id="cal-month-label">June 2026</span>
+      <button class="cal-nav-btn" onclick="nextMonth()">›</button>
+    </div>
+    <div class="cal-weekgrid">
+      <div class="cal-day-header">Sun</div>
+      <div class="cal-day-header">Mon</div>
+      <div class="cal-day-header">Tue</div>
+      <div class="cal-day-header">Wed</div>
+      <div class="cal-day-header">Thu</div>
+      <div class="cal-day-header">Fri</div>
+      <div class="cal-day-header">Sat</div>
+    </div>
+    <div class="cal-weekgrid" id="cal-grid" style="margin-top:4px">
+      <div class="loading" style="grid-column:1/-1">Loading…</div>
+    </div>
+  </div>
+
+  <!-- List view (hidden by default) -->
+  <div id="roster-list-view" class="card" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
       <div class="section-title" style="margin-bottom:0;border:none;padding:0">Weekend Slots</div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-outline btn-sm" onclick="filterRoster('all')">All</button>
         <button class="btn btn-outline btn-sm" onclick="filterRoster('SAT')">SAT</button>
         <button class="btn btn-outline btn-sm" onclick="filterRoster('SUN')">SUN</button>
-        <button class="btn btn-primary btn-sm admin-only" onclick="openAddSlot()" style="display:none">+ Add Slot</button>
       </div>
     </div>
     <div style="overflow-x:auto">
@@ -339,6 +394,16 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   </div>
 
   <div class="card" style="margin-top:16px">
+    <div class="section-title">📨 Telegram Bot Test</div>
+    <p style="font-size:.82rem;color:var(--tm);margin-bottom:12px">Send a test ping to the Telegram group. Requires your admin API key.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <input type="password" id="tg-test-key" placeholder="Admin API key" style="padding:8px 12px;border:1.5px solid var(--br);border-radius:8px;font-size:.85rem;flex:1;min-width:180px"/>
+      <button class="btn btn-primary btn-sm" onclick="testTelegram()">📨 Send Test Message</button>
+    </div>
+    <div id="tg-test-result" style="font-size:.82rem;color:var(--tm)"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <div class="section-title">📋 Manual Checklist</div>
     <div id="manual-checklist"></div>
   </div>
@@ -385,8 +450,9 @@ function unlockAdmin() {
   adminKey = key; isAdmin = true;
   document.getElementById('admin-lock-panel').style.display = 'none';
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-  // Refresh roster table to show action column
+  // Refresh both views to show edit actions
   renderRoster(currentFilter);
+  renderCalendarView();
   toast('✅ Admin mode unlocked');
 }
 
@@ -520,6 +586,7 @@ async function loadRoster() {
     rosterData = await res.json();
     renderRoster('all');
     renderOverviewRoster();
+    renderCalendarView();
   } catch(e) {
     document.querySelector('#full-roster tbody').innerHTML = '<tr><td colspan="6" class="loading">Could not load roster.</td></tr>';
   }
@@ -904,6 +971,96 @@ function renderManualChecklist() {
           <input type="checkbox" style="accent-color:var(--gm)"> ${item}
         </label>`).join('')}
     </div>`).join('');
+}
+
+// ═══ ROSTER CALENDAR VIEW ════════════════════════════════════════════════════
+let calViewDate = new Date(2026, 5, 1); // June 2026
+let rosterViewMode = 'calendar';
+
+function switchRosterView(mode) {
+  rosterViewMode = mode;
+  document.getElementById('roster-calendar-view').style.display = mode === 'calendar' ? 'block' : 'none';
+  document.getElementById('roster-list-view').style.display     = mode === 'list'     ? 'block' : 'none';
+  document.querySelectorAll('.view-tab').forEach(t => t.classList.toggle('active', t.dataset.view === mode));
+  if (mode === 'calendar') renderCalendarView();
+}
+
+function prevMonth() {
+  calViewDate = new Date(calViewDate.getFullYear(), calViewDate.getMonth() - 1, 1);
+  renderCalendarView();
+}
+function nextMonth() {
+  calViewDate = new Date(calViewDate.getFullYear(), calViewDate.getMonth() + 1, 1);
+  renderCalendarView();
+}
+
+function renderCalendarView() {
+  const year  = calViewDate.getFullYear();
+  const month = calViewDate.getMonth();
+  const today = new Date();
+
+  document.getElementById('cal-month-label').textContent =
+    new Date(year, month, 1).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+
+  const firstDay    = new Date(year, month, 1).getDay();  // 0=Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Index roster entries by YYYY-MM-DD
+  const byDate = {};
+  rosterData.forEach(s => {
+    const d = new Date(s.date);
+    if (isNaN(d)) return;
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    (byDate[key] = byDate[key] || []).push(s);
+  });
+
+  const grid = document.getElementById('cal-grid');
+  let cells = '';
+
+  for (let i = 0; i < firstDay; i++) cells += '<div class="cal-cell empty"></div>';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = year === today.getFullYear() && month === today.getMonth() && d === today.getDate();
+    const slots   = byDate[key] || [];
+
+    const slotHtml = slots.map(s => {
+      const sess   = s.session.toLowerCase();
+      const kgTag  = s.kg !== null ? `<span class="kg-tag">${s.kg}kg</span>` : '';
+      const cls    = isAdmin ? ` editable` : '';
+      const click  = isAdmin ? `onclick="openEditSlot(${s.id})"` : '';
+      return `<div class="cal-slot ${sess}${cls}" ${click}><strong>${s.session}</strong> ${s.team.join(' & ')}${kgTag}</div>`;
+    }).join('');
+
+    cells += `<div class="cal-cell${isToday?' today':''}"><div class="cal-day-num">${d}</div>${slotHtml}</div>`;
+  }
+
+  grid.innerHTML = cells;
+}
+
+// ═══ TELEGRAM TEST ════════════════════════════════════════════════════════════
+async function testTelegram() {
+  const key    = document.getElementById('tg-test-key').value.trim();
+  const res_el = document.getElementById('tg-test-result');
+  if (!key) { res_el.textContent = '⚠️ Enter your admin key first.'; res_el.style.color = '#856404'; return; }
+  res_el.textContent = '⏳ Sending…'; res_el.style.color = 'var(--tm)';
+  try {
+    const res = await fetch(`${API}/swap/test-notify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+    });
+    const data = await res.json();
+    if (res.ok && data.ok) {
+      res_el.innerHTML = `✅ <strong>Message sent!</strong> (message_id: ${data.message_id ?? '?'}) — check your Telegram group.`;
+      res_el.style.color = '#155724';
+    } else {
+      res_el.innerHTML = `❌ <strong>Failed:</strong> ${data.error || 'Unknown error'}`;
+      res_el.style.color = '#C62828';
+    }
+  } catch(e) {
+    res_el.innerHTML = `❌ <strong>Network error:</strong> ${e.message}`;
+    res_el.style.color = '#C62828';
+  }
 }
 
 // ═══ INIT ════════════════════════════════════════════════════════════════════

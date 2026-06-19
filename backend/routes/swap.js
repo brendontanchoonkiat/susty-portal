@@ -95,6 +95,32 @@ router.post('/', validateSwapRequest, async (req, res) => {
   res.status(201).json({ id: newSwap.id, status: 'open' });
 });
 
+// ─── POST /api/swap/test-notify — ping Telegram (admin only) ─────────────────
+router.post('/test-notify', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (req, res) => {
+  const token  = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId) {
+    return res.status(503).json({ ok: false, error: 'Telegram not configured — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing from environment' });
+  }
+  try {
+    const tRes = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id:    chatId,
+        text:       '🧪 <b>Test notification</b> from Susty Portal\n\nTelegram bot is configured and working ✅',
+        parse_mode: 'HTML',
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    const data = await tRes.json();
+    if (tRes.ok) return res.json({ ok: true, message_id: data.result?.message_id });
+    res.status(502).json({ ok: false, error: data.description || 'Telegram API error' });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
 // ─── POST /api/swap/:id/match — volunteer for a swap ─────────────────────────
 router.post('/:id/match', validateSwapId, validateSwapMatch, async (req, res) => {
   const { volunteerName, volunteerDate } = req.body;
