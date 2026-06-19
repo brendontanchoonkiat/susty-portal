@@ -1,0 +1,6 @@
+node_modules/
+.env
+backend/data/swap-requests.json
+*.log
+.DS_Store
+backend/data/roster.json
