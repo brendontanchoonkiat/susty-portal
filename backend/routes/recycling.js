@@ -69,6 +69,17 @@ function parseSheetData(rows) {
   return { cardboard, plastic: null };
 }
 
+// Consolidate multiple rows with the same month into a single summed entry
+function aggregateByMonth(arr) {
+  if (!arr || !arr.length) return [];
+  const map = {};
+  arr.forEach(r => {
+    if (!map[r.month]) map[r.month] = 0;
+    map[r.month] += r.kg;
+  });
+  return Object.entries(map).map(([month, kg]) => ({ month, kg: Math.round(kg * 100) / 100 }));
+}
+
 async function getData() {
   const now = Date.now();
   if (cache.lastFetched && (now - cache.lastFetched) < CACHE_TTL_MS) return cache;
@@ -77,17 +88,27 @@ async function getData() {
     const live = await fetchFromSheets();
     if (live && live.cardboard.length > 0) {
       cache = {
-        cardboard:   live.cardboard,
-        plastic:     live.plastic || FALLBACK.plastic,
+        cardboard:   aggregateByMonth(live.cardboard),
+        plastic:     aggregateByMonth(live.plastic || FALLBACK.plastic),
         lastFetched: now,
         source:      'live',
       };
     } else {
-      cache = { ...FALLBACK, lastFetched: now, source: 'fallback' };
+      cache = {
+        cardboard:   aggregateByMonth(FALLBACK.cardboard),
+        plastic:     aggregateByMonth(FALLBACK.plastic),
+        lastFetched: now,
+        source:      'fallback',
+      };
     }
   } catch (err) {
     console.warn('[Recycling] Sheets fetch failed, using fallback:', err.message);
-    cache = { ...FALLBACK, lastFetched: now, source: 'fallback' };
+    cache = {
+      cardboard:   aggregateByMonth(FALLBACK.cardboard),
+      plastic:     aggregateByMonth(FALLBACK.plastic),
+      lastFetched: now,
+      source:      'fallback',
+    };
   }
   return cache;
 }

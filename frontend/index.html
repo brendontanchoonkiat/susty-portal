@@ -228,10 +228,6 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 <!-- ═══ ENERGY ═══════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-energy">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">⚡ Energy & Emissions Tracker</div>
-  <div class="card" style="background:linear-gradient(135deg,#FFF8E7,#FFFBF0);border-color:#F5DFA0">
-    <strong>📂 Awaiting data from Energy Team</strong>
-    <p style="font-size:.82rem;color:var(--tm);margin-top:6px">Send monthly electricity (kWh) and water (m³) readings to populate this dashboard. Charts appear once data is loaded.</p>
-  </div>
   <div class="card-grid">
     <div class="card"><div class="section-title">⚡ Electricity (kWh)</div><div class="chart-wrap-tall"><canvas id="elec-chart"></canvas></div></div>
     <div class="card"><div class="section-title">💧 Water (m³)</div><div class="chart-wrap-tall"><canvas id="water-chart"></canvas></div></div>
@@ -244,12 +240,41 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     ♻️ Waste to Resource (W2R)
     <span class="live-badge fallback" id="w2r-source-badge">checking…</span>
   </div>
-  <p style="font-size:.78rem;color:var(--tm);margin-bottom:20px">Data syncs from Google Sheets every 5 minutes.</p>
-  <div class="card-grid">
-    <div class="card"><div class="section-title">📦 Cardboard</div><div class="chart-wrap-tall"><canvas id="cb-chart"></canvas></div><div class="stat-pill" id="cb-total">Loading…</div></div>
-    <div class="card"><div class="section-title">🍶 Plastic Bottles</div><div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div><div class="stat-pill" id="pl-total">Loading…</div></div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:14px">Data syncs from Google Sheets every 5 minutes.</p>
+
+  <!-- Filter bar -->
+  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+    <!-- Type tabs -->
+    <div class="roster-view-tabs" style="margin-bottom:0">
+      <button class="view-tab active" data-w2rtype="all"        onclick="setW2RType('all')">📊 All</button>
+      <button class="view-tab"        data-w2rtype="cardboard"  onclick="setW2RType('cardboard')">📦 Cardboard</button>
+      <button class="view-tab"        data-w2rtype="plastic"    onclick="setW2RType('plastic')">🍶 Plastic</button>
+    </div>
+    <!-- Year filter -->
+    <div style="display:flex;gap:6px">
+      <button class="view-tab active" data-w2ryear="all"  onclick="setW2RYear('all')" >All Years</button>
+      <button class="view-tab"        data-w2ryear="2025" onclick="setW2RYear('2025')">2025</button>
+      <button class="view-tab"        data-w2ryear="2026" onclick="setW2RYear('2026')">2026</button>
+    </div>
   </div>
-  <div class="card"><div class="section-title">📊 Combined Monthly View</div><div class="chart-wrap-tall"><canvas id="combined-chart"></canvas></div></div>
+
+  <!-- Events filter -->
+  <div class="card" style="margin-bottom:16px;padding:14px 18px">
+    <div class="section-title" style="margin-bottom:10px;font-size:.9rem">🎪 Big Events <span style="font-size:.72rem;font-weight:400;color:var(--tm)">— high-footfall events drive ↑ recycling</span></div>
+    <div id="events-pills" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+    <div id="events-detail" style="display:none;margin-top:12px;padding:10px 14px;background:var(--gp);border-radius:8px;font-size:.82rem;color:var(--gd)"></div>
+  </div>
+
+  <!-- Chart sections (shown/hidden by type tabs) -->
+  <div id="w2r-combined-section">
+    <div class="card"><div class="section-title">📊 Combined Monthly View</div><div class="chart-wrap-tall"><canvas id="combined-chart"></canvas></div></div>
+  </div>
+  <div id="w2r-split-section">
+    <div class="card-grid">
+      <div class="card"><div class="section-title">📦 Cardboard</div><div class="chart-wrap-tall"><canvas id="cb-chart"></canvas></div><div class="stat-pill" id="cb-total">Loading…</div></div>
+      <div class="card"><div class="section-title">🍶 Plastic Bottles</div><div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div><div class="stat-pill" id="pl-total">Loading…</div></div>
+    </div>
+  </div>
 </div>
 
 <!-- ═══ COMMS ════════════════════════════════════════════════════════════════ -->
@@ -438,6 +463,16 @@ let currentFilter = 'all';
 let teamTags   = [];
 let editingId  = null;
 
+// W2R filters
+let w2rTypeFilter  = 'all';   // 'all' | 'cardboard' | 'plastic'
+let w2rYearFilter  = 'all';   // 'all' | '2025' | '2026'
+let w2rEventFilter = null;    // event id or null
+
+const W2R_EVENTS = [
+  { id: 'gpc25',   name: 'GPC 2025',       month: 'Jul 2025', emoji: '⛪', description: 'General Prayer Conference – week-long congregation camp. High footfall leads to significantly more cardboard & plastic waste collected.' },
+  { id: 'camp26',  name: 'NY Camp 2026',    month: 'Jan 2026', emoji: '🏕️', description: 'New Year Ministry Camp – large-scale overnight camp at the start of 2026, producing a spike in recycling volume.' },
+];
+
 // ═══ NAV ═════════════════════════════════════════════════════════════════════
 document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => {
@@ -508,13 +543,13 @@ function sortByMonth(arr) {
   return [...arr].sort((a, b) => new Date(a.month + ' 1') - new Date(b.month + ' 1'));
 }
 
-function buildBar(id, labels, data, label, color, height=220) {
+function buildBar(id, labels, data, label, color, height=220, bgColors=null) {
   if (chartsBuilt[id]) chartsBuilt[id].destroy();
   const ctx = document.getElementById(id);
   if (!ctx) return;
   chartsBuilt[id] = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label, data, backgroundColor: color+'CC', borderColor: color, borderWidth:1.5, borderRadius:6 }] },
+    data: { labels, datasets: [{ label, data, backgroundColor: bgColors || color+'CC', borderColor: bgColors ? bgColors.map(c=>c.replace('CC','FF').replace('55','AA')) : color, borderWidth:1.5, borderRadius:6 }] },
     options: {
       responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ display:false } },
@@ -526,27 +561,111 @@ function buildBar(id, labels, data, label, color, height=220) {
   });
 }
 
+// Filter an array of {month, kg} by the active year filter
+function applyYearFilter(arr) {
+  if (w2rYearFilter === 'all') return arr;
+  return arr.filter(r => r.month.includes(w2rYearFilter));
+}
+
+// Return per-bar background colors, highlighting the active event month
+function eventColors(months, baseColor) {
+  const ev = w2rEventFilter ? W2R_EVENTS.find(e => e.id === w2rEventFilter) : null;
+  if (!ev) return null; // null = use default solid color
+  return months.map(m =>
+    m === ev.month ? '#F4A261CC' : baseColor + '44'
+  );
+}
+
 function buildRecyclingCharts() {
-  const sortedCb = sortByMonth(cbData);
-  const sortedPl = sortByMonth(plData);
-  buildBar('cb-chart', sortedCb.map(r=>r.month), sortedCb.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F', 300);
-  buildBar('pl-chart', sortedPl.map(r=>r.month), sortedPl.map(r=>r.kg), 'Plastic (kg)',   '#52B788', 300);
+  const sortedCb = sortByMonth(applyYearFilter(cbData));
+  const sortedPl = sortByMonth(applyYearFilter(plData));
+
+  buildBar('cb-chart', sortedCb.map(r=>r.month), sortedCb.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F', 300,
+    eventColors(sortedCb.map(r=>r.month), '#2D6A4F'));
+  buildBar('pl-chart', sortedPl.map(r=>r.month), sortedPl.map(r=>r.kg), 'Plastic (kg)',   '#52B788', 300,
+    eventColors(sortedPl.map(r=>r.month), '#52B788'));
 
   const allMonths = [...new Set([...sortedCb.map(r=>r.month),...sortedPl.map(r=>r.month)])];
   allMonths.sort((a, b) => new Date(a + ' 1') - new Date(b + ' 1'));
   const cbMap = Object.fromEntries(cbData.map(r=>[r.month,r.kg]));
   const plMap = Object.fromEntries(plData.map(r=>[r.month,r.kg]));
+
+  // Event highlighting for combined chart
+  const ev = w2rEventFilter ? W2R_EVENTS.find(e => e.id === w2rEventFilter) : null;
+  const cbBg = ev
+    ? allMonths.map(m => m === ev.month ? '#2D6A4FDD' : '#2D6A4F33')
+    : '#2D6A4F99';
+  const plBg = ev
+    ? allMonths.map(m => m === ev.month ? '#52B788DD' : '#52B78833')
+    : '#52B78899';
+
   const ctx = document.getElementById('combined-chart');
   if (!ctx) return;
   if (chartsBuilt['combined']) chartsBuilt['combined'].destroy();
   chartsBuilt['combined'] = new Chart(ctx, {
     type:'bar',
     data:{ labels:allMonths, datasets:[
-      { label:'Cardboard (kg)', data:allMonths.map(m=>cbMap[m]||0), backgroundColor:'#2D6A4F99', borderColor:'#2D6A4F', borderRadius:5, stack:'a' },
-      { label:'Plastic (kg)',   data:allMonths.map(m=>plMap[m]||0), backgroundColor:'#52B78899', borderColor:'#52B788', borderRadius:5, stack:'a' },
+      { label:'Cardboard (kg)', data:allMonths.map(m=>cbMap[m]||0), backgroundColor:cbBg, borderColor:'#2D6A4F', borderRadius:5, stack:'a' },
+      { label:'Plastic (kg)',   data:allMonths.map(m=>plMap[m]||0), backgroundColor:plBg, borderColor:'#52B788', borderRadius:5, stack:'a' },
     ]},
     options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'top' } }, scales:{ y:{ stacked:true, beginAtZero:true }, x:{ stacked:true, grid:{ display:false }, ticks:{maxRotation:45,font:{size:10}} } } }
   });
+}
+
+// W2R filter controls
+function setW2RType(type) {
+  w2rTypeFilter = type;
+  document.querySelectorAll('[data-w2rtype]').forEach(b =>
+    b.classList.toggle('active', b.dataset.w2rtype === type));
+  const showSplit    = type === 'cardboard' || type === 'plastic';
+  const showCombined = type === 'all';
+  document.getElementById('w2r-split-section').style.display    = showSplit    ? 'block' : (type==='all'?'block':'none');
+  document.getElementById('w2r-combined-section').style.display = showCombined ? 'block' : 'none';
+  // For single-type view, hide the other card within the split
+  const cbCard = document.getElementById('w2r-split-section').querySelector('.card-grid');
+  if (cbCard) {
+    const [cbCard2, plCard] = cbCard.children;
+    if (cbCard2) cbCard2.style.display = (type==='all'||type==='cardboard') ? '' : 'none';
+    if (plCard)  plCard.style.display  = (type==='all'||type==='plastic')   ? '' : 'none';
+  }
+  buildRecyclingCharts();
+}
+
+function setW2RYear(year) {
+  w2rYearFilter = year;
+  document.querySelectorAll('[data-w2ryear]').forEach(b =>
+    b.classList.toggle('active', b.dataset.w2ryear === year));
+  buildRecyclingCharts();
+}
+
+function setW2REvent(id) {
+  w2rEventFilter = (w2rEventFilter === id) ? null : id;
+  renderEventPills();
+  buildRecyclingCharts();
+}
+
+function renderEventPills() {
+  const container = document.getElementById('events-pills');
+  const detail    = document.getElementById('events-detail');
+  if (!container) return;
+  container.innerHTML = W2R_EVENTS.map(ev => {
+    const active = w2rEventFilter === ev.id;
+    return `<button onclick="setW2REvent('${ev.id}')" style="
+      display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:20px;
+      border:1.5px solid ${active?'#F4A261':'var(--br)'};cursor:pointer;font-size:.8rem;font-weight:600;
+      background:${active?'#FFF0E6':'var(--sf)'};color:${active?'#9A4A00':'var(--tx)'};
+      font-family:inherit;transition:all .15s">
+      ${ev.emoji} ${ev.name} <span style="font-size:.7rem;color:${active?'#9A4A00':'var(--tm)'}">· ${ev.month}</span>
+    </button>`;
+  }).join('');
+  // Show/hide detail
+  const ev = w2rEventFilter ? W2R_EVENTS.find(e=>e.id===w2rEventFilter) : null;
+  if (ev) {
+    detail.style.display = 'block';
+    detail.innerHTML = `<strong>${ev.emoji} ${ev.name} (${ev.month})</strong> — ${ev.description}`;
+  } else {
+    detail.style.display = 'none';
+  }
 }
 
 function buildOverviewChart() {
@@ -1155,6 +1274,7 @@ async function testTelegram() {
 // ═══ INIT ════════════════════════════════════════════════════════════════════
 (async () => {
   renderManualChecklist();
+  renderEventPills();
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
 })();
 </script>
