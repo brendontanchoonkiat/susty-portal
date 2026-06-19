@@ -1,277 +1,159 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Sustainability Ministry Portal</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  /* ─── Tokens ─────────────────────────────────────────────────────────── */
-  :root {
-    --green-deep:   #1B4332;
-    --green-mid:    #2D6A4F;
-    --green-soft:   #52B788;
-    --green-pale:   #D8F3DC;
-    --amber:        #E9C46A;
-    --clay:         #F4A261;
-    --bg:           #F7F9F7;
-    --surface:      #FFFFFF;
-    --text:         #1A2E1A;
-    --text-muted:   #5C6E5C;
-    --border:       #D0E8D4;
-    --radius:       12px;
-    --radius-lg:    20px;
-    --shadow:       0 2px 12px rgba(27,67,50,0.09);
-    --shadow-lg:    0 8px 32px rgba(27,67,50,0.13);
-    --font-display: 'Georgia', serif;
-    --font-body:    'Segoe UI', system-ui, sans-serif;
-    --nav-h:        60px;
-  }
+:root{
+  --gd:#1B4332;--gm:#2D6A4F;--gs:#52B788;--gp:#D8F3DC;
+  --am:#E9C46A;--cl:#F4A261;--bg:#F7F9F7;--sf:#FFF;
+  --tx:#1A2E1A;--tm:#5C6E5C;--br:#D0E8D4;
+  --r:12px;--rl:20px;--sh:0 2px 12px rgba(27,67,50,.09);
+  --sh2:0 8px 32px rgba(27,67,50,.13);--nh:60px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}
 
-  /* ─── Reset & Base ───────────────────────────────────────────────────── */
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body {
-    font-family: var(--font-body);
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-  }
+/* NAV */
+nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);display:flex;align-items:center;padding:0 24px;gap:8px;box-shadow:0 2px 12px rgba(0,0,0,.2)}
+.nav-logo{font-family:Georgia,serif;font-size:1rem;color:var(--gp);font-weight:bold;margin-right:16px;white-space:nowrap}
+.nav-logo span{color:var(--gs)}
+.nav-tabs{display:flex;gap:4px;overflow-x:auto;flex:1}
+.nav-tab{background:transparent;border:none;cursor:pointer;color:rgba(216,243,220,.65);font-size:.82rem;font-family:inherit;font-weight:500;padding:6px 14px;border-radius:20px;white-space:nowrap;transition:background .18s,color .18s}
+.nav-tab:hover{background:rgba(255,255,255,.08);color:#fff}
+.nav-tab.active{background:var(--gs);color:var(--gd);font-weight:700}
 
-  /* ─── Nav ────────────────────────────────────────────────────────────── */
-  nav {
-    position: sticky; top: 0; z-index: 100;
-    background: var(--green-deep);
-    height: var(--nav-h);
-    display: flex; align-items: center;
-    padding: 0 24px;
-    gap: 8px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.2);
-  }
-  .nav-logo {
-    font-family: var(--font-display);
-    font-size: 1rem;
-    color: var(--green-pale);
-    font-weight: bold;
-    letter-spacing: 0.02em;
-    margin-right: 16px;
-    white-space: nowrap;
-  }
-  .nav-logo span { color: var(--green-soft); }
-  .nav-tabs { display: flex; gap: 4px; overflow-x: auto; flex: 1; }
-  .nav-tab {
-    background: transparent;
-    border: none; cursor: pointer;
-    color: rgba(216,243,220,0.65);
-    font-size: 0.82rem;
-    font-family: var(--font-body);
-    font-weight: 500;
-    padding: 6px 14px;
-    border-radius: 20px;
-    white-space: nowrap;
-    transition: background 0.18s, color 0.18s;
-  }
-  .nav-tab:hover   { background: rgba(255,255,255,0.08); color: #fff; }
-  .nav-tab.active  { background: var(--green-soft); color: var(--green-deep); font-weight: 700; }
+/* PAGES */
+.page{display:none;padding:28px 24px 60px;max-width:1100px;margin:0 auto}
+.page.active{display:block;animation:fi .22s ease}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
-  /* ─── Pages ──────────────────────────────────────────────────────────── */
-  .page { display: none; padding: 28px 24px 60px; max-width: 1100px; margin: 0 auto; }
-  .page.active { display: block; animation: fadeIn 0.22s ease; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+/* HERO */
+.hero{background:linear-gradient(135deg,var(--gd),var(--gm));border-radius:var(--rl);padding:36px 32px 32px;margin-bottom:28px;color:#fff;position:relative;overflow:hidden}
+.hero::before{content:'🌿';position:absolute;right:32px;top:20px;font-size:5rem;opacity:.12}
+.hero h1{font-family:Georgia,serif;font-size:1.8rem;margin-bottom:4px}
+.hero p{color:var(--gp);font-size:.9rem;margin-bottom:20px}
+.hero-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.hero-stat{background:rgba(255,255,255,.1);border-radius:var(--r);padding:14px 16px;border:1px solid rgba(255,255,255,.12)}
+.hero-stat .val{font-size:1.5rem;font-weight:700;color:var(--gs)}
+.hero-stat .lbl{font-size:.75rem;color:var(--gp);margin-top:2px}
 
-  /* ─── Hero Banner ────────────────────────────────────────────────────── */
-  .hero {
-    background: linear-gradient(135deg, var(--green-deep) 0%, var(--green-mid) 100%);
-    border-radius: var(--radius-lg);
-    padding: 36px 32px 32px;
-    margin-bottom: 28px;
-    color: #fff;
-    position: relative;
-    overflow: hidden;
-  }
-  .hero::before {
-    content: '🌿';
-    position: absolute; right: 32px; top: 20px;
-    font-size: 5rem; opacity: 0.12;
-  }
-  .hero h1 { font-family: var(--font-display); font-size: 1.8rem; margin-bottom: 4px; }
-  .hero p  { color: var(--green-pale); font-size: 0.9rem; margin-bottom: 20px; }
-  .hero-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
-  }
-  .hero-stat {
-    background: rgba(255,255,255,0.1);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-    border: 1px solid rgba(255,255,255,0.12);
-  }
-  .hero-stat .val { font-size: 1.5rem; font-weight: 700; color: var(--green-soft); }
-  .hero-stat .lbl { font-size: 0.75rem; color: var(--green-pale); margin-top: 2px; }
+/* CARDS */
+.section-title{font-family:Georgia,serif;font-size:1.05rem;color:var(--gd);margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--gp);display:flex;align-items:center;gap:8px}
+.card{background:var(--sf);border-radius:var(--r);padding:20px;box-shadow:var(--sh);border:1px solid var(--br);margin-bottom:16px}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px}
+.chart-wrap{position:relative;height:220px}
+.chart-wrap-tall{position:relative;height:300px}
 
-  /* ─── Cards ──────────────────────────────────────────────────────────── */
-  .section-title {
-    font-family: var(--font-display);
-    font-size: 1.05rem;
-    color: var(--green-deep);
-    margin-bottom: 12px;
-    padding-bottom: 8px;
-    border-bottom: 2px solid var(--green-pale);
-    display: flex; align-items: center; gap: 8px;
-  }
-  .card {
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 20px;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-    margin-bottom: 16px;
-  }
-  .card-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
-    margin-bottom: 20px;
-  }
+/* LIVE BADGE */
+.live-badge{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;font-weight:700;padding:3px 10px;border-radius:12px;margin-left:8px}
+.live-badge.live{background:#D4EDDA;color:#155724}
+.live-badge.live::before{content:'●';animation:pulse 1.5s infinite}
+.live-badge.fallback{background:#FFF3CD;color:#856404}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-  /* ─── Chart containers ───────────────────────────────────────────────── */
-  .chart-wrap { position: relative; height: 220px; }
-  .chart-wrap-tall { position: relative; height: 300px; }
+/* ROSTER TABLE */
+.roster-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.roster-table th{background:var(--gd);color:var(--gp);padding:10px 12px;text-align:left;font-weight:600;font-size:.78rem;letter-spacing:.04em}
+.roster-table th:first-child{border-radius:8px 0 0 0}
+.roster-table th:last-child{border-radius:0 8px 0 0}
+.roster-table td{padding:9px 12px;border-bottom:1px solid var(--br);vertical-align:middle}
+.roster-table tr:last-child td{border-bottom:none}
+.roster-table tr:nth-child(even) td{background:#F7FBF7}
+.roster-table tr:hover td{background:#EDF7EE}
+.badge{display:inline-block;font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:12px}
+.badge-sat{background:#FFF3CD;color:#856404}
+.badge-sun{background:#D4EDDA;color:#155724}
 
-  /* ─── Stat pill ──────────────────────────────────────────────────────── */
-  .stat-pill {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--green-pale);
-    color: var(--green-deep);
-    font-size: 0.78rem; font-weight: 600;
-    padding: 4px 12px; border-radius: 20px;
-    margin-top: 8px;
-  }
+/* ACTION BTNS in table */
+.action-btn{background:none;border:1px solid var(--br);border-radius:6px;padding:3px 8px;font-size:.72rem;cursor:pointer;color:var(--tm);transition:all .15s}
+.action-btn:hover{background:var(--gp);border-color:var(--gs);color:var(--gd)}
+.action-btn.danger:hover{background:#FFEBEE;border-color:#E57373;color:#C62828}
 
-  /* ─── Roster table ───────────────────────────────────────────────────── */
-  .roster-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
-  .roster-table th {
-    background: var(--green-deep); color: var(--green-pale);
-    padding: 10px 12px; text-align: left; font-weight: 600;
-    font-size: 0.78rem; letter-spacing: 0.04em;
-  }
-  .roster-table th:first-child { border-radius: 8px 0 0 0; }
-  .roster-table th:last-child  { border-radius: 0 8px 0 0; }
-  .roster-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); }
-  .roster-table tr:last-child td { border-bottom: none; }
-  .roster-table tr:nth-child(even) td { background: #F7FBF7; }
+/* ROSTER EDITOR */
+.editor-panel{background:#F0FAF2;border:1.5px solid var(--gs);border-radius:var(--r);padding:20px;margin-top:16px}
+.editor-panel h3{font-size:.9rem;font-weight:700;color:var(--gd);margin-bottom:14px}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+.form-field label{display:block;font-size:.75rem;font-weight:600;color:var(--tm);margin-bottom:4px}
+.form-field input,.form-field select,.form-field textarea{width:100%;padding:8px 11px;border:1.5px solid var(--br);border-radius:8px;font-family:inherit;font-size:.85rem;color:var(--tx);background:var(--bg);transition:border-color .15s}
+.form-field input:focus,.form-field select:focus,.form-field textarea:focus{outline:none;border-color:var(--gs)}
+.tag-input-wrap{display:flex;flex-wrap:wrap;gap:6px;padding:6px;border:1.5px solid var(--br);border-radius:8px;background:var(--bg);min-height:40px;cursor:text}
+.tag-input-wrap:focus-within{border-color:var(--gs)}
+.member-tag{display:inline-flex;align-items:center;gap:4px;background:var(--gp);color:var(--gd);border-radius:20px;padding:2px 10px;font-size:.78rem;font-weight:600}
+.member-tag button{background:none;border:none;cursor:pointer;color:var(--gm);font-size:.9rem;line-height:1;padding:0 0 0 2px}
+.tag-input{border:none;outline:none;background:transparent;font-size:.82rem;min-width:80px;flex:1}
 
-  .badge {
-    display: inline-block;
-    font-size: 0.7rem; font-weight: 700;
-    padding: 2px 8px; border-radius: 12px;
-  }
-  .badge-sat { background: #FFF3CD; color: #856404; }
-  .badge-sun { background: #D4EDDA; color: #155724; }
+/* WEIGHT LOG */
+.weight-cell{display:flex;align-items:center;gap:6px}
+.weight-cell .kg-val{font-weight:700;color:var(--gm)}
+.weight-cell .kg-pending{color:var(--tm);font-style:italic;font-size:.78rem}
+.inline-kg{width:70px;padding:3px 6px;border:1px solid var(--br);border-radius:6px;font-size:.82rem}
 
-  /* ─── Calendar ───────────────────────────────────────────────────────── */
-  .cal-grid { display: grid; gap: 10px; }
-  .cal-item {
-    display: grid;
-    grid-template-columns: 80px 1fr auto;
-    align-items: center;
-    gap: 14px;
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-    box-shadow: var(--shadow);
-    border-left: 4px solid var(--green-soft);
-  }
-  .cal-item.status-draft  { border-left-color: var(--amber); }
-  .cal-item.status-idea   { border-left-color: var(--border); }
-  .cal-date { font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; }
-  .cal-date strong { display: block; font-size: 1rem; color: var(--green-deep); font-weight: 700; }
-  .cal-theme { font-size: 0.88rem; font-weight: 600; color: var(--text); }
-  .cal-meta  { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
-  .status-tag {
-    font-size: 0.68rem; font-weight: 700; padding: 3px 9px; border-radius: 12px;
-    white-space: nowrap;
-  }
-  .status-planned { background: var(--green-pale); color: var(--green-deep); }
-  .status-draft   { background: #FFF3CD; color: #856404; }
-  .status-idea    { background: #EEE; color: #555; }
+/* BTNS */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 22px;border:none;border-radius:8px;cursor:pointer;font-family:inherit;font-size:.88rem;font-weight:600;transition:transform .12s,box-shadow .12s}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--gd);color:#fff;box-shadow:0 2px 8px rgba(27,67,50,.25)}
+.btn-primary:hover{background:var(--gm)}
+.btn-sm{padding:6px 14px;font-size:.78rem}
+.btn-outline{background:transparent;border:1.5px solid var(--gd);color:var(--gd)}
+.btn-outline:hover{background:var(--gp)}
+.btn-danger{background:#C62828;color:#fff}
+.btn-danger:hover{background:#B71C1C}
 
-  /* ─── Swap form ──────────────────────────────────────────────────────── */
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
-  .form-field label { display: block; font-size: 0.78rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
-  .form-field input,
-  .form-field textarea,
-  .form-field select {
-    width: 100%;
-    padding: 9px 12px;
-    border: 1.5px solid var(--border);
-    border-radius: 8px;
-    font-family: var(--font-body);
-    font-size: 0.88rem;
-    color: var(--text);
-    background: var(--bg);
-    transition: border-color 0.15s;
-  }
-  .form-field input:focus,
-  .form-field textarea:focus { outline: none; border-color: var(--green-soft); }
-  .btn {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 10px 22px;
-    border: none; border-radius: 8px; cursor: pointer;
-    font-family: var(--font-body); font-size: 0.88rem; font-weight: 600;
-    transition: transform 0.12s, box-shadow 0.12s;
-  }
-  .btn:active { transform: scale(0.97); }
-  .btn-primary { background: var(--green-deep); color: #fff; box-shadow: 0 2px 8px rgba(27,67,50,0.25); }
-  .btn-primary:hover { background: var(--green-mid); }
-  .btn-sm { padding: 6px 14px; font-size: 0.78rem; }
-  .btn-outline { background: transparent; border: 1.5px solid var(--green-deep); color: var(--green-deep); }
-  .btn-outline:hover { background: var(--green-pale); }
+/* COMMS CALENDAR */
+.cal-grid{display:grid;gap:10px}
+.cal-item{display:grid;grid-template-columns:80px 1fr auto;align-items:center;gap:14px;background:var(--sf);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh);border-left:4px solid var(--gs)}
+.cal-item.status-draft{border-left-color:var(--am)}
+.cal-item.status-idea{border-left-color:var(--br)}
+.cal-date{font-size:.72rem;color:var(--tm);line-height:1.4}
+.cal-date strong{display:block;font-size:1rem;color:var(--gd);font-weight:700}
+.cal-theme{font-size:.88rem;font-weight:600}
+.cal-meta{font-size:.75rem;color:var(--tm);margin-top:2px}
+.status-tag{font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:12px;white-space:nowrap}
+.status-planned{background:var(--gp);color:var(--gd)}
+.status-draft{background:#FFF3CD;color:#856404}
+.status-idea{background:#EEE;color:#555}
 
-  .swap-list { display: grid; gap: 10px; margin-top: 16px; }
-  .swap-card {
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-    box-shadow: var(--shadow);
-    border: 1px solid var(--border);
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    flex-wrap: wrap;
-  }
-  .swap-info .name { font-weight: 700; font-size: 0.9rem; }
-  .swap-info .meta { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+/* SWAP */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.swap-list{display:grid;gap:10px;margin-top:16px}
+.swap-card{background:var(--sf);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh);border:1px solid var(--br);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.swap-info .name{font-weight:700;font-size:.9rem}
+.swap-info .meta{font-size:.78rem;color:var(--tm);margin-top:2px}
 
-  /* ─── Toast ──────────────────────────────────────────────────────────── */
-  #toast {
-    position: fixed; bottom: 24px; right: 24px;
-    background: var(--green-deep); color: #fff;
-    padding: 12px 20px; border-radius: 10px;
-    font-size: 0.85rem; font-weight: 500;
-    box-shadow: var(--shadow-lg);
-    opacity: 0; transform: translateY(12px);
-    transition: opacity 0.25s, transform 0.25s;
-    pointer-events: none; z-index: 999;
-  }
-  #toast.show { opacity: 1; transform: translateY(0); }
+/* TEST PANEL */
+.test-panel{background:#1A2E1A;border-radius:var(--r);padding:20px;color:#A8D5B5;font-family:'Courier New',monospace;font-size:.82rem;max-height:400px;overflow-y:auto}
+.test-line{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.05)}
+.test-line.pass{color:#69D99A}
+.test-line.fail{color:#FF7675}
+.test-line.info{color:#81ECEC}
+.test-line.warn{color:#FDCB6E}
+.test-summary{margin-top:12px;font-weight:700;font-size:.9rem}
 
-  /* ─── Loading ────────────────────────────────────────────────────────── */
-  .loading { text-align: center; padding: 40px; color: var(--text-muted); font-size: 0.9rem; }
+/* TOAST */
+#toast{position:fixed;bottom:24px;right:24px;background:var(--gd);color:#fff;padding:12px 20px;border-radius:10px;font-size:.85rem;font-weight:500;box-shadow:var(--sh2);opacity:0;transform:translateY(12px);transition:opacity .25s,transform .25s;pointer-events:none;z-index:999}
+#toast.show{opacity:1;transform:translateY(0)}
+#toast.error{background:#C62828}
 
-  /* ─── Responsive ──────────────────────────────────────────────────────── */
-  @media (max-width: 600px) {
-    .form-grid { grid-template-columns: 1fr; }
-    .hero { padding: 24px 18px; }
-    .hero h1 { font-size: 1.4rem; }
-    .cal-item { grid-template-columns: 64px 1fr; }
-    .cal-item .status-tag { display: none; }
-    nav { padding: 0 12px; }
-  }
+.loading{text-align:center;padding:40px;color:var(--tm);font-size:.9rem}
+.stat-pill{display:inline-flex;align-items:center;gap:6px;background:var(--gp);color:var(--gd);font-size:.78rem;font-weight:600;padding:4px 12px;border-radius:20px;margin-top:8px}
+.divider{height:1px;background:var(--br);margin:20px 0}
+
+@media(max-width:600px){
+  .form-row,.form-grid{grid-template-columns:1fr}
+  .hero{padding:24px 18px}.hero h1{font-size:1.4rem}
+  .cal-item{grid-template-columns:64px 1fr}
+  .cal-item .status-tag{display:none}
+  nav{padding:0 12px}
+}
 </style>
 </head>
 <body>
 
-<!-- ─── Navigation ─────────────────────────────────────────────────────────── -->
+<!-- NAV -->
 <nav>
   <div class="nav-logo">🌱 <span>Susty</span> Ministry</div>
   <div class="nav-tabs">
@@ -279,395 +161,562 @@
     <button class="nav-tab" data-page="energy">⚡ Energy</button>
     <button class="nav-tab" data-page="recycling">♻️ W2R</button>
     <button class="nav-tab" data-page="comms">📢 Comms</button>
-    <button class="nav-tab" data-page="roster">📋 Roster & Swaps</button>
+    <button class="nav-tab" data-page="roster">📋 Roster</button>
+    <button class="nav-tab" data-page="test">🧪 Test</button>
   </div>
 </nav>
 
-<!-- ─── Overview Page ─────────────────────────────────────────────────────── -->
+<!-- ═══ OVERVIEW ════════════════════════════════════════════════════════════ -->
 <div class="page active" id="page-overview">
   <div class="hero">
     <h1>Ministry at a Glance</h1>
-    <p>Tracking our collective impact — Energy · W2R · Comms</p>
+    <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
-      <div class="hero-stat">
-        <div class="val" id="ov-cardboard">—</div>
-        <div class="lbl">📦 Cardboard recycled (kg)</div>
-      </div>
-      <div class="hero-stat">
-        <div class="val" id="ov-plastic">—</div>
-        <div class="lbl">🍶 Plastics recycled (kg)</div>
-      </div>
-      <div class="hero-stat">
-        <div class="val" id="ov-energy">—</div>
-        <div class="lbl">⚡ Energy data status</div>
-      </div>
-      <div class="hero-stat">
-        <div class="val" id="ov-posts">—</div>
-        <div class="lbl">📅 Posts scheduled</div>
-      </div>
+      <div class="hero-stat"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard recycled (kg)</div></div>
+      <div class="hero-stat"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastics recycled (kg)</div></div>
+      <div class="hero-stat"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Energy status</div></div>
+      <div class="hero-stat"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts scheduled</div></div>
     </div>
   </div>
-
   <div class="card-grid">
-    <!-- W2R mini chart -->
     <div class="card">
-      <div class="section-title">♻️ Recycling Trend</div>
+      <div class="section-title">♻️ Recycling Trend <span class="live-badge fallback" id="ov-source-badge">checking…</span></div>
       <div class="chart-wrap"><canvas id="ov-chart"></canvas></div>
     </div>
-    <!-- Upcoming roster -->
     <div class="card">
-      <div class="section-title">📋 Next W2R Slots</div>
+      <div class="section-title">📋 Next Roster Slots</div>
       <table class="roster-table" id="ov-roster">
-        <thead><tr><th>Date</th><th>Team</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>Session</th><th>Team</th></tr></thead>
         <tbody><tr><td colspan="3" class="loading">Loading…</td></tr></tbody>
       </table>
     </div>
   </div>
-
-  <!-- Upcoming comms -->
   <div class="section-title">📢 Upcoming Posts</div>
-  <div class="cal-grid" id="ov-cal">
-    <div class="loading">Loading…</div>
-  </div>
+  <div class="cal-grid" id="ov-cal"><div class="loading">Loading…</div></div>
 </div>
 
-<!-- ─── Energy Page ───────────────────────────────────────────────────────── -->
+<!-- ═══ ENERGY ═══════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-energy">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">⚡ Energy & Emissions Tracker</div>
-
-  <div class="card" style="background:linear-gradient(135deg,#FFF8E7,#FFFBF0);border-color:#F5DFA0;">
+  <div class="card" style="background:linear-gradient(135deg,#FFF8E7,#FFFBF0);border-color:#F5DFA0">
     <strong>📂 Awaiting data from Energy Team</strong>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-top:6px;">
-      Send your monthly electricity (kWh) and water (m³) readings to populate this dashboard.
-      Data will appear as charts once loaded.
-    </p>
+    <p style="font-size:.82rem;color:var(--tm);margin-top:6px">Send monthly electricity (kWh) and water (m³) readings to populate this dashboard. Charts appear once data is loaded.</p>
   </div>
-
   <div class="card-grid">
-    <div class="card">
-      <div class="section-title">⚡ Electricity (kWh)</div>
-      <div class="chart-wrap-tall"><canvas id="elec-chart"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="section-title">💧 Water (m³)</div>
-      <div class="chart-wrap-tall"><canvas id="water-chart"></canvas></div>
-    </div>
+    <div class="card"><div class="section-title">⚡ Electricity (kWh)</div><div class="chart-wrap-tall"><canvas id="elec-chart"></canvas></div></div>
+    <div class="card"><div class="section-title">💧 Water (m³)</div><div class="chart-wrap-tall"><canvas id="water-chart"></canvas></div></div>
   </div>
 </div>
 
-<!-- ─── W2R / Recycling Page ─────────────────────────────────────────────── -->
+<!-- ═══ RECYCLING ════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-recycling">
-  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">♻️ Waste to Resource (W2R)</div>
-
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:4px">
+    ♻️ Waste to Resource (W2R)
+    <span class="live-badge fallback" id="w2r-source-badge">checking…</span>
+  </div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:20px">Data syncs from Google Sheets every 5 minutes.</p>
   <div class="card-grid">
-    <div class="card">
-      <div class="section-title">📦 Cardboard</div>
-      <div class="chart-wrap-tall"><canvas id="cb-chart"></canvas></div>
-      <div class="stat-pill" id="cb-total">Total: loading…</div>
-    </div>
-    <div class="card">
-      <div class="section-title">🍶 Plastic Bottles</div>
-      <div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div>
-      <div class="stat-pill" id="pl-total">Total: loading…</div>
-    </div>
+    <div class="card"><div class="section-title">📦 Cardboard</div><div class="chart-wrap-tall"><canvas id="cb-chart"></canvas></div><div class="stat-pill" id="cb-total">Loading…</div></div>
+    <div class="card"><div class="section-title">🍶 Plastic Bottles</div><div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div><div class="stat-pill" id="pl-total">Loading…</div></div>
   </div>
-
-  <div class="card">
-    <div class="section-title">📊 Combined Monthly View</div>
-    <div class="chart-wrap-tall"><canvas id="combined-chart"></canvas></div>
-  </div>
+  <div class="card"><div class="section-title">📊 Combined Monthly View</div><div class="chart-wrap-tall"><canvas id="combined-chart"></canvas></div></div>
 </div>
 
-<!-- ─── Comms Page ────────────────────────────────────────────────────────── -->
+<!-- ═══ COMMS ════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-comms">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">📢 Comms Posting Schedule</div>
-
-  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
     <button class="btn btn-outline btn-sm" onclick="filterCal('all')">All</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('planned')">✅ Planned</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('draft')">✏️ Draft</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('idea')">💡 Ideas</button>
   </div>
-
-  <div class="cal-grid" id="comms-cal">
-    <div class="loading">Loading…</div>
-  </div>
+  <div class="cal-grid" id="comms-cal"><div class="loading">Loading…</div></div>
 </div>
 
-<!-- ─── Roster & Swaps Page ───────────────────────────────────────────────── -->
+<!-- ═══ ROSTER ═══════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-roster">
-  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">📋 Ministry Roster & Swap Requests</div>
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:4px">📋 W2R Roster</div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:20px">Manage slots, log weights, and request swaps.</p>
 
-  <!-- Full Roster -->
-  <div class="card" style="margin-bottom:20px;">
-    <div class="section-title">W2R Weekend Roster</div>
-    <table class="roster-table" id="full-roster">
-      <thead><tr><th>Week</th><th>Date</th><th>Session</th><th>Team Members</th></tr></thead>
-      <tbody><tr><td colspan="4" class="loading">Loading…</td></tr></tbody>
-    </table>
+  <!-- Admin unlock -->
+  <div class="card" id="admin-lock-panel">
+    <div class="section-title">🔒 Admin Mode</div>
+    <p style="font-size:.82rem;color:var(--tm);margin-bottom:12px">Enter your admin key to edit the roster, add slots, and log weights.</p>
+    <div style="display:flex;gap:10px;align-items:center">
+      <input type="password" id="admin-key-input" placeholder="Admin API key" style="padding:8px 12px;border:1.5px solid var(--br);border-radius:8px;font-size:.88rem;flex:1"/>
+      <button class="btn btn-primary btn-sm" onclick="unlockAdmin()">Unlock</button>
+    </div>
   </div>
 
-  <!-- Swap Request Form -->
+  <!-- Roster table -->
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="section-title" style="margin-bottom:0;border:none;padding:0">Weekend Slots</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="filterRoster('all')">All</button>
+        <button class="btn btn-outline btn-sm" onclick="filterRoster('SAT')">SAT</button>
+        <button class="btn btn-outline btn-sm" onclick="filterRoster('SUN')">SUN</button>
+        <button class="btn btn-primary btn-sm admin-only" onclick="openAddSlot()" style="display:none">+ Add Slot</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="roster-table" id="full-roster">
+        <thead>
+          <tr>
+            <th>Week</th><th>Date</th><th>Session</th><th>Team</th>
+            <th>Weight (kg)</th><th class="admin-only" style="display:none">Actions</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Add/Edit slot panel (hidden by default) -->
+  <div class="editor-panel" id="slot-editor" style="display:none">
+    <h3 id="editor-title">➕ Add New Slot</h3>
+    <input type="hidden" id="edit-slot-id"/>
+    <div class="form-row">
+      <div class="form-field"><label>Week Label</label><input type="text" id="ed-week" placeholder="e.g. Jul W3"/></div>
+      <div class="form-field"><label>Date</label><input type="text" id="ed-date" placeholder="e.g. 19 Jul 2026"/></div>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Session</label>
+        <select id="ed-session"><option value="SAT">Saturday (SAT)</option><option value="SUN">Sunday (SUN)</option></select>
+      </div>
+      <div class="form-field">
+        <label>Weight logged (kg) — optional</label>
+        <input type="number" id="ed-kg" placeholder="e.g. 12.5" min="0" max="2000" step="0.01"/>
+      </div>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Team Members (type name + Enter)</label>
+      <div class="tag-input-wrap" id="team-tags" onclick="document.getElementById('team-tag-input').focus()"></div>
+      <input class="tag-input" id="team-tag-input" placeholder="Type a name and press Enter…" onkeydown="handleTagKey(event)"/>
+    </div>
+    <div class="form-field" style="margin-bottom:16px">
+      <label>Notes</label>
+      <input type="text" id="ed-notes" placeholder="e.g. Youth Camp weekend"/>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="saveSlot()">💾 Save</button>
+      <button class="btn btn-outline btn-sm" onclick="closeEditor()">Cancel</button>
+      <button class="btn btn-danger btn-sm" id="delete-btn" onclick="deleteSlot()" style="display:none">🗑 Delete Slot</button>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Swap section -->
   <div class="card">
     <div class="section-title">🔄 Request a Roster Swap</div>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:16px;">
-      Submit your request below. The bot will notify the ministry group and auto-match you with a volunteer.
-    </p>
+    <p style="font-size:.82rem;color:var(--tm);margin-bottom:16px">Submit below — the ministry group will be notified via Telegram.</p>
     <div class="form-grid">
-      <div class="form-field">
-        <label>Your Name</label>
-        <input type="text" id="sw-name" placeholder="e.g. Clara Cheong" />
-      </div>
-      <div class="form-field">
-        <label>Your Rostered Date</label>
-        <input type="text" id="sw-date" placeholder="e.g. 28 Jun (Sat)" />
-      </div>
+      <div class="form-field"><label>Your Name</label><input type="text" id="sw-name" placeholder="e.g. Clara Cheong"/></div>
+      <div class="form-field"><label>Your Rostered Date</label><input type="text" id="sw-date" placeholder="e.g. 28 Jun 2026"/></div>
     </div>
-    <div class="form-field" style="margin-bottom:14px;">
-      <label>Reason (optional)</label>
-      <textarea id="sw-reason" rows="2" placeholder="e.g. overseas trip, family commitment…"></textarea>
-    </div>
+    <div class="form-field" style="margin-bottom:14px"><label>Reason (optional)</label><textarea id="sw-reason" rows="2" placeholder="e.g. overseas trip…"></textarea></div>
     <button class="btn btn-primary" onclick="submitSwap()">📤 Submit Swap Request</button>
   </div>
 
-  <!-- Open Swap Requests -->
-  <div style="margin-top:24px;">
-    <div class="section-title">🟢 Open Swap Requests</div>
-    <p style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;">
-      See someone who needs help? Click "Volunteer" to offer your slot — the bot will notify both of you.
-    </p>
-    <div class="swap-list" id="swap-list">
-      <div class="loading">Loading…</div>
+  <div class="section-title" style="margin-top:20px">🟢 Open Swap Requests</div>
+  <div class="swap-list" id="swap-list"><div class="loading">Loading…</div></div>
+</div>
+
+<!-- ═══ TEST ══════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-test">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">🧪 Feature Test Suite</div>
+  <div class="card">
+    <p style="font-size:.85rem;color:var(--tm);margin-bottom:16px">Runs automated checks on all API endpoints and frontend features. Requires backend to be running.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+      <button class="btn btn-primary" onclick="runAllTests()">▶ Run All Tests</button>
+      <button class="btn btn-outline btn-sm" onclick="clearLog()">Clear Log</button>
     </div>
+    <div class="test-panel" id="test-log"><div style="color:#81ECEC">Ready. Click "Run All Tests" to begin.</div></div>
+    <div class="test-summary" id="test-summary" style="margin-top:12px;display:none"></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">📋 Manual Checklist</div>
+    <div id="manual-checklist"></div>
   </div>
 </div>
 
-<!-- Toast -->
 <div id="toast"></div>
 
 <script>
-// ─── API base ──────────────────────────────────────────────────────────────
-const API = 'https://susty-portal-production.up.railway.app/api';
+// ═══ CONFIG ══════════════════════════════════════════════════════════════════
+const API = '/api'; // Change to your Railway URL for production
 
-// ─── Nav routing ───────────────────────────────────────────────────────────
-document.querySelectorAll('.nav-tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('page-' + tab.dataset.page).classList.add('active');
+// ═══ STATE ═══════════════════════════════════════════════════════════════════
+let adminKey   = '';
+let isAdmin    = false;
+let rosterData = [];
+let calData    = [];
+let cbData     = [], plData = [];
+let currentFilter = 'all';
+let teamTags   = [];
+let editingId  = null;
+
+// ═══ NAV ═════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.nav-tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('page-' + t.dataset.page).classList.add('active');
   });
 });
 
-// ─── Toast ─────────────────────────────────────────────────────────────────
-function toast(msg) {
+// ═══ TOAST ═══════════════════════════════════════════════════════════════════
+function toast(msg, isError=false) {
   const el = document.getElementById('toast');
   el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3200);
+  el.className = 'show' + (isError ? ' error' : '');
+  setTimeout(() => el.className = '', 3200);
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
-const GREEN_PALETTE = ['#2D6A4F','#52B788','#95D5B2','#B7E4C7','#D8F3DC'];
-function fmtDate(iso) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('en-SG', { day:'numeric', month:'short' });
+// ═══ ADMIN ═══════════════════════════════════════════════════════════════════
+function unlockAdmin() {
+  const key = document.getElementById('admin-key-input').value.trim();
+  if (!key) { toast('Enter your admin key', true); return; }
+  adminKey = key; isAdmin = true;
+  document.getElementById('admin-lock-panel').style.display = 'none';
+  document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  // Refresh roster table to show action column
+  renderRoster(currentFilter);
+  toast('✅ Admin mode unlocked');
 }
 
-// ─── Recycling ─────────────────────────────────────────────────────────────
-let cbData = [], plData = [];
+// ═══ RECYCLING ═══════════════════════════════════════════════════════════════
+let chartsBuilt = {};
 
 async function loadRecycling() {
   try {
-    const [cbRes, plRes] = await Promise.all([
+    const [cbRes, plRes, sumRes] = await Promise.all([
       fetch(`${API}/recycling/cardboard`),
       fetch(`${API}/recycling/plastic`),
+      fetch(`${API}/recycling/summary`),
     ]);
     cbData = await cbRes.json();
     plData = await plRes.json();
+    const sum = await sumRes.json();
 
-    const cbTotal = cbData.reduce((s,r) => s + r.kg, 0).toFixed(1);
-    const plTotal = plData.reduce((s,r) => s + r.kg, 0).toFixed(1);
-    document.getElementById('ov-cardboard').textContent = cbTotal + ' kg';
-    document.getElementById('ov-plastic').textContent   = plTotal + ' kg';
-    document.getElementById('cb-total').textContent     = `Total recycled: ${cbTotal} kg`;
-    document.getElementById('pl-total').textContent     = `Total recycled: ${plTotal} kg`;
+    document.getElementById('ov-cardboard').textContent = sum.cardboard.total + ' kg';
+    document.getElementById('ov-plastic').textContent   = sum.plastic.total + ' kg';
+    document.getElementById('cb-total').textContent     = `Total: ${sum.cardboard.total} kg`;
+    document.getElementById('pl-total').textContent     = `Total: ${sum.plastic.total} kg`;
+
+    // Update source badges
+    const src = sum.source === 'live' ? 'live' : 'fallback';
+    const lbl = sum.source === 'live' ? '● Live from Sheets' : '⚠ Cached data';
+    ['ov-source-badge','w2r-source-badge'].forEach(id => {
+      const b = document.getElementById(id);
+      b.className = `live-badge ${src}`; b.textContent = lbl;
+    });
 
     buildRecyclingCharts();
     buildOverviewChart();
   } catch(e) {
-    document.getElementById('ov-cardboard').textContent = 'N/A';
+    document.getElementById('ov-cardboard').textContent = 'Error';
   }
 }
 
-function buildChart(id, labels, data, label, color) {
+function buildBar(id, labels, data, label, color, height=220) {
+  if (chartsBuilt[id]) chartsBuilt[id].destroy();
   const ctx = document.getElementById(id);
   if (!ctx) return;
-  new Chart(ctx, {
+  chartsBuilt[id] = new Chart(ctx, {
     type: 'bar',
-    data: {
-      labels,
-      datasets: [{ label, data, backgroundColor: color + 'CC', borderColor: color, borderWidth: 1.5, borderRadius: 6 }]
-    },
+    data: { labels, datasets: [{ label, data, backgroundColor: color+'CC', borderColor: color, borderWidth:1.5, borderRadius:6 }] },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, grid: { color: '#E8F5E9' }, ticks: { font: { size: 11 } } },
-        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } }
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        y:{ beginAtZero:true, grid:{ color:'#E8F5E9' }, ticks:{ font:{size:11} } },
+        x:{ grid:{ display:false }, ticks:{ font:{size:10}, maxRotation:45 } }
       }
     }
   });
 }
 
 function buildRecyclingCharts() {
-  buildChart('cb-chart', cbData.map(r=>r.month), cbData.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F');
-  buildChart('pl-chart', plData.map(r=>r.month), plData.map(r=>r.kg), 'Plastic (kg)', '#52B788');
+  buildBar('cb-chart', cbData.map(r=>r.month), cbData.map(r=>r.kg), 'Cardboard (kg)', '#2D6A4F', 300);
+  buildBar('pl-chart', plData.map(r=>r.month), plData.map(r=>r.kg), 'Plastic (kg)',   '#52B788', 300);
 
-  // Combined
-  const allMonths = [...new Set([...cbData.map(r=>r.month), ...plData.map(r=>r.month)])];
+  const allMonths = [...new Set([...cbData.map(r=>r.month),...plData.map(r=>r.month)])];
   const cbMap = Object.fromEntries(cbData.map(r=>[r.month,r.kg]));
   const plMap = Object.fromEntries(plData.map(r=>[r.month,r.kg]));
   const ctx = document.getElementById('combined-chart');
   if (!ctx) return;
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: allMonths,
-      datasets: [
-        { label: 'Cardboard (kg)', data: allMonths.map(m=>cbMap[m]||0), backgroundColor: '#2D6A4F99', borderColor: '#2D6A4F', borderWidth:1.5, borderRadius:5, stack:'a' },
-        { label: 'Plastic (kg)',   data: allMonths.map(m=>plMap[m]||0), backgroundColor: '#52B78899', borderColor: '#52B788', borderWidth:1.5, borderRadius:5, stack:'a' },
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'top', labels: { font:{size:11} } } },
-      scales: {
-        y: { beginAtZero: true, stacked: true, grid:{color:'#E8F5E9'} },
-        x: { stacked: true, grid:{display:false}, ticks:{font:{size:10}, maxRotation:45} }
-      }
-    }
+  if (chartsBuilt['combined']) chartsBuilt['combined'].destroy();
+  chartsBuilt['combined'] = new Chart(ctx, {
+    type:'bar',
+    data:{ labels:allMonths, datasets:[
+      { label:'Cardboard (kg)', data:allMonths.map(m=>cbMap[m]||0), backgroundColor:'#2D6A4F99', borderColor:'#2D6A4F', borderRadius:5, stack:'a' },
+      { label:'Plastic (kg)',   data:allMonths.map(m=>plMap[m]||0), backgroundColor:'#52B78899', borderColor:'#52B788', borderRadius:5, stack:'a' },
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ position:'top' } }, scales:{ y:{ stacked:true, beginAtZero:true }, x:{ stacked:true, grid:{ display:false }, ticks:{maxRotation:45,font:{size:10}} } } }
   });
 }
 
 function buildOverviewChart() {
-  // Show last 6 months of cardboard only for overview
   const recent = cbData.slice(-6);
-  buildChart('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
+  buildBar('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
 }
 
-// ─── Energy ────────────────────────────────────────────────────────────────
+// ═══ ENERGY ══════════════════════════════════════════════════════════════════
 async function loadEnergy() {
   try {
-    const [eRes, wRes] = await Promise.all([
-      fetch(`${API}/energy/electricity`),
-      fetch(`${API}/energy/water`),
-    ]);
+    const [eRes,wRes] = await Promise.all([fetch(`${API}/energy/electricity`), fetch(`${API}/energy/water`)]);
     const eData = await eRes.json();
     const wData = await wRes.json();
-
-    const hasData = eData.some(r => r.kwh !== null);
-    document.getElementById('ov-energy').textContent = hasData ? 'Live ✓' : 'Pending';
-
-    buildEnergyCharts(eData, wData);
+    const hasE = eData.some(r=>r.kwh!==null);
+    document.getElementById('ov-energy').textContent = hasE ? 'Live ✓' : 'Pending';
+    if(hasE) {
+      const ef = eData.filter(r=>r.kwh!==null);
+      buildBar('elec-chart', ef.map(r=>r.month), ef.map(r=>r.kwh), 'kWh', '#E9C46A', 300);
+    }
+    const wf = wData.filter(r=>r.m3!==null);
+    if(wf.length) buildBar('water-chart', wf.map(r=>r.month), wf.map(r=>r.m3), 'm³', '#4CC9F0', 300);
   } catch(e) {}
 }
 
-function buildEnergyCharts(eData, wData) {
-  const eFiltered = eData.filter(r => r.kwh !== null);
-  const wFiltered = wData.filter(r => r.m3 !== null);
-
-  if (eFiltered.length) buildChart('elec-chart', eFiltered.map(r=>r.month), eFiltered.map(r=>r.kwh), 'kWh', '#E9C46A');
-  if (wFiltered.length) buildChart('water-chart', wFiltered.map(r=>r.month), wFiltered.map(r=>r.m3),  'm³', '#4CC9F0');
-}
-
-// ─── Comms calendar ────────────────────────────────────────────────────────
-let calData = [];
-
+// ═══ COMMS ═══════════════════════════════════════════════════════════════════
 async function loadComms() {
   try {
     const res = await fetch(`${API}/comms`);
     calData = await res.json();
     document.getElementById('ov-posts').textContent = calData.filter(e=>e.status==='planned').length;
-    renderCommsCalendar('all', 'comms-cal');
-    renderCommsCalendar('planned', 'ov-cal', 3);
+    renderCommsCalendar('all','comms-cal');
+    renderCommsCalendar('planned','ov-cal',3);
   } catch(e) {}
 }
 
 function renderCommsCalendar(filter, containerId, limit) {
   const el = document.getElementById(containerId);
   if (!el) return;
-  let items = filter === 'all' ? calData : calData.filter(e => e.status === filter);
+  let items = filter==='all' ? calData : calData.filter(e=>e.status===filter);
   if (limit) items = items.slice(0, limit);
   if (!items.length) { el.innerHTML = '<div class="loading">No posts found.</div>'; return; }
-
-  el.innerHTML = items.map(e => {
+  el.innerHTML = items.map(e=>{
     const d = new Date(e.date);
-    const day = d.getDate();
-    const mon = d.toLocaleDateString('en-SG',{month:'short'});
-    return `
-      <div class="cal-item status-${e.status}">
-        <div class="cal-date"><strong>${day} ${mon}</strong>${d.getFullYear()}</div>
-        <div>
-          <div class="cal-theme">${e.theme}</div>
-          <div class="cal-meta">👤 ${e.owner} · ${e.notes}</div>
-        </div>
-        <span class="status-tag status-${e.status}">${e.status}</span>
-      </div>`;
+    return `<div class="cal-item status-${e.status}">
+      <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
+      <div><div class="cal-theme">${e.theme}</div><div class="cal-meta">👤 ${e.owner} · ${e.notes||''}</div></div>
+      <span class="status-tag status-${e.status}">${e.status}</span>
+    </div>`;
   }).join('');
 }
 
-function filterCal(status) { renderCommsCalendar(status, 'comms-cal'); }
+function filterCal(status) { renderCommsCalendar(status,'comms-cal'); }
 
-// ─── Roster ────────────────────────────────────────────────────────────────
+// ═══ ROSTER ══════════════════════════════════════════════════════════════════
 async function loadRoster() {
   try {
-    const res = await fetch(`${API}/roster/w2r`);
-    const data = await res.json();
-
-    // Overview (next 4)
-    const ovTbody = document.querySelector('#ov-roster tbody');
-    ovTbody.innerHTML = data.slice(0,4).map(r => `
-      <tr>
-        <td>${r.date}</td>
-        <td>${r.team.join(', ')}</td>
-        <td><span class="badge badge-${r.session.toLowerCase()}">${r.session}</span></td>
-      </tr>`).join('');
-
-    // Full roster
-    const tbody = document.querySelector('#full-roster tbody');
-    tbody.innerHTML = data.map(r => `
-      <tr>
-        <td>${r.week}</td>
-        <td>${r.date}</td>
-        <td><span class="badge badge-${r.session.toLowerCase()}">${r.session}</span></td>
-        <td>${r.team.join(', ')}</td>
-      </tr>`).join('');
-  } catch(e) {}
+    const res = await fetch(`${API}/roster`);
+    rosterData = await res.json();
+    renderRoster('all');
+    renderOverviewRoster();
+  } catch(e) {
+    document.querySelector('#full-roster tbody').innerHTML = '<tr><td colspan="6" class="loading">Could not load roster.</td></tr>';
+  }
 }
 
-// ─── Swap requests ─────────────────────────────────────────────────────────
+function renderOverviewRoster() {
+  const today = new Date();
+  const upcoming = rosterData.filter(s => new Date(s.date) >= today).slice(0,4);
+  const tbody = document.querySelector('#ov-roster tbody');
+  if (!upcoming.length) { tbody.innerHTML = '<tr><td colspan="3" class="loading">No upcoming slots</td></tr>'; return; }
+  tbody.innerHTML = upcoming.map(s=>`
+    <tr>
+      <td>${s.date}</td>
+      <td><span class="badge badge-${s.session.toLowerCase()}">${s.session}</span></td>
+      <td>${s.team.join(', ')}</td>
+    </tr>`).join('');
+}
+
+function renderRoster(filter) {
+  currentFilter = filter;
+  const tbody = document.querySelector('#full-roster tbody');
+  const data = filter==='all' ? rosterData : rosterData.filter(s=>s.session===filter);
+
+  if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="loading">No slots found.</td></tr>`; return; }
+
+  tbody.innerHTML = data.map(s=>{
+    const kgCell = s.kg !== null
+      ? `<div class="weight-cell"><span class="kg-val">${s.kg} kg</span></div>`
+      : `<div class="weight-cell"><span class="kg-pending">Not logged</span></div>`;
+
+    const actionCell = isAdmin
+      ? `<td><div style="display:flex;gap:6px">
+          <button class="action-btn" onclick="openEditSlot(${s.id})">✏️ Edit</button>
+          <button class="action-btn" onclick="quickLogWeight(${s.id})">⚖️ Log kg</button>
+         </div></td>`
+      : `<td class="admin-only" style="display:none"></td>`;
+
+    return `<tr>
+      <td>${s.week}</td>
+      <td>${s.date}</td>
+      <td><span class="badge badge-${s.session.toLowerCase()}">${s.session}</span></td>
+      <td>${s.team.join(', ')}</td>
+      <td>${kgCell}</td>
+      ${actionCell}
+    </tr>`;
+  }).join('');
+}
+
+function filterRoster(f) { renderRoster(f); }
+
+// ─── Tag input ────────────────────────────────────────────────────────────────
+function handleTagKey(e) {
+  if ((e.key === 'Enter' || e.key === ',') && e.target.value.trim()) {
+    e.preventDefault();
+    addTag(e.target.value.trim());
+    e.target.value = '';
+  } else if (e.key === 'Backspace' && !e.target.value && teamTags.length) {
+    removeTag(teamTags.length - 1);
+  }
+}
+
+function addTag(name) {
+  if (teamTags.includes(name) || teamTags.length >= 5) return;
+  teamTags.push(name);
+  renderTags();
+}
+
+function removeTag(idx) {
+  teamTags.splice(idx, 1);
+  renderTags();
+}
+
+function renderTags() {
+  const wrap = document.getElementById('team-tags');
+  wrap.innerHTML = teamTags.map((t,i) =>
+    `<span class="member-tag">${t}<button onclick="removeTag(${i})" type="button">×</button></span>`
+  ).join('');
+}
+
+// ─── Open editor ──────────────────────────────────────────────────────────────
+function openAddSlot() {
+  editingId = null; teamTags = [];
+  document.getElementById('editor-title').textContent = '➕ Add New Slot';
+  document.getElementById('edit-slot-id').value = '';
+  document.getElementById('ed-week').value = '';
+  document.getElementById('ed-date').value = '';
+  document.getElementById('ed-session').value = 'SAT';
+  document.getElementById('ed-kg').value = '';
+  document.getElementById('ed-notes').value = '';
+  document.getElementById('delete-btn').style.display = 'none';
+  renderTags();
+  document.getElementById('slot-editor').style.display = 'block';
+  document.getElementById('slot-editor').scrollIntoView({behavior:'smooth'});
+}
+
+function openEditSlot(id) {
+  const slot = rosterData.find(s=>s.id===id);
+  if (!slot) return;
+  editingId = id; teamTags = [...slot.team];
+  document.getElementById('editor-title').textContent = '✏️ Edit Slot';
+  document.getElementById('edit-slot-id').value = id;
+  document.getElementById('ed-week').value = slot.week;
+  document.getElementById('ed-date').value = slot.date;
+  document.getElementById('ed-session').value = slot.session;
+  document.getElementById('ed-kg').value = slot.kg !== null ? slot.kg : '';
+  document.getElementById('ed-notes').value = slot.notes || '';
+  document.getElementById('delete-btn').style.display = 'inline-flex';
+  renderTags();
+  document.getElementById('slot-editor').style.display = 'block';
+  document.getElementById('slot-editor').scrollIntoView({behavior:'smooth'});
+}
+
+function closeEditor() {
+  document.getElementById('slot-editor').style.display = 'none';
+  editingId = null; teamTags = [];
+}
+
+async function saveSlot() {
+  const week    = document.getElementById('ed-week').value.trim();
+  const date    = document.getElementById('ed-date').value.trim();
+  const session = document.getElementById('ed-session').value;
+  const kgRaw   = document.getElementById('ed-kg').value;
+  const notes   = document.getElementById('ed-notes').value.trim();
+
+  if (!week || !date) { toast('Week and date are required', true); return; }
+  if (teamTags.length === 0) { toast('Add at least one team member', true); return; }
+
+  const body = { week, date, session, team: teamTags, notes, kg: kgRaw !== '' ? parseFloat(kgRaw) : null };
+
+  try {
+    const url    = editingId ? `${API}/roster/${editingId}` : `${API}/roster`;
+    const method = editingId ? 'PATCH' : 'POST';
+    const res = await fetch(url, {
+      method, headers: { 'Content-Type':'application/json', 'x-api-key': adminKey },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) { const e = await res.json(); toast(e.error||'Save failed', true); return; }
+    toast(editingId ? '✅ Slot updated!' : '✅ Slot added!');
+    closeEditor();
+    await loadRoster();
+  } catch(e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
+async function deleteSlot() {
+  if (!editingId) return;
+  if (!confirm('Delete this roster slot? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${API}/roster/${editingId}`, {
+      method:'DELETE', headers:{'x-api-key':adminKey}
+    });
+    if (!res.ok) { toast('Delete failed', true); return; }
+    toast('🗑 Slot deleted');
+    closeEditor();
+    await loadRoster();
+  } catch(e) {
+    toast('❌ Could not connect', true);
+  }
+}
+
+async function quickLogWeight(id) {
+  const kg = prompt('Enter weight collected (kg):');
+  if (kg === null || kg.trim() === '') return;
+  const val = parseFloat(kg);
+  if (isNaN(val) || val < 0 || val > 2000) { toast('Invalid weight', true); return; }
+  try {
+    const res = await fetch(`${API}/roster/${id}`, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json','x-api-key':adminKey},
+      body: JSON.stringify({kg: val}),
+    });
+    if (!res.ok) { toast('Log failed', true); return; }
+    toast(`✅ Logged ${val} kg!`);
+    await loadRoster();
+  } catch(e) {
+    toast('❌ Connection error', true);
+  }
+}
+
+// ═══ SWAP ════════════════════════════════════════════════════════════════════
 async function loadSwaps() {
   try {
     const res = await fetch(`${API}/swap`);
     const data = await res.json();
     const el = document.getElementById('swap-list');
-    if (!data.length) {
-      el.innerHTML = '<div class="loading">No open swap requests 🎉</div>';
-      return;
-    }
-    el.innerHTML = data.map(s => `
+    if (!data.length) { el.innerHTML = '<div class="loading">No open swap requests 🎉</div>'; return; }
+    el.innerHTML = data.map(s=>`
       <div class="swap-card">
         <div class="swap-info">
           <div class="name">${s.requesterName}</div>
-          <div class="meta">📅 ${s.requesterDate}${s.reason ? ' · ' + s.reason : ''}</div>
+          <div class="meta">📅 ${s.requesterDate}${s.reason ? ' · '+s.reason : ''}</div>
         </div>
-        <button class="btn btn-outline btn-sm" onclick="volunteerSwap(${s.id}, '${s.requesterDate}')">
-          🤝 Volunteer
-        </button>
+        <button class="btn btn-outline btn-sm" onclick="volunteerSwap(${s.id},'${s.requesterDate}')">🤝 Volunteer</button>
       </div>`).join('');
   } catch(e) {
-    document.getElementById('swap-list').innerHTML = '<div class="loading">Backend not connected yet.</div>';
+    document.getElementById('swap-list').innerHTML = '<div class="loading">Backend not connected.</div>';
   }
 }
 
@@ -675,49 +724,191 @@ async function submitSwap() {
   const name   = document.getElementById('sw-name').value.trim();
   const date   = document.getElementById('sw-date').value.trim();
   const reason = document.getElementById('sw-reason').value.trim();
-  if (!name || !date) { toast('⚠️ Please fill in your name and rostered date.'); return; }
-
+  if (!name||!date) { toast('Fill in your name and date', true); return; }
   try {
     const res = await fetch(`${API}/swap`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ requesterName: name, requesterDate: date, reason }),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({requesterName:name, requesterDate:date, reason}),
     });
     if (res.ok) {
-      toast('✅ Swap request submitted! The ministry group has been notified.');
-      document.getElementById('sw-name').value = '';
-      document.getElementById('sw-date').value = '';
-      document.getElementById('sw-reason').value = '';
+      toast('✅ Swap request submitted! Ministry group notified.');
+      document.getElementById('sw-name').value='';
+      document.getElementById('sw-date').value='';
+      document.getElementById('sw-reason').value='';
       loadSwaps();
+    } else {
+      const e = await res.json();
+      toast(e.error||'Submission failed', true);
     }
-  } catch(e) {
-    toast('❌ Could not connect to server. Check your backend is running.');
-  }
+  } catch(e) { toast('❌ Could not connect to server', true); }
 }
 
-async function volunteerSwap(id, requesterDate) {
-  const name = prompt('Your name?');
-  if (!name) return;
-  const date = prompt('Your date to swap? (e.g. 5 Jul Sat)');
-  if (!date) return;
-
+async function volunteerSwap(id) {
+  const name = prompt('Your name?'); if (!name) return;
+  const date = prompt('Your date to offer? (e.g. 5 Jul 2026)'); if (!date) return;
   try {
     const res = await fetch(`${API}/swap/${id}/match`, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ volunteerName: name, volunteerDate: date }),
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({volunteerName:name.trim(), volunteerDate:date.trim()}),
     });
-    if (res.ok) {
-      toast('🎉 Swap matched! Both parties will be notified on Telegram.');
-      loadSwaps();
+    if (res.ok) { toast('🎉 Swap matched! Both parties notified.'); loadSwaps(); }
+    else { const e = await res.json(); toast(e.error||'Match failed', true); }
+  } catch(e) { toast('❌ Connection error', true); }
+}
+
+// ═══ TEST SUITE ══════════════════════════════════════════════════════════════
+let testPass=0, testFail=0;
+
+function log(msg, type='info') {
+  const el = document.getElementById('test-log');
+  const line = document.createElement('div');
+  line.className = `test-line ${type}`;
+  line.textContent = `${new Date().toLocaleTimeString()} ${type==='pass'?'✅':type==='fail'?'❌':type==='warn'?'⚠️':'ℹ️'} ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+  if (type==='pass') testPass++;
+  if (type==='fail') testFail++;
+}
+
+function clearLog() {
+  document.getElementById('test-log').innerHTML = '<div style="color:#81ECEC">Log cleared. Ready.</div>';
+  document.getElementById('test-summary').style.display = 'none';
+  testPass=0; testFail=0;
+}
+
+async function testEndpoint(label, url, expectStatus=200) {
+  try {
+    const res = await fetch(url);
+    if (res.status === expectStatus) {
+      const data = await res.json();
+      log(`${label} → ${res.status} OK (${Array.isArray(data)?data.length+' records':typeof data})`, 'pass');
+      return data;
+    } else {
+      log(`${label} → Expected ${expectStatus}, got ${res.status}`, 'fail');
+      return null;
     }
   } catch(e) {
-    toast('❌ Match failed. Try again.');
+    log(`${label} → Network error: ${e.message}`, 'fail');
+    return null;
   }
 }
 
-// ─── Init ──────────────────────────────────────────────────────────────────
+async function runAllTests() {
+  testPass=0; testFail=0;
+  const logEl = document.getElementById('test-log');
+  logEl.innerHTML = '';
+  log('Starting test suite…', 'info');
+  log('─────────────────────────────', 'info');
+
+  // 1. API health
+  log('[ GET /api/recycling/summary ]', 'info');
+  const sum = await testEndpoint('Recycling summary', `${API}/recycling/summary`);
+  if (sum) {
+    if (typeof sum.cardboard?.total === 'number') log(`Cardboard total = ${sum.cardboard.total} kg`, 'pass');
+    else log('Cardboard total missing', 'fail');
+    if (typeof sum.plastic?.total === 'number') log(`Plastic total = ${sum.plastic.total} kg`, 'pass');
+    else log('Plastic total missing', 'fail');
+    log(`Data source: ${sum.source}`, sum.source==='live'?'pass':'warn');
+  }
+
+  log('─────────────────────────────', 'info');
+  log('[ GET /api/recycling/cardboard ]', 'info');
+  const cb = await testEndpoint('Cardboard data', `${API}/recycling/cardboard`);
+  if (cb) {
+    if (cb.length > 0) log(`${cb.length} monthly records returned`, 'pass');
+    else log('No cardboard records', 'fail');
+    if (cb.every(r=>typeof r.kg==='number'&&r.month)) log('All records have month + kg', 'pass');
+    else log('Some records missing month or kg', 'fail');
+  }
+
+  log('─────────────────────────────', 'info');
+  log('[ GET /api/roster ]', 'info');
+  const roster = await testEndpoint('Roster data', `${API}/roster`);
+  if (roster) {
+    if (roster.length > 0) log(`${roster.length} roster slots loaded`, 'pass');
+    else log('Roster is empty', 'warn');
+    const hasSat = roster.some(r=>r.session==='SAT');
+    const hasSun = roster.some(r=>r.session==='SUN');
+    if (hasSat) log('SAT sessions present', 'pass'); else log('No SAT sessions', 'warn');
+    if (hasSun) log('SUN sessions present', 'pass'); else log('No SUN sessions', 'warn');
+  }
+
+  log('─────────────────────────────', 'info');
+  log('[ GET /api/comms ]', 'info');
+  const comms = await testEndpoint('Comms calendar', `${API}/comms`);
+  if (comms) {
+    if (comms.length > 0) log(`${comms.length} calendar entries`, 'pass');
+    else log('No comms entries', 'warn');
+  }
+
+  log('─────────────────────────────', 'info');
+  log('[ GET /api/swap ]', 'info');
+  await testEndpoint('Swap requests', `${API}/swap`);
+
+  log('─────────────────────────────', 'info');
+  log('[ POST /api/swap — validation test ]', 'info');
+  try {
+    const badRes = await fetch(`${API}/swap`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({}),
+    });
+    if (badRes.status === 400) log('Empty body rejected with 400 ✓', 'pass');
+    else log(`Expected 400 for empty body, got ${badRes.status}`, 'fail');
+
+    const longNameRes = await fetch(`${API}/swap`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({requesterName:'A'.repeat(100), requesterDate:'1 Jan 2026'}),
+    });
+    if (longNameRes.status === 400) log('Long name rejected with 400 ✓', 'pass');
+    else log(`Expected 400 for long name, got ${longNameRes.status}`, 'fail');
+  } catch(e) { log('Validation test failed: '+e.message, 'fail'); }
+
+  log('─────────────────────────────', 'info');
+  log('[ Rate limit headers ]', 'info');
+  try {
+    const r = await fetch(`${API}/recycling/summary`);
+    if (r.headers.get('ratelimit-limit')||r.headers.get('x-ratelimit-limit')) log('Rate limit headers present', 'pass');
+    else log('Rate limit headers not visible (may be stripped by proxy)', 'warn');
+  } catch(e) { log('Could not check rate limit headers', 'warn'); }
+
+  log('─────────────────────────────', 'info');
+  log('[ Frontend checks ]', 'info');
+  if (typeof Chart !== 'undefined') log('Chart.js loaded', 'pass'); else log('Chart.js missing', 'fail');
+  if (document.getElementById('page-overview')) log('Overview page rendered', 'pass');
+  if (document.getElementById('ov-cardboard').textContent !== '—') log('Overview stats populated', 'pass');
+  else log('Overview stats not yet loaded (run after page loads)', 'warn');
+
+  // Summary
+  const total = testPass + testFail;
+  const sumEl = document.getElementById('test-summary');
+  sumEl.style.display = 'block';
+  sumEl.innerHTML = `<span style="color:${testFail===0?'#69D99A':'#FF7675'}">Tests complete: ${testPass}/${total} passed, ${testFail} failed</span>`;
+  log(`\n═══ DONE: ${testPass} passed · ${testFail} failed ═══`, testFail===0?'pass':'fail');
+}
+
+// Manual checklist render
+const MANUAL_CHECKS = [
+  { section:'Recycling', items:['Charts show cardboard and plastic data','Source badge shows "Live from Sheets" or "Cached data"','Totals match Google Drive figures'] },
+  { section:'Roster', items:['All weekend slots display correctly','Admin unlock works with your API key','Can add a new slot with team members','Can edit an existing slot','Can log a weight for a slot','Can delete a slot','SAT/SUN filter works'] },
+  { section:'Swap', items:['Can submit a swap request','Telegram message received in ministry group','Open swap request appears in the list','Can volunteer for a swap','Match notification received on Telegram'] },
+  { section:'Overview', items:['Hero stats show totals','Recycling trend chart visible','Next 4 roster slots appear','Upcoming comms posts appear'] },
+  { section:'Security', items:['Editing roster without admin key fails','Submitting empty swap form shows error','XSS attempt in name field is sanitised'] },
+];
+
+function renderManualChecklist() {
+  document.getElementById('manual-checklist').innerHTML = MANUAL_CHECKS.map(s=>`
+    <div style="margin-bottom:16px">
+      <strong style="font-size:.88rem;color:var(--gd)">${s.section}</strong>
+      ${s.items.map((item,i)=>`
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 0;font-size:.82rem;cursor:pointer;border-bottom:1px solid var(--br)">
+          <input type="checkbox" style="accent-color:var(--gm)"> ${item}
+        </label>`).join('')}
+    </div>`).join('');
+}
+
+// ═══ INIT ════════════════════════════════════════════════════════════════════
 (async () => {
+  renderManualChecklist();
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
 })();
 </script>
