@@ -82,6 +82,19 @@ function saveRoster(data) {
 if (!fs.existsSync(ROSTER_FILE)) saveRoster(SEED);
 
 // ─── Google Sheets fetch & parse ──────────────────────────────────────────────
+// Dates in the sheet come back as "2026-06-06T00:00:00.000Z" or "6/6/2026"
+// depending on the cell format. Normalise to "6 Jun 2026" for consistency.
+function normaliseDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  // ISO / datetime string
+  const iso = new Date(s);
+  if (!isNaN(iso)) {
+    return iso.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+  return s; // already a human string like "6 Jun 2026"
+}
+
 function parseRosterSheetRows(rows) {
   // rows[0] = headers, skip it
   const slots = [];
@@ -89,7 +102,7 @@ function parseRosterSheetRows(rows) {
     const r = rows[i];
     if (!r || !r[0]) continue; // skip empty rows
 
-    const date    = (r[0] || '').trim();
+    const date    = normaliseDate(r[0]);
     const week    = (r[1] || '').trim();
     const session = (r[2] || '').trim().toUpperCase();
     if (!date || !session) continue;
