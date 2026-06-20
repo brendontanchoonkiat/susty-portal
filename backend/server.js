@@ -19,8 +19,8 @@ app.use(helmet({
       connectSrc:      ["'self'"],
       fontSrc:         ["'self'"],
       objectSrc:       ["'none'"],
-      frameAncestors:  ["'none'"],           // prevent clickjacking
-      formAction:      ["'self'"],           // restrict form targets
+      frameAncestors:  ["'none'"],
+      formAction:      ["'self'"],
       upgradeInsecureRequests: [],
     },
   },
@@ -45,13 +45,12 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'X-Api-Key'],
   exposedHeaders: [],
   credentials:    false,
-  maxAge:         600,  // cache preflight 10 min
+  maxAge:         600,
 }));
 
-// ─── 3. Body parsing — strict mode, 10 kb cap ────────────────────────────────
+// ─── 3. Body parsing ─────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10kb', strict: true }));
 
-// Reject write requests without application/json — prevents content-type confusion
 app.use((req, res, next) => {
   if (['POST', 'PATCH', 'PUT'].includes(req.method)) {
     const ct = req.headers['content-type'] || '';
@@ -63,33 +62,24 @@ app.use((req, res, next) => {
 });
 
 // ─── 4. Rate limiting ────────────────────────────────────────────────────────
-// General: 100 req / 15 min per IP
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000, max: 100,
+  standardHeaders: true, legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' },
 });
-
-// Write limiter for swap + comms POST: 10 req / hour per IP
 const writeLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 10,
+  windowMs: 60 * 60 * 1000, max: 10,
   message: { error: 'Submission limit reached. Try again in an hour.' },
 });
-
-// Strict limiter for admin endpoints: 20 req / 15 min per IP
 const adminLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
+  windowMs: 15 * 60 * 1000, max: 20,
   message: { error: 'Admin rate limit exceeded.' },
 });
 
 app.use('/api', apiLimiter);
 app.use('/api/swap', writeLimiter);
-app.use('/api/comms', writeLimiter);    // comms writes also rate-limited
-app.use('/api/roster', adminLimiter);   // tighter on roster writes
+app.use('/api/comms', writeLimiter);
+app.use('/api/roster', adminLimiter);
 app.use('/api/recycling/refresh', adminLimiter);
 
 // ─── 5. Disable fingerprinting ────────────────────────────────────────────────
@@ -97,23 +87,20 @@ app.disable('x-powered-by');
 
 // ─── 6. Static frontend ───────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, '../frontend'), {
-  etag: true,
-  lastModified: true,
+  etag: true, lastModified: true,
   setHeaders: (res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
   },
 }));
 
-// ─── 7. API key middleware for admin routes ───────────────────────────────────
+// ─── 7. API key middleware ────────────────────────────────────────────────────
 function requireApiKey(req, res, next) {
   const ADMIN_KEY = process.env.ADMIN_API_KEY;
-  if (!ADMIN_KEY) return next(); // skip if not configured (dev mode)
+  if (!ADMIN_KEY) return next();
   const provided = req.headers['x-api-key'];
-  if (!provided || provided !== ADMIN_KEY) {
-    // Constant-time rejection — don't reveal whether key exists
+  if (!provided || provided !== ADMIN_KEY)
     return res.status(401).json({ error: 'Unauthorized' });
-  }
   next();
 }
 app.set('requireApiKey', requireApiKey);
@@ -124,12 +111,14 @@ const energyRoutes    = require('./routes/energy');
 const rosterRoutes    = require('./routes/roster');
 const commsRoutes     = require('./routes/comms');
 const swapRoutes      = require('./routes/swap');
+const telegramRoutes  = require('./routes/telegram');
 
 app.use('/api/recycling', recyclingRoutes);
 app.use('/api/energy',    energyRoutes);
 app.use('/api/roster',    rosterRoutes);
 app.use('/api/comms',     commsRoutes);
 app.use('/api/swap',      swapRoutes);
+app.use('/api/telegram',  telegramRoutes);
 
 // ─── 9. 404 for unknown API routes ────────────────────────────────────────────
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'Not found' }));
@@ -139,12 +128,41 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
-// ─── 11. Global error handler — never leak stack traces ───────────────────────
+// ─── 11. Global error handler ─────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
-  // Log full error server-side; send nothing useful to client
   console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
   if (res.headersSent) return;
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => console.log(`🌿 Susty Portal running on port ${PORT}`));
+// ─── 12. Weekly snapshot cron ────────────────────────────────────────────────
+// Fires every Monday at 01:00 UTC = 09:00 SGT automatically on Railway.
+// Override: WEEKLY_SNAPSHOT_DAY (0=Sun…6=Sat, default 1) / WEEKLY_SNAPSHOT_HOUR (UTC, default 1)
+function startWeeklyCron() {
+  const { sendWeeklySnapshot } = require('./utils/weeklySnapshot');
+  const DAY  = parseInt(process.env.WEEKLY_SNAPSHOT_DAY  ?? '1', 10);
+  const HOUR = parseInt(process.env.WEEKLY_SNAPSHOT_HOUR ?? '1', 10);
+  let lastFiredKey = '';
+
+  setInterval(async () => {
+    const now = new Date();
+    if (now.getUTCDay() !== DAY || now.getUTCHours() !== HOUR) return;
+    const key = `${now.getUTCDay()}-${now.getUTCHours()}-${now.getUTCDate()}`;
+    if (key === lastFiredKey) return;
+    lastFiredKey = key;
+    console.log('[Cron] Firing weekly snapshot...');
+    try {
+      const result = await sendWeeklySnapshot();
+      console.log('[Cron] Weekly snapshot sent:', result.ok ? 'ok' : result.reason);
+    } catch (err) {
+      console.error('[Cron] Weekly snapshot failed:', err.message);
+    }
+  }, 60 * 1000);
+
+  console.log(`🗓  Weekly snapshot cron started — fires day=${DAY} hour=${HOUR} UTC (Mon 09:00 SGT)`);
+}
+
+app.listen(PORT, () => {
+  console.log(`🌿 Susty Portal running on port ${PORT}`);
+  startWeeklyCron();
+});

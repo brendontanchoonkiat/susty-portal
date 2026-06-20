@@ -1,8 +1,6 @@
 'use strict';
 
 // ─── W2R Telegram Message Templates ──────────────────────────────────────────
-// DRAFT — edit these before going live.
-// Fields in [SQUARE BRACKETS] need to be filled in.
 // Uses Telegram HTML formatting: <b>bold</b>, <i>italic</i>
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -13,11 +11,6 @@ function dayName(dateStr) {
 }
 
 // ─── 1. Roster Change Notification ───────────────────────────────────────────
-// Sent to group when a member's slot has been updated.
-// `name`    — the person whose slot changed
-// `newSlot` — { date, session, team }
-// `oldSlot` — { date, session } of their previous assignment (optional)
-
 function rosterChangeMsg(name, newSlot, oldSlot) {
   const partner = newSlot.team.filter(t => t !== name).join(' & ') || '—';
   const oldLine = oldSlot
@@ -36,9 +29,6 @@ function rosterChangeMsg(name, newSlot, oldSlot) {
 }
 
 // ─── 2. 5-Day Reminder ───────────────────────────────────────────────────────
-// Sent to group 5 days before the serving date.
-// `slot` — { date, session, team: ['Name1', 'Name2'] }
-
 function fiveDayReminderMsg(slot) {
   const names   = slot.team.join(' & ');
   const dayWord = dayName(slot.date);
@@ -57,9 +47,6 @@ function fiveDayReminderMsg(slot) {
 }
 
 // ─── 3. 1-Day Reminder ───────────────────────────────────────────────────────
-// Sent to group 1 day before the serving date.
-// `slot` — { date, session, team: ['Name1', 'Name2'] }
-
 function oneDayReminderMsg(slot) {
   const names   = slot.team.join(' & ');
   const dayWord = dayName(slot.date);
@@ -76,4 +63,48 @@ function oneDayReminderMsg(slot) {
   );
 }
 
-module.exports = { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg };
+// ─── 4. Weekly Snapshot ───────────────────────────────────────────────────────
+// Auto-sent every Monday 09:00 SGT. Also triggerable via POST /api/telegram/weekly-snapshot
+function weeklySnapshotMsg(data) {
+  const { cardboard, plastic, electricity, water, energySource, weekLabel } = data;
+
+  const wLabel = weekLabel || (() => {
+    const d = new Date();
+    return `Week of ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  })();
+
+  const cbLine = cardboard
+    ? `📦 Cardboard: <b>${cardboard.latestKg} kg</b> (${cardboard.latestMonth}) — cumulative: ${cardboard.totalKg} kg`
+    : `📦 Cardboard: <i>no data</i>`;
+
+  const plLine = plastic
+    ? `🧴 Plastic bottles: <b>${plastic.latestKg} kg</b> (${plastic.latestMonth}) — cumulative: ${plastic.totalKg} kg`
+    : `🧴 Plastic bottles: <i>no data</i>`;
+
+  const elecLine = electricity
+    ? `⚡ Electricity: <b>${electricity.latestKwh.toLocaleString()} kWh</b> (${electricity.latestMonth})`
+    : `⚡ Electricity: <i>no data</i>`;
+
+  const waterLine = water
+    ? `💧 Water: <b>${water.latestM3} m³</b> (${water.latestMonth})`
+    : `💧 Water: <i>no data</i>`;
+
+  const energyNote = energySource === 'fallback'
+    ? `\n⚠️ <i>Energy figures from static backup — live sheet unavailable.</i>`
+    : '';
+
+  return (
+    `📊 <b>Weekly Sustainability Snapshot</b>\n` +
+    `<i>${wLabel}</i>\n\n` +
+    `♻️ <b>Waste to Resource (W2R)</b>\n` +
+    `${cbLine}\n` +
+    `${plLine}\n\n` +
+    `🏢 <b>Energy Consumption</b>\n` +
+    `${elecLine}\n` +
+    `${waterLine}` +
+    `${energyNote}\n\n` +
+    `— Sustainability Ministry 🌿`
+  );
+}
+
+module.exports = { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg, weeklySnapshotMsg };
