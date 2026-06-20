@@ -11,23 +11,18 @@ const router  = express.Router();
 //   Row 20 (index 19): L4 electricity (kWh)
 //   Row 24 (index 23): L4 water (m³)
 //   Cols D–P (index 3–15): Jan–Dec
-// No new Railway env vars needed — GOOGLE_SHEETS_API_KEY already set for roster.
 const ENERGY_SHEET_ID = process.env.ENERGY_SHEET_ID || '14RDK73qYY-9bO1UXXAxrFhL6AziRhVIljQCzTpFZSoc';
 const API_KEY         = process.env.GOOGLE_SHEETS_API_KEY;
 
 const SHEET_YEARS    = ['2024', '2025', '2026'];
-const DATA_START_COL = 3;   // col D = index 3
+const DATA_START_COL = 3;
 const ROW = { label: 1, l3Elec: 5, l3Water: 13, l4Elec: 19, l4Water: 23 };
+const MAX_KWH_MONTH  = 500000;
+const MAX_M3_MONTH   = 5000;
 
-// Sanity limits — catches meter-reading errors (Jan 2025 L4 showed ~7.9M kWh)
-const MAX_KWH_MONTH = 500_000;
-const MAX_M3_MONTH  = 5_000;
-
-// In-memory cache: 10-min TTL
 let cache = { electricity: [], water: [], lastFetched: null, source: null };
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
-// ─── Month label parser ───────────────────────────────────────────────────────
 const MONTH_MAP = {
   jan:'Jan', feb:'Feb', mar:'Mar', apr:'Apr', may:'May', jun:'Jun',
   jul:'Jul', aug:'Aug', sep:'Sep', oct:'Oct', nov:'Nov', dec:'Dec',
@@ -40,7 +35,6 @@ function parseLabelToMonth(label, year) {
   return abbr ? `${abbr} ${year}` : null;
 }
 
-// ─── Safe number parse — returns null for #REF!, blanks, negatives ────────────
 function safeNum(v) {
   if (v === null || v === undefined || v === '') return null;
   const s = String(v).replace(/[,\s]/g, '');
@@ -49,13 +43,11 @@ function safeNum(v) {
   return isNaN(n) ? null : n;
 }
 
-// ─── Fetch & parse ────────────────────────────────────────────────────────────
 async function fetchFromSheets() {
   if (!API_KEY) {
-    console.warn('[Energy] GOOGLE_SHEETS_API_KEY not set — using static fallback data');
+    console.warn('[Energy] GOOGLE_SHEETS_API_KEY not set — using static fallback');
     return null;
   }
-
   const ranges = SHEET_YEARS.map(y => `'IM ${y}'!A1:P30`);
   const params = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
   const url    = `https://sheets.googleapis.com/v4/spreadsheets/${ENERGY_SHEET_ID}/values:batchGet?${params}&key=${API_KEY}`;
@@ -65,9 +57,8 @@ async function fetchFromSheets() {
     const body = await res.text().catch(() => '');
     throw new Error(`Sheets API ${res.status}: ${body.slice(0, 200)}`);
   }
-  const json = await res.json();
+  const json        = await res.json();
   const valueRanges = json.valueRanges || [];
-
   const elecPoints  = [];
   const waterPoints = [];
 
@@ -85,30 +76,25 @@ async function fetchFromSheets() {
       const month = parseLabelToMonth(labelRow[col], year);
       if (!month) continue;
 
-      // Electricity: sum L3 + L4 where valid
       const l3e = safeNum(l3ElecRow[col]);
       const l4e = safeNum(l4ElecRow[col]);
       if (l3e !== null && l4e !== null) {
-        const total = l3e + l4e;
-        if (total > 0 && total <= MAX_KWH_MONTH)
-          elecPoints.push({ month, kwh: Math.round(total) });
+        const t = l3e + l4e;
+        if (t > 0 && t <= MAX_KWH_MONTH) elecPoints.push({ month, kwh: Math.round(t) });
       } else if (l3e !== null && l3e > 0 && l3e <= MAX_KWH_MONTH) {
         elecPoints.push({ month, kwh: Math.round(l3e) });
       }
 
-      // Water: sum L3 + L4 where valid
       const l3w = safeNum(l3WaterRow[col]);
       const l4w = safeNum(l4WaterRow[col]);
       if (l3w !== null && l4w !== null) {
-        const total = l3w + l4w;
-        if (total > 0 && total <= MAX_M3_MONTH)
-          waterPoints.push({ month, m3: Math.round(total * 100) / 100 });
+        const t = l3w + l4w;
+        if (t > 0 && t <= MAX_M3_MONTH) waterPoints.push({ month, m3: Math.round(t * 100) / 100 });
       } else if (l3w !== null && l3w > 0 && l3w <= MAX_M3_MONTH) {
         waterPoints.push({ month, m3: Math.round(l3w * 100) / 100 });
       }
     }
   }
-
   return { electricity: elecPoints, water: waterPoints };
 }
 
@@ -120,31 +106,26 @@ async function getData() {
     const live = await fetchFromSheets();
     if (live && live.electricity.length > 0) {
       cache = { ...live, lastFetched: now, source: 'live' };
-      console.log(`[Energy] Live sync: ${live.electricity.length} electricity, ${live.water.length} water records`);
+      console.log(`[Energy] Live: ${live.electricity.length} elec, ${live.water.length} water records`);
     } else {
-      const { electricityData, waterData } = require('../data/energy');
-      cache = { electricity: electricityData.filter(r => r.kwh), water: waterData.filter(r => r.m3), lastFetched: now, source: 'fallback' };
-      console.warn('[Energy] No live data — using static fallback. Check GOOGLE_SHEETS_API_KEY.');
+      throw new Error('no live data');
     }
   } catch (err) {
-    console.warn('[Energy] Sheets fetch failed, using static fallback:', err.message);
+    console.warn('[Energy] Using static fallback:', err.message);
+    // eslint-disable-next-line global-require
     const { electricityData, waterData } = require('../data/energy');
-    cache = { electricity: electricityData.filter(r => r.kwh), water: waterData.filter(r => r.m3), lastFetched: now, source: 'fallback' };
+    cache = {
+      electricity: (electricityData || []).filter(r => r.kwh),
+      water:       (waterData || []).filter(r => r.m3),
+      lastFetched: now,
+      source:      'fallback',
+    };
   }
-
   return cache;
 }
 
-// ─── Routes ───────────────────────────────────────────────────────────────────
-router.get('/electricity', async (_req, res) => {
-  const d = await getData();
-  res.json(d.electricity);
-});
-
-router.get('/water', async (_req, res) => {
-  const d = await getData();
-  res.json(d.water);
-});
+router.get('/electricity', async (_req, res) => { const d = await getData(); res.json(d.electricity); });
+router.get('/water',       async (_req, res) => { const d = await getData(); res.json(d.water); });
 
 router.get('/summary', async (_req, res) => {
   const d = await getData();
@@ -156,7 +137,6 @@ router.get('/summary', async (_req, res) => {
   });
 });
 
-// ─── GET /status — diagnostic ─────────────────────────────────────────────────
 router.get('/status', (_req, res) => {
   res.json({
     apiKeySet:       !!API_KEY,
@@ -165,18 +145,16 @@ router.get('/status', (_req, res) => {
     electricityRecs: cache.electricity ? cache.electricity.length : null,
     waterRecs:       cache.water ? cache.water.length : null,
     cacheAgeMs:      cache.lastFetched ? Date.now() - cache.lastFetched : null,
-    cacheTtlMs:      CACHE_TTL_MS,
   });
 });
 
-// ─── POST /refresh — force cache refresh (admin) ─────────────────────────────
 router.post('/refresh', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
   cache.lastFetched = null;
   const d = await getData();
   res.json({ ok: true, source: d.source, electricityRecs: d.electricity.length, waterRecs: d.water.length });
 });
 
-// Export getData for use by weekly snapshot
+// Export getData for weekly snapshot
 router.getData = getData;
 
 module.exports = router;

@@ -189,4 +189,7 @@ router.post('/refresh', (req, res, next) => {
   res.json({ ok: true, source: d.source, cardboardRecords: d.cardboard.length, plasticRecords: d.plastic.length });
 });
 
+// Export getData so weeklySnapshot.js can reuse the cache
+router.getData = getData;
+
 module.exports = router;
