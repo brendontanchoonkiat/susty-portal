@@ -32,10 +32,6 @@ let sheetCache = { data: null, lastFetched: null };
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 // ─── Seed data ────────────────────────────────────────────────────────────────
-// June dates corrected (-1 day from original off-by-one).
-// July schedule revised: Wee Shing leads all SAT sessions; Judy/Brendon alternate SUN TL.
-// Service 2 members → SAT; Service 3 members → SUN (per ESM Unavailability form).
-// GPC 2026: 23–27 Jul. D3 (Sat) → Svc 2 members; D4 (Sun) → Svc 3 members.
 const SEED = [
   // June 2026
   { id: 1,  week: 'Jun W1',  date: '6 Jun 2026',  session: 'SAT', team: ['Matthew', 'Wee Shing'],               kg: null, notes: '' },
@@ -46,14 +42,14 @@ const SEED = [
   { id: 6,  week: 'Jun W3',  date: '21 Jun 2026', session: 'SUN', team: ['Kai Jie', 'Brendon'],                 kg: null, notes: '' },
   { id: 7,  week: 'Jun W4',  date: '27 Jun 2026', session: 'SAT', team: ['Candice', 'Wee Shing'],               kg: null, notes: '' },
   { id: 8,  week: 'Jun W4',  date: '28 Jun 2026', session: 'SUN', team: ['Jace', 'Jia Yu'],                     kg: null, notes: '' },
-  // July 2026 — weekends (TL: Wee Shing SAT; Judy/Brendon alternate SUN)
+  // July 2026
   { id: 9,  week: 'Jul W1',  date: '4 Jul 2026',  session: 'SAT', team: ['Wee Shing', 'Pamela', 'Esther'],      kg: null, notes: 'TL: Wee Shing' },
   { id: 10, week: 'Jul W1',  date: '5 Jul 2026',  session: 'SUN', team: ['Judy', 'Jiayi', 'Jace'],              kg: null, notes: 'TL: Judy' },
   { id: 11, week: 'Jul W2',  date: '11 Jul 2026', session: 'SAT', team: ['Wee Shing', 'Victor', 'Berry'],       kg: null, notes: 'TL: Wee Shing' },
   { id: 12, week: 'Jul W2',  date: '12 Jul 2026', session: 'SUN', team: ['Brendon', 'Jonathan Poon', 'Sok Min'],kg: null, notes: 'TL: Brendon' },
   { id: 13, week: 'Jul W3',  date: '18 Jul 2026', session: 'SAT', team: ['Wee Shing', 'Matthew', 'Clara'],      kg: null, notes: 'TL: Wee Shing' },
   { id: 14, week: 'Jul W3',  date: '19 Jul 2026', session: 'SUN', team: ['Judy', 'Jia Yu', 'Jeslyn'],           kg: null, notes: 'TL: Judy' },
-  // GPC 2026 — GenerationS Pastors' Conference (23–27 Jul)
+  // GPC 2026
   { id: 15, week: 'GPC D1',  date: '23 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Clara', 'Debs'],         kg: null, notes: 'GPC Day 1 (Thu) — TL: Wee Shing' },
   { id: 16, week: 'GPC D2',  date: '24 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Jiayi', 'Victor'],       kg: null, notes: 'GPC Day 2 (Fri) — TL: Wee Shing' },
   { id: 17, week: 'GPC D3',  date: '25 Jul 2026', session: 'GPC', team: ['Wee Shing', 'Alan Low', 'Elaine C'],  kg: null, notes: 'GPC Day 3 (Sat) — TL: Wee Shing' },
@@ -82,25 +78,31 @@ function saveRoster(data) {
 if (!fs.existsSync(ROSTER_FILE)) saveRoster(SEED);
 
 // ─── Google Sheets fetch & parse ──────────────────────────────────────────────
-// Dates in the sheet come back as "2026-06-06T00:00:00.000Z" or "6/6/2026"
-// depending on the cell format. Normalise to "6 Jun 2026" for consistency.
 function normaliseDate(raw) {
   const s = String(raw || '').trim();
   if (!s) return '';
-  // ISO / datetime string
+
+  // Google Sheets serial date (integer like 46579 = 6 Jun 2026)
+  if (/^\d{4,6}$/.test(s)) {
+    const serial = parseInt(s, 10);
+    const d = new Date(Date.UTC(1899, 11, 30) + serial * 86400000);
+    if (!isNaN(d)) return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  }
+
+  // ISO / datetime string like "2026-06-06 00:00:00"
   const iso = new Date(s);
   if (!isNaN(iso)) {
-    return iso.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    return iso.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
   }
-  return s; // already a human string like "6 Jun 2026"
+
+  return s; // already human-readable like "6 Jun 2026"
 }
 
 function parseRosterSheetRows(rows) {
-  // rows[0] = headers, skip it
   const slots = [];
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
-    if (!r || !r[0]) continue; // skip empty rows
+    if (!r || !r[0]) continue;
 
     const date    = normaliseDate(r[0]);
     const week    = (r[1] || '').trim();
@@ -108,14 +110,12 @@ function parseRosterSheetRows(rows) {
     if (!date || !session) continue;
     if (!['SAT', 'SUN', 'GPC'].includes(session)) continue;
 
-    // Columns D–H = up to 5 team members
     const team = [r[3], r[4], r[5], r[6], r[7]]
       .map(v => (v || '').trim())
       .filter(Boolean);
     if (team.length === 0) continue;
 
     const notes = (r[8] || '').trim();
-
     slots.push({ date, week, session, team, notes });
   }
   return slots;
@@ -132,17 +132,14 @@ async function fetchRosterFromSheets() {
   return parsed.length > 0 ? parsed : null;
 }
 
-// Merge sheet rows with existing file (preserves kg values logged locally).
-// Matches slots by date + session. New sheet slots get id = Date.now() + index.
 function mergeWithLocal(sheetSlots, localSlots) {
   const localMap = {};
   for (const s of localSlots) {
     const key = `${s.date}|${s.session}`;
     localMap[key] = s;
   }
-
   return sheetSlots.map((s, i) => {
-    const key     = `${s.date}|${s.session}`;
+    const key      = `${s.date}|${s.session}`;
     const existing = localMap[key];
     return {
       id:      existing ? existing.id : Date.now() + i,
@@ -150,13 +147,12 @@ function mergeWithLocal(sheetSlots, localSlots) {
       date:    s.date,
       session: s.session,
       team:    s.team,
-      kg:      existing ? existing.kg : null,   // preserve logged weight
+      kg:      existing ? existing.kg : null,
       notes:   s.notes,
     };
   });
 }
 
-// Primary data loader: tries Sheets first (cached), falls back to file/SEED
 async function getRoster() {
   const now = Date.now();
   if (sheetCache.data && sheetCache.lastFetched && (now - sheetCache.lastFetched) < CACHE_TTL_MS) {
@@ -167,10 +163,9 @@ async function getRoster() {
     try {
       const sheetSlots = await fetchRosterFromSheets();
       if (sheetSlots) {
-        const local   = loadRosterFile();
-        const merged  = mergeWithLocal(sheetSlots, local);
-        sheetCache    = { data: merged, lastFetched: now };
-        // Persist merged data to file (keeps kg in sync)
+        const local  = loadRosterFile();
+        const merged = mergeWithLocal(sheetSlots, local);
+        sheetCache   = { data: merged, lastFetched: now };
         saveRoster(merged);
         return { data: merged, source: 'sheets-live' };
       }
@@ -192,7 +187,7 @@ router.get('/', async (_req, res) => {
 
 router.get('/upcoming', async (_req, res) => {
   const { data: roster } = await getRoster();
-  const today  = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
   const upcoming = roster.filter(s => {
     const d = new Date(s.date);
     return !isNaN(d) && d.toISOString().split('T')[0] >= today;
@@ -200,27 +195,49 @@ router.get('/upcoming', async (_req, res) => {
   res.json(upcoming);
 });
 
-// ─── GET /sync-status — show whether Sheets sync is configured ───────────────
+// ─── GET /sync-status ─────────────────────────────────────────────────────────
 router.get('/sync-status', (_req, res) => {
   res.json({
-    sheetsEnabled:   !!(ROSTER_SHEET_ID && GOOGLE_API_KEY),
-    sheetIdSet:      !!ROSTER_SHEET_ID,
-    apiKeySet:       !!GOOGLE_API_KEY,
-    cacheAge:        sheetCache.lastFetched ? Date.now() - sheetCache.lastFetched : null,
-    cacheTtlMs:      CACHE_TTL_MS,
-    range:           ROSTER_RANGE,
+    sheetsEnabled: !!(ROSTER_SHEET_ID && GOOGLE_API_KEY),
+    sheetIdSet:    !!ROSTER_SHEET_ID,
+    apiKeySet:     !!GOOGLE_API_KEY,
+    cacheAge:      sheetCache.lastFetched ? Date.now() - sheetCache.lastFetched : null,
+    cacheTtlMs:    CACHE_TTL_MS,
+    range:         ROSTER_RANGE,
+    cachedSlots:   sheetCache.data ? sheetCache.data.length : null,
+    cacheHit:      !!(sheetCache.data && sheetCache.lastFetched && (Date.now() - sheetCache.lastFetched) < CACHE_TTL_MS),
   });
 });
 
-// ─── POST /sync — force pull from Google Sheets and persist (admin) ──────────
-router.post('/sync', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
+// ─── GET /debug-sheets — shows raw + parsed rows from Google Sheets ───────────
+router.get('/debug-sheets', async (_req, res) => {
   if (!ROSTER_SHEET_ID || !GOOGLE_API_KEY) {
-    return res.status(400).json({
-      error: 'Google Sheets sync not configured. Set ROSTER_SHEET_ID and GOOGLE_SHEETS_API_KEY in env.',
-    });
+    return res.json({ error: 'Sheets not configured', sheetIdSet: !!ROSTER_SHEET_ID, apiKeySet: !!GOOGLE_API_KEY });
   }
   try {
-    sheetCache.lastFetched = null; // bust cache
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${ROSTER_SHEET_ID}/values/${encodeURIComponent(ROSTER_RANGE)}?key=${GOOGLE_API_KEY}`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    const json = await response.json();
+    if (!response.ok) return res.status(502).json({ sheetsError: json });
+    const rawRows = json.values || [];
+    const parsed  = parseRosterSheetRows(rawRows);
+    res.json({
+      rawFirstRows: rawRows.slice(0, 5),
+      parsedCount:  parsed.length,
+      parsedSlots:  parsed.slice(0, 5),
+    });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ─── POST /sync — force pull from Sheets (admin) ─────────────────────────────
+router.post('/sync', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
+  if (!ROSTER_SHEET_ID || !GOOGLE_API_KEY) {
+    return res.status(400).json({ error: 'Google Sheets sync not configured.' });
+  }
+  try {
+    sheetCache.lastFetched = null;
     const { data, source } = await getRoster();
     res.json({ ok: true, source, slots: data.length });
   } catch (err) {
@@ -250,11 +267,11 @@ router.post('/', (req, res, next) => req.app.get('requireApiKey')(req, res, next
   };
   roster.push(newSlot);
   saveRoster(roster);
-  sheetCache.data = roster; // update cache
+  sheetCache.data = roster;
   res.status(201).json(newSlot);
 });
 
-// ─── PATCH — update a slot (log weight, edit team, notes) ────────────────────
+// ─── PATCH — update a slot ────────────────────────────────────────────────────
 router.patch('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
@@ -264,7 +281,6 @@ router.patch('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res, 
   if (!slot) return res.status(404).json({ error: 'Slot not found' });
 
   const { team, kg, notes, week, date, session } = req.body;
-
   if (team !== undefined) {
     if (!Array.isArray(team) || team.length < 1 || team.length > 10)
       return res.status(400).json({ error: 'team must be an array of 1–10 names' });
@@ -306,7 +322,7 @@ router.delete('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res,
   res.json({ ok: true });
 });
 
-// ─── POST /remind — send 5-day and 1-day reminders (admin) ──────────────────
+// ─── POST /remind ─────────────────────────────────────────────────────────────
 router.post('/remind', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
   const { data: roster } = await getRoster();
   const now   = new Date();
@@ -332,7 +348,7 @@ router.post('/remind', (req, res, next) => req.app.get('requireApiKey')(req, res
   res.json({ ok: true, reminders_sent: results.length, results });
 });
 
-// ─── POST /notify-change — send change notification for one person (admin) ───
+// ─── POST /notify-change ──────────────────────────────────────────────────────
 router.post('/notify-change', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (req, res) => {
   const { name, newSlotId, oldSlot } = req.body;
   if (!name || !newSlotId)
@@ -340,7 +356,7 @@ router.post('/notify-change', (req, res, next) => req.app.get('requireApiKey')(r
 
   const { data: roster } = await getRoster();
   const newSlot = roster.find(s => s.id === Number(newSlotId));
-  if (!newSlot)   return res.status(404).json({ error: 'Slot not found' });
+  if (!newSlot) return res.status(404).json({ error: 'Slot not found' });
   if (!newSlot.team.includes(name))
     return res.status(400).json({ error: `${name} is not in the team for slot ${newSlotId}` });
 
