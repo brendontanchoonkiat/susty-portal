@@ -2,21 +2,21 @@
 const express = require('express');
 const router  = express.Router();
 const { cardboardData, plasticData } = require('../data/recycling');
- 
+
 // ─── Google Sheets live sync ──────────────────────────────────────────────────
 // Sheet ID from Google Drive — set GOOGLE_SHEETS_API_KEY in .env to enable.
 // Without GOOGLE_SHEETS_API_KEY the server falls back to backend/data/recycling.js.
 const SHEET_ID  = process.env.W2R_SHEET_ID || '1ELi47Yq9oPcMqElZGYjWDgnRfS1gVHTwjOseEx5ZPmk';
 const API_KEY   = process.env.GOOGLE_SHEETS_API_KEY;
- 
+
 // In-memory cache: refreshed every 5 minutes
 let cache = { cardboard: [], plastic: [], lastFetched: null };
 const CACHE_TTL_MS = 5 * 60 * 1000;
- 
+
 // Fallback sourced from backend/data/recycling.js (Sep 2025 – present)
 // If GOOGLE_SHEETS_API_KEY is not set, this is what the API returns.
 const FALLBACK = { cardboard: cardboardData, plastic: plasticData };
- 
+
 // Only include months at or after formal tracking start (Sep 2025)
 const TRACKING_START = new Date('2025-09-01');
 function filterFromTrackingStart(arr) {
@@ -25,13 +25,13 @@ function filterFromTrackingStart(arr) {
     return !isNaN(d) && d >= TRACKING_START;
   });
 }
- 
+
 async function fetchFromSheets() {
   if (!API_KEY) {
     console.warn('[Recycling] GOOGLE_SHEETS_API_KEY not set — using fallback data. Set it in .env to enable live sync.');
     return null;
   }
- 
+
   // Fetch cols A–F, rows 1–50 — covers both cardboard (rows ~1-15) and plastic (rows ~23-37)
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/Total!A1:F50?key=${API_KEY}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -42,7 +42,7 @@ async function fetchFromSheets() {
   const json = await res.json();
   return parseSheetData(json.values || []);
 }
- 
+
 // ─── Sheet layout (Total tab) ─────────────────────────────────────────────────
 // Cardboard block: rows 1–15, col A = 2025 month, col B = 2025 kg,
 //                             col D = 2026 month, col E = 2026 kg
@@ -53,39 +53,41 @@ function parseSheetData(rows) {
   const cardboard = [];
   const plastic   = [];
   let section     = null; // 'cardboard' | 'plastic'
- 
+
   for (let i = 0; i < rows.length; i++) {
     const row  = rows[i] || [];
     const col2 = String(row[1] || '').toLowerCase();
- 
+
     // Detect section boundary rows (e.g. "📦 Cardboards" / "Plastic")
     if (col2.includes('cardboard')) { section = 'cardboard'; continue; }
     if (col2.includes('plastic'))   { section = 'plastic';   continue; }
     if (!section) continue;
- 
+
     // Skip sub-header rows ("Month", "Collection / mo...")
     if (String(row[0] || '').toLowerCase().startsWith('month')) continue;
- 
+
     const target = section === 'cardboard' ? cardboard : plastic;
- 
+
     // 2025 column: A (index 0) = month, B (index 1) = kg
-    if (row[0] && row[1]) {
+    // Only accept months ending in '25 — Jan'26 also appears here as a duplicate and must be skipped
+    if (row[0] && row[1] && String(row[0]).includes("'25")) {
       const kg = parseFloat(String(row[1]).replace(/[^0-9.]/g, ''));
       if (!isNaN(kg) && kg > 0)
         target.push({ month: String(row[0]).replace("'", ' 20').trim(), kg });
     }
     // 2026 column: D (index 3) = month, E (index 4) = kg
-    if (row[3] && row[4]) {
+    // Only accept months ending in '26
+    if (row[3] && row[4] && String(row[3]).includes("'26")) {
       const kg = parseFloat(String(row[4]).replace(/[^0-9.]/g, ''));
       if (!isNaN(kg) && kg > 0)
         target.push({ month: String(row[3]).replace("'", ' 20').trim(), kg });
     }
   }
- 
+
   return { cardboard, plastic };
 }
- 
-// Consolidate multiple rows with the same month into a single summed entry
+
+// Consolidate multiple rows with the same month, then sort chronologically
 function aggregateByMonth(arr) {
   if (!arr || !arr.length) return [];
   const map = {};
@@ -93,13 +95,15 @@ function aggregateByMonth(arr) {
     if (!map[r.month]) map[r.month] = 0;
     map[r.month] += r.kg;
   });
-  return Object.entries(map).map(([month, kg]) => ({ month, kg: Math.round(kg * 100) / 100 }));
+  return Object.entries(map)
+    .map(([month, kg]) => ({ month, kg: Math.round(kg * 100) / 100 }))
+    .sort((a, b) => new Date(a.month + ' 1') - new Date(b.month + ' 1'));
 }
- 
+
 async function getData() {
   const now = Date.now();
   if (cache.lastFetched && (now - cache.lastFetched) < CACHE_TTL_MS) return cache;
- 
+
   try {
     const live = await fetchFromSheets();
     if (live && (live.cardboard.length > 0 || live.plastic.length > 0)) {
@@ -138,18 +142,18 @@ async function getData() {
   }
   return cache;
 }
- 
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 router.get('/cardboard', async (_req, res) => {
   const d = await getData();
   res.json(d.cardboard);
 });
- 
+
 router.get('/plastic', async (_req, res) => {
   const d = await getData();
   res.json(d.plastic);
 });
- 
+
 router.get('/summary', async (_req, res) => {
   const d = await getData();
   const cbTotal = d.cardboard.reduce((s, r) => s + r.kg, 0);
@@ -161,7 +165,7 @@ router.get('/summary', async (_req, res) => {
     cachedAt:  d.lastFetched,
   });
 });
- 
+
 // ─── GET /status — diagnostic: shows sync config & current source (public) ───
 router.get('/status', (_req, res) => {
   res.json({
@@ -175,7 +179,7 @@ router.get('/status', (_req, res) => {
     fallbackMonths:  { cardboard: FALLBACK.cardboard.length, plastic: FALLBACK.plastic.length },
   });
 });
- 
+
 // Force cache refresh (admin only)
 router.post('/refresh', (req, res, next) => {
   req.app.get('requireApiKey')(req, res, next);
@@ -184,6 +188,5 @@ router.post('/refresh', (req, res, next) => {
   const d = await getData();
   res.json({ ok: true, source: d.source, cardboardRecords: d.cardboard.length, plasticRecords: d.plastic.length });
 });
- 
+
 module.exports = router;
- 
