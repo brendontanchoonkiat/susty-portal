@@ -77,6 +77,7 @@ app.use('/api/comms',     require('./routes/comms'));
 app.use('/api/swap',      require('./routes/swap'));
 app.use('/api/telegram',  require('./routes/telegram'));
 app.use('/api/stats',     require('./routes/stats'));      // carbon + YoY aggregates
+app.use('/api/members',  require('./routes/members'));    // member roster + availability (admin)
 
 // ─── Debug: Supabase connectivity check (admin only) ─────────────────────────
 app.get('/api/debug', requireApiKey, async (_req, res) => {

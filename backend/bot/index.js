@@ -41,6 +41,10 @@ bot.use(session({
     awaitingSwapReason: false,
     awaitingAcceptDate: null,   // { swapId, requesterName, requesterDate }
     cachedName:         null,
+    // Availability collation
+    availMonth:         null,   // month being collected e.g. "Aug 2026"
+    availDates:         [],     // roster dates for that month
+    availSelected:      [],     // dates member marked available
   }),
 }));
 
@@ -80,6 +84,23 @@ async function resolveName(ctx) {
   return null;
 }
 
+// Resolve typed name → canonical name via member_roster aliases
+async function resolveTypedName(typedName) {
+  try {
+    const result = await db.resolveCanonicalName(typedName);
+    return result?.canonical || null;
+  } catch { return null; }
+}
+
+// Admin check — returns true if user is a TL (in member_roster with known TL status)
+// Simple implementation: check if name is in TL_NAMES env var or hardcoded list
+const TL_NAMES = (process.env.TL_NAMES || 'Brendon,Judy,Wee Shing')
+  .split(',').map(n => n.trim().toLowerCase());
+async function isTL(ctx) {
+  const name = await resolveName(ctx);
+  return name ? TL_NAMES.includes(name.toLowerCase()) : false;
+}
+
 function fmtSlot(slot) {
   const team  = (slot.team || []).join(', ') || '—';
   const sess  = slot.session || '';
@@ -106,7 +127,8 @@ function promptRegister(ctx) {
 const mainMenu = new InlineKeyboard()
   .text('📋 Roster',         'menu:roster').row()
   .text('🪣 Duty Needs',     'menu:duty').row()
-  .text('📊 Stats & Impact', 'menu:stats');
+  .text('📊 Stats & Impact', 'menu:stats').row()
+  .text('📅 My Availability','menu:avail');
 
 const rosterMenu = new InlineKeyboard()
   .text('🗓 My Roster',     'action:myroster').text('⏭ Next Duty',    'action:nextduty').row()
@@ -341,6 +363,157 @@ bot.callbackQuery('action:log:plastic', async (ctx) => {
   );
 });
 
+// ─── Callback: availability ───────────────────────────────────────────────────
+bot.callbackQuery('menu:avail', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+
+  // Find next upcoming month with roster slots
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  const today = new Date().toISOString().split('T')[0];
+  const { data: upcoming } = await supa.from('roster_slots')
+    .select('date, week, session').gte('date', today).order('date').limit(20);
+
+  if (!upcoming || !upcoming.length) {
+    return ctx.reply('No upcoming roster slots found.', { reply_markup: backToMain() });
+  }
+
+  // Group by month, show the nearest upcoming month
+  const monthOf = d => { const dt = new Date(d); return dt.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' }); };
+  const nearestMonth = monthOf(upcoming[0].date);
+  const monthSlots   = upcoming.filter(s => monthOf(s.date) === nearestMonth);
+
+  ctx.session.availMonth    = nearestMonth;
+  ctx.session.availDates    = monthSlots.map(s => s.date);
+  ctx.session.availSelected = [];
+
+  await ctx.editMessageText(
+    `📅 <b>Availability — ${nearestMonth}</b>\n\nTap the dates you <b>CAN</b> serve. Tap again to deselect.\n\n` +
+    `<i>Dates will turn ✅ when selected.</i>`,
+    { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
+  );
+});
+
+function buildAvailKeyboard(slots, selected) {
+  const kb = new InlineKeyboard();
+  for (const s of slots) {
+    const label = s.date;
+    const badge = selected.includes(s.date) ? '✅ ' : '';
+    const sess  = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
+    kb.text(`${badge}${sess} ${s.date} (${s.session})`, `avail:toggle:${s.date}`).row();
+  }
+  kb.text('💾 Submit Availability', 'avail:submit');
+  return kb;
+}
+
+bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const date = ctx.match[1];
+  const sel  = ctx.session.availSelected || [];
+
+  if (sel.includes(date)) {
+    ctx.session.availSelected = sel.filter(d => d !== date);
+  } else {
+    ctx.session.availSelected = [...sel, date];
+  }
+
+  const month = ctx.session.availMonth;
+  const supa  = db.getClient();
+  const { data: slots } = supa
+    ? await supa.from('roster_slots').select('date,session')
+        .in('date', ctx.session.availDates).order('date')
+    : { data: ctx.session.availDates.map(d => ({ date: d, session: '?' })) };
+
+  await ctx.editMessageReplyMarkup({
+    reply_markup: buildAvailKeyboard(slots || [], ctx.session.availSelected),
+  }).catch(() => {});
+});
+
+bot.callbackQuery('avail:submit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const name   = await resolveName(ctx);
+  const month  = ctx.session.availMonth;
+  const avail  = ctx.session.availSelected || [];
+  const allD   = ctx.session.availDates    || [];
+  const unavail = allD.filter(d => !avail.includes(d));
+
+  if (!month) return ctx.reply('⚠️ Session expired. Please try again.', { reply_markup: backToMain() });
+
+  await db.saveAvailability(month, name, avail, unavail);
+  ctx.session.availMonth    = null;
+  ctx.session.availDates    = [];
+  ctx.session.availSelected = [];
+
+  const lines = avail.length
+    ? avail.map(d => `✅ ${d}`).join('\n')
+    : '(None selected — marked as unavailable for all dates)';
+
+  await ctx.reply(
+    `✅ <b>Availability saved for ${month}!</b>\n\n${lines}\n\n` +
+    `<i>Your TL will see this when planning the next roster.</i>`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  );
+});
+
+// ─── /collect command (TL only) — broadcast availability request to all members
+bot.command('collect', async (ctx) => {
+  if (!(await isTL(ctx))) {
+    return ctx.reply('⚠️ This command is for Team Leaders only.');
+  }
+  const args = ctx.message.text.replace('/collect', '').trim(); // e.g. "Aug 2026"
+  if (!args) {
+    return ctx.reply('Usage: <code>/collect Aug 2026</code>', { parse_mode: 'HTML' });
+  }
+
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  // Get roster slots for that month
+  const { data: slots } = await supa.from('roster_slots')
+    .select('date, session').order('date');
+
+  const monthSlots = (slots || []).filter(s => {
+    const dt = new Date(s.date);
+    const label = dt.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+    return label.toLowerCase() === args.toLowerCase();
+  });
+
+  if (!monthSlots.length) {
+    return ctx.reply(`⚠️ No roster slots found for "${args}". Check the portal roster.`);
+  }
+
+  // Get all registered members
+  const members = await db.getAllRegisteredMembers();
+  if (!members.length) return ctx.reply('⚠️ No registered members yet.');
+
+  let sent = 0;
+  for (const m of members) {
+    try {
+      const kb = buildAvailKeyboard(monthSlots, []);
+      await bot.api.sendMessage(
+        m.telegram_id,
+        `📅 <b>Availability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve next month.\nTap ✅ to select, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
+        { parse_mode: 'HTML', reply_markup: kb }
+      );
+      // Prime their session state via a workaround — store in DB instead
+      await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date));
+      sent++;
+    } catch (err) {
+      console.warn(`[Bot] collect: failed to DM ${m.name}:`, err.message);
+    }
+  }
+
+  // Store month + dates in a simple config so members' button presses know the context
+  await ctx.reply(
+    `✅ Sent availability request for <b>${args}</b> to <b>${sent}/${members.length}</b> registered members.\n\n` +
+    `Use the portal → Members to view responses as they come in.`,
+    { parse_mode: 'HTML' }
+  );
+});
+
 // ─── Callback: stats ──────────────────────────────────────────────────────────
 bot.callbackQuery('action:stats', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -499,10 +672,17 @@ bot.on('message:text', async (ctx) => {
     if (text.length < 2 || text.length > 60) {
       return ctx.reply('Please enter your name as it appears on the roster (2–60 chars).');
     }
-    await db.upsertMember(ctx.from.id, text);
+    // Try to match to a canonical name via aliases
+    const canonical = await resolveTypedName(text);
+    const finalName = canonical || text.trim();
+
+    await db.upsertMember(ctx.from.id, finalName);
     ctx.session.awaitingName = false;
-    ctx.session.cachedName   = text;
-    return sendMainMenu(ctx, `✅ Got it, <b>${text}</b>! You're all set. 🌿\n\nWhat do you need?`);
+    ctx.session.cachedName   = finalName;
+
+    const matchNote = canonical && canonical.toLowerCase() !== text.trim().toLowerCase()
+      ? `\n<i>(Matched to roster name: <b>${canonical}</b>)</i>` : '';
+    return sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿${matchNote}\n\nWhat do you need?`);
   }
 
   // Log weight — button flow (no photo)

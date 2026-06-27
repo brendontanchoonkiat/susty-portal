@@ -194,6 +194,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <button class="nav-tab" data-page="recycling">♻️ W2R</button>
     <button class="nav-tab" data-page="comms">📢 Comms</button>
     <button class="nav-tab" data-page="roster">📋 Roster</button>
+    <button class="nav-tab admin-only" data-page="members" style="display:none">👥 Members</button>
     <button class="nav-tab" data-page="test">🧪 Test</button>
   </div>
   <div id="nav-admin-bar" style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
@@ -507,6 +508,68 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   <div class="swap-list" id="swap-list"><div class="loading">Loading…</div></div>
 </div>
 
+<!-- ═══ MEMBERS (admin only) ══════════════════════════════════════════════════ -->
+<div class="page" id="page-members">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:4px">👥 Member Roster</div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:20px">Serve counts, priority, and availability responses. Admin only.</p>
+
+  <!-- Priority legend -->
+  <div class="card" style="margin-bottom:16px;padding:12px 16px">
+    <div style="font-size:.82rem;font-weight:600;margin-bottom:8px">Priority Guide</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:.78rem;color:var(--tm)">
+      <span>✅ <b>Serve Next</b> — prioritise for next roster</span>
+      <span>⚠️ <b>Soon</b> — include if slots available</span>
+      <span>— <b>Rest</b> — served recently, give others a chance</span>
+    </div>
+    <div style="font-size:.75rem;color:var(--tm);margin-top:8px">Points: SAT/SUN = 1pt · GPC = 1.5pt · Lower score = higher priority</div>
+  </div>
+
+  <!-- Member table -->
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--br)">
+      <div class="section-title" style="margin:0;border:none;padding:0">Serve Tracker</div>
+      <button class="btn btn-outline btn-sm" onclick="loadMemberRoster()">↻ Refresh</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="roster-table" id="member-roster-table">
+        <thead>
+          <tr>
+            <th>Name</th><th>SAT</th><th>SUN</th><th>GPC</th><th>Total</th><th>Points</th><th>Priority</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="member-roster-body"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Availability summary -->
+  <div class="card" style="margin-top:20px">
+    <div class="section-title">📅 Availability Responses</div>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <select id="avail-month-select" style="padding:6px 10px;border-radius:8px;border:1px solid var(--br);font-size:.85rem">
+        <option value="">Select month…</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="loadAvailability()">Load</button>
+    </div>
+    <div id="avail-summary" style="font-size:.84rem;color:var(--tm)">Select a month to see responses.</div>
+  </div>
+
+  <!-- Edit serve stats inline -->
+  <div class="card" id="member-edit-panel" style="display:none;margin-top:16px">
+    <div class="section-title">✏️ Edit Serve Stats</div>
+    <input type="hidden" id="mem-edit-name"/>
+    <div class="form-row">
+      <div class="form-field"><label>SAT Serves</label><input type="number" id="mem-sat" min="0" max="99"/></div>
+      <div class="form-field"><label>SUN Serves</label><input type="number" id="mem-sun" min="0" max="99"/></div>
+      <div class="form-field"><label>GPC Serves</label><input type="number" id="mem-gpc" min="0" max="99"/></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="saveMemberStats()">💾 Save</button>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('member-edit-panel').style.display='none'">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- ═══ TEST ══════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-test">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">🧪 Feature Test Suite</div>
@@ -650,6 +713,7 @@ function navigateTo(pageId) {
       const we = document.getElementById('w2r-editor-wrap');
       if (we && we.style.display === 'none') { we.style.display = ''; loadW2RRows(); }
     }
+    if (pageId === 'members') loadMemberRoster();
   }
 }
 
@@ -660,7 +724,7 @@ document.querySelectorAll('.nav-tab').forEach(t => {
 // Restore tab from URL hash on load/refresh
 (function restoreTab() {
   const hash = location.hash.replace('#', '');
-  const valid = ['overview','energy','recycling','comms','roster','test'];
+  const valid = ['overview','energy','recycling','comms','roster','members','test'];
   if (hash && valid.includes(hash)) navigateTo(hash);
 })();
 
@@ -684,6 +748,8 @@ function applyAdminMode() {
   document.getElementById('nav-admin-bar').querySelector('button').style.display = 'none';
   renderRoster(currentFilter);
   renderCalendarView();
+  // Pre-populate availability month select
+  populateAvailMonths();
 }
 
 function unlockAdmin() {
@@ -1779,6 +1845,113 @@ async function deleteW2RRow(id, month) {
     toast(`Deleted ${month}`);
     await loadW2RRows();
   } catch(e) { toast(e.message, true); }
+}
+
+// ═══ MEMBERS PANEL ═══════════════════════════════════════════════════════════
+
+async function loadMemberRoster() {
+  const tbody = document.getElementById('member-roster-body');
+  tbody.innerHTML = '<tr><td colspan="8" class="loading">Loading…</td></tr>';
+  try {
+    const res = await fetch(`${API}/members/roster`, { headers:{'x-api-key':adminKey} });
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    const rows = await res.json();
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--tm)">No members found. Run migration_2.sql in Supabase first.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(m => {
+      const pts   = (m.points || 0).toFixed(1);
+      const pri   = m.priority || '—';
+      const badge = pri === 'Serve Next' ? '✅ Serve Next'
+                  : pri === 'Soon'       ? '⚠️ Soon'
+                  : '— Rest';
+      return `<tr>
+        <td style="font-weight:600">${m.name}</td>
+        <td>${m.sat_serves || 0}</td>
+        <td>${m.sun_serves || 0}</td>
+        <td>${m.gpc_serves || 0}</td>
+        <td>${m.total_serves || 0}</td>
+        <td>${pts}</td>
+        <td style="white-space:nowrap">${badge}</td>
+        <td><button class="btn btn-outline btn-sm" onclick='openMemberEdit(${JSON.stringify(m)})'>Edit</button></td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#c62828;padding:16px">❌ ${e.message}</td></tr>`;
+  }
+}
+
+function openMemberEdit(m) {
+  document.getElementById('mem-edit-name').value = m.name;
+  document.getElementById('mem-sat').value = m.sat_serves || 0;
+  document.getElementById('mem-sun').value = m.sun_serves || 0;
+  document.getElementById('mem-gpc').value = m.gpc_serves || 0;
+  const panel = document.getElementById('member-edit-panel');
+  panel.style.display = '';
+  panel.scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+async function saveMemberStats() {
+  const name = document.getElementById('mem-edit-name').value;
+  const sat  = parseInt(document.getElementById('mem-sat').value, 10) || 0;
+  const sun  = parseInt(document.getElementById('mem-sun').value, 10) || 0;
+  const gpc  = parseInt(document.getElementById('mem-gpc').value, 10) || 0;
+  if (!name) return toast('No member selected', true);
+  try {
+    const res = await fetch(`${API}/members/roster/${encodeURIComponent(name)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type':'application/json', 'x-api-key':adminKey },
+      body: JSON.stringify({ sat_serves:sat, sun_serves:sun, gpc_serves:gpc })
+    });
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    document.getElementById('member-edit-panel').style.display = 'none';
+    toast(`Saved stats for ${name}`);
+    await loadMemberRoster();
+  } catch(e) { toast(e.message, true); }
+}
+
+async function populateAvailMonths() {
+  const sel = document.getElementById('avail-month-select');
+  if (!sel) return;
+  try {
+    const res = await fetch(`${API}/roster`);
+    if (!res.ok) return;
+    const slots = await res.json();
+    // Derive unique months from slot dates
+    const months = [...new Set(slots.map(s => {
+      const d = new Date(s.date);
+      return d.toLocaleString('en-GB', { month:'short', year:'numeric' });
+    }))];
+    // Keep existing placeholder, add months
+    sel.innerHTML = '<option value="">Select month…</option>' +
+      months.map(m => `<option value="${m}">${m}</option>`).join('');
+  } catch(e) { /* silently fail — select stays at default */ }
+}
+
+async function loadAvailability() {
+  const month = document.getElementById('avail-month-select').value;
+  const div   = document.getElementById('avail-summary');
+  if (!month) { div.textContent = 'Select a month first.'; return; }
+  div.textContent = 'Loading…';
+  try {
+    const res = await fetch(`${API}/members/availability/${encodeURIComponent(month)}`, {
+      headers:{'x-api-key':adminKey}
+    });
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    const rows = await res.json();
+    if (!rows.length) { div.textContent = 'No responses yet for this month.'; return; }
+    div.innerHTML = rows.map(r => {
+      const avail   = (r.dates_avail   || []).join(', ') || '—';
+      const unavail = (r.dates_unavail || []).join(', ') || '—';
+      return `<div style="margin-bottom:12px;padding:10px;background:var(--bg);border-radius:8px;border:1px solid var(--br)">
+        <div style="font-weight:600;margin-bottom:4px">${r.member_name}</div>
+        <div style="font-size:.78rem;color:var(--tm)">✅ Available: <span style="color:var(--fg)">${avail}</span></div>
+        <div style="font-size:.78rem;color:var(--tm)">❌ Unavailable: <span style="color:var(--fg)">${unavail}</span></div>
+        ${r.notes ? `<div style="font-size:.75rem;color:var(--tm);margin-top:4px">📝 ${r.notes}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch(e) { div.innerHTML = `<span style="color:#c62828">❌ ${e.message}</span>`; }
 }
 </script>
 </body>

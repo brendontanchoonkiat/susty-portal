@@ -83,6 +83,77 @@ async function getMemberByName(name) {
   return data || null;
 }
 
+// ─── Resolve a typed name to canonical name via member_roster aliases ─────────
+// Returns { canonical, roster } or null. Case-insensitive alias match.
+async function resolveCanonicalName(typedName) {
+  const db = getClient();
+  if (!db) return null;
+  const lower = typedName.trim().toLowerCase();
+
+  // Exact name match first
+  const { data: exact } = await db.from('member_roster')
+    .select('*').ilike('name', lower).single();
+  if (exact) return { canonical: exact.name, roster: exact };
+
+  // Alias match — check if any alias in the aliases array matches
+  const { data: all } = await db.from('member_roster').select('*').eq('is_active', true);
+  if (!all) return null;
+  for (const m of all) {
+    const aliases = m.aliases || [];
+    if (aliases.some(a => a.toLowerCase() === lower)) {
+      return { canonical: m.name, roster: m };
+    }
+  }
+  return null;
+}
+
+// ─── Availability helpers ─────────────────────────────────────────────────────
+async function getAllRegisteredMembers() {
+  const db = getClient();
+  if (!db) return [];
+  const { data } = await db.from('members').select('*').order('name');
+  return data || [];
+}
+
+async function saveAvailability(month, memberName, datesAvail, datesUnavail, notes = '') {
+  const db = getClient();
+  if (!db) return null;
+  const { data, error } = await db.from('availability').upsert(
+    { month, member_name: memberName, dates_avail: datesAvail, dates_unavail: datesUnavail, notes, updated_at: new Date().toISOString() },
+    { onConflict: 'month,member_name' }
+  ).select().single();
+  if (error) { console.error('[Supabase] saveAvailability:', error.message); return null; }
+  return data;
+}
+
+async function getAvailabilitySummary(month) {
+  const db = getClient();
+  if (!db) return [];
+  const { data, error } = await db.from('availability')
+    .select('*').eq('month', month).order('member_name');
+  if (error) { console.error('[Supabase] getAvailabilitySummary:', error.message); return []; }
+  return data || [];
+}
+
+async function getMemberRoster() {
+  const db = getClient();
+  if (!db) return [];
+  const { data, error } = await db.from('member_roster')
+    .select('*').eq('is_active', true).order('priority').order('name');
+  if (error) { console.error('[Supabase] getMemberRoster:', error.message); return []; }
+  return data || [];
+}
+
+async function updateMemberRosterStats(name, patch) {
+  const db = getClient();
+  if (!db) return null;
+  const { data, error } = await db.from('member_roster')
+    .update({ ...patch, updated_at: new Date().toISOString() })
+    .eq('name', name).select().single();
+  if (error) { console.error('[Supabase] updateMemberRosterStats:', error.message); return null; }
+  return data;
+}
+
 async function upsertMember(telegramId, name) {
   const db = getClient();
   if (!db) return null;
@@ -180,8 +251,12 @@ module.exports = {
   getClient,
   query, insert, update, remove,
   getMemberByTelegramId, getMemberByName, upsertMember,
+  resolveCanonicalName,
   getUpcomingRosterForMember, getUpcomingRoster,
   insertDataLog, getDataLogsForDate,
   getRecyclingStats, upsertMonthlyTotal,
   uploadImage,
+  getAllRegisteredMembers,
+  saveAvailability, getAvailabilitySummary,
+  getMemberRoster, updateMemberRosterStats,
 };
