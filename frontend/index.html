@@ -210,7 +210,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <h1>Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
-      <div class="hero-stat"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard recycled (kg)</div></div>
+      <div class="hero-stat"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard recycled (kg, all time)</div></div>
       <div class="hero-stat"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastics recycled (kg)</div></div>
       <div class="hero-stat"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Energy status</div></div>
       <div class="hero-stat"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts scheduled</div></div>
@@ -270,8 +270,6 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <div class="section-title" id="energy-month-detail-title" style="font-size:.9rem;margin-bottom:10px"></div>
     <div id="energy-month-detail-list" style="display:flex;flex-wrap:wrap;gap:6px"></div>
   </div>
-</div>
-
 
   <!-- ── Energy Data Editor (admin only) ── -->
   <div id="energy-editor-wrap" style="display:none;margin-top:20px">
@@ -297,6 +295,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       </div>
     </div>
   </div>
+</div>
 
 <!-- ═══ RECYCLING ════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-recycling">
@@ -339,8 +338,6 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       <div class="card"><div class="section-title">🍶 Plastic Bottles</div><div class="chart-wrap-tall"><canvas id="pl-chart"></canvas></div><div class="stat-pill" id="pl-total">Loading…</div></div>
     </div>
   </div>
-</div>
-
 
   <!-- ── W2R Data Editor (admin only) ── -->
   <div id="w2r-editor-wrap" style="display:none;margin-top:20px">
@@ -351,8 +348,8 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
         <div class="form-field"><label>Year</label><input type="number" id="we-year" placeholder="2026" min="2020" max="2099"></div>
       </div>
       <div class="form-row">
-        <div class="form-field"><label>Cardboard (kg)</label><input type="number" id="we-cardboard" placeholder="52.3" step="0.01" min="0"></div>
-        <div class="form-field"><label>Plastic (kg)</label><input type="number" id="we-plastic" placeholder="0.8" step="0.01" min="0"></div>
+        <div class="form-field"><label>Cardboard (kg) <span style="font-weight:400;color:var(--tm)">(optional)</span></label><input type="number" id="we-cardboard" placeholder="52.3" step="0.01"></div>
+        <div class="form-field"><label>Plastic (kg) <span style="font-weight:400;color:var(--tm)">(optional)</span></label><input type="number" id="we-plastic" placeholder="0.8" step="0.01"></div>
       </div>
       <div class="form-field" style="margin-bottom:12px"><label>Notes (optional)</label><input type="text" id="we-notes" placeholder="e.g. Jan camp collection"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -366,6 +363,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       </div>
     </div>
   </div>
+</div>
 
 <!-- ═══ COMMS ════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-comms">
@@ -471,7 +469,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       </div>
       <div class="form-field">
         <label>Weight logged (kg) — optional</label>
-        <input type="number" id="ed-kg" placeholder="e.g. 12.5" min="0" max="2000" step="0.01"/>
+        <input type="number" id="ed-kg" placeholder="e.g. 12.5" step="0.01"/>
       </div>
     </div>
     <div class="form-field" style="margin-bottom:12px">

@@ -129,10 +129,8 @@ async function getData() {
     const live = await fetchFromSheets();
     if (live && (live.cardboard.length > 0 || live.plastic.length > 0)) {
       cache = {
-        cardboard:   aggregateByMonth(filterFromTrackingStart(
-                       live.cardboard.length > 0 ? live.cardboard : FALLBACK.cardboard)),
-        plastic:     aggregateByMonth(filterFromTrackingStart(
-                       live.plastic.length   > 0 ? live.plastic   : FALLBACK.plastic)),
+        cardboard:   aggregateByMonth(live.cardboard.length > 0 ? live.cardboard : FALLBACK.cardboard),
+        plastic:     aggregateByMonth(live.plastic.length   > 0 ? live.plastic   : FALLBACK.plastic),
         lastFetched: now,
         source:      'live',
         liveCardboard: live.cardboard.length > 0,
