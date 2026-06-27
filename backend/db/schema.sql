@@ -71,7 +71,23 @@ CREATE TABLE IF NOT EXISTS recycling_monthly (
 );
 CREATE INDEX IF NOT EXISTS idx_recycling_year ON recycling_monthly(year);
 
--- 6. Attendance — tracks who confirmed for each slot
+-- 6. Monthly energy data (electricity kWh + water m³)
+CREATE TABLE IF NOT EXISTS energy_monthly (
+  id          BIGSERIAL PRIMARY KEY,
+  month       TEXT NOT NULL,            -- e.g. "Jun 2026"
+  year        INT NOT NULL,
+  month_num   INT NOT NULL,             -- 1–12 for ordering
+  kwh         NUMERIC(12,2),            -- combined L3+L4 electricity
+  m3          NUMERIC(10,2),            -- combined L3+L4 water
+  notes       TEXT DEFAULT '',
+  source      TEXT DEFAULT 'manual',
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(month)
+);
+CREATE INDEX IF NOT EXISTS idx_energy_year ON energy_monthly(year);
+
+-- 7. Attendance — tracks who confirmed for each slot
 CREATE TABLE IF NOT EXISTS attendance (
   id              BIGSERIAL PRIMARY KEY,
   roster_slot_id  BIGINT REFERENCES roster_slots(id) ON DELETE CASCADE,

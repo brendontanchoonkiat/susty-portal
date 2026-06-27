@@ -50,6 +50,37 @@ const bot = new Bot(BOT_TOKEN);
 // Session stores pending state (e.g. waiting for name after /start)
 bot.use(session({ initial: () => ({ awaitingName: false, awaitingLogKg: null }) }));
 
+// ─── Group → PM redirect middleware ──────────────────────────────────────────
+// Group chat is OUTPUT only (swap alerts, summaries, reminders).
+// Any user command in the group gets a gentle redirect to PM.
+// Exception: /start works in both so users can discover the bot from the group.
+const GROUP_TYPES = ['group', 'supergroup'];
+const BOT_USERNAME_PROMISE = bot.api.getMe().then(me => me.username).catch(() => null);
+
+bot.use(async (ctx, next) => {
+  if (!GROUP_TYPES.includes(ctx.chat?.type)) return next(); // allow all DMs
+
+  const text = ctx.message?.text || '';
+  const isCommand = text.startsWith('/');
+  const isPhoto   = !!ctx.message?.photo;
+
+  // Let /start through in groups so users can find the bot
+  if (text.startsWith('/start')) return next();
+
+  // Redirect any other command or photo log attempt to PM
+  if (isCommand || isPhoto) {
+    const username = await BOT_USERNAME_PROMISE;
+    const link = username ? `https://t.me/${username}` : 'the bot directly';
+    await ctx.reply(
+      `👋 To keep the group tidy, please send commands to me directly!\n\n📲 <a href="${link}">Message me in PM</a>`,
+      { parse_mode: 'HTML', reply_to_message_id: ctx.message?.message_id }
+    ).catch(() => {});
+    return; // don't process the command
+  }
+
+  return next(); // let non-command group messages through (shouldn't be many)
+});
+
 // ─── Resolve member name from Telegram context ────────────────────────────────
 async function resolveName(ctx) {
   const member = await db.getMemberByTelegramId(ctx.from.id);

@@ -4,7 +4,162 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Sustainability Ministry Portal</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
+// ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════
+let eeEditId = null;
+
+async function loadEnergyRows() {
+  const tbody = document.getElementById('ee-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
+  try {
+    const res = await fetch(`${API}/energy/rows`, { headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    const rows = await res.json();
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><b>${r.month}</b></td>
+        <td>${r.kwh != null ? Number(r.kwh).toLocaleString() : '—'}</td>
+        <td>${r.m3  != null ? Number(r.m3).toLocaleString()  : '—'}</td>
+        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
+        <td style="white-space:nowrap">
+          <button class="action-btn" onclick="editEnergyRow(${r.id},'${r.month}',${r.year},${r.kwh||'null'},${r.m3||'null'},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
+          <button class="action-btn danger" onclick="deleteEnergyRow(${r.id},'${r.month}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
+}
+
+function editEnergyRow(id, month, year, kwh, m3, notes) {
+  eeEditId = id;
+  document.getElementById('ee-month').value = month;
+  document.getElementById('ee-year').value  = year;
+  document.getElementById('ee-kwh').value   = kwh !== null && kwh !== undefined ? kwh : '';
+  document.getElementById('ee-m3').value    = m3  !== null && m3  !== undefined ? m3  : '';
+  document.getElementById('ee-notes').value = notes || '';
+  document.getElementById('ee-status').textContent = `Editing: ${month}`;
+  document.getElementById('ee-status').style.color = 'var(--am)';
+}
+
+function clearEnergyForm() {
+  eeEditId = null;
+  ['ee-month','ee-year','ee-kwh','ee-m3','ee-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('ee-status').textContent = '';
+}
+
+async function saveEnergyRow() {
+  const month = document.getElementById('ee-month').value.trim();
+  const year  = parseInt(document.getElementById('ee-year').value);
+  const kwh   = document.getElementById('ee-kwh').value !== '' ? parseFloat(document.getElementById('ee-kwh').value) : null;
+  const m3    = document.getElementById('ee-m3').value  !== '' ? parseFloat(document.getElementById('ee-m3').value)  : null;
+  const notes = document.getElementById('ee-notes').value.trim();
+  if (!month || !year) { toast('Month and Year are required', true); return; }
+  const status = document.getElementById('ee-status');
+  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
+  try {
+    let res;
+    if (eeEditId) {
+      res = await fetch(`${API}/energy/${eeEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({kwh,m3,notes}) });
+    } else {
+      res = await fetch(`${API}/energy`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month,year,kwh,m3,notes}) });
+    }
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
+    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
+    clearEnergyForm();
+    await loadEnergyRows();
+    toast('Energy data saved');
+  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
+}
+
+async function deleteEnergyRow(id, month) {
+  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/energy/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast(`Deleted ${month}`);
+    await loadEnergyRows();
+  } catch(e) { toast(e.message, true); }
+}
+
+// ═══ W2R RECYCLING EDITOR ════════════════════════════════════════════════════
+let weEditId = null;
+
+async function loadW2RRows() {
+  const tbody = document.getElementById('we-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
+  try {
+    const res = await fetch(`${API}/recycling/rows`, { headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    const rows = await res.json();
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><b>${r.month}</b></td>
+        <td>${Number(r.cardboard_kg || 0).toFixed(2)}</td>
+        <td>${Number(r.plastic_kg   || 0).toFixed(2)}</td>
+        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
+        <td style="white-space:nowrap">
+          <button class="action-btn" onclick="editW2RRow(${r.id},'${r.month}',${r.year},${r.cardboard_kg||0},${r.plastic_kg||0},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
+          <button class="action-btn danger" onclick="deleteW2RRow(${r.id},'${r.month}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
+}
+
+function editW2RRow(id, month, year, cb, pl, notes) {
+  weEditId = id;
+  document.getElementById('we-month').value    = month;
+  document.getElementById('we-year').value     = year;
+  document.getElementById('we-cardboard').value = cb;
+  document.getElementById('we-plastic').value   = pl;
+  document.getElementById('we-notes').value    = notes || '';
+  document.getElementById('we-status').textContent = `Editing: ${month}`;
+  document.getElementById('we-status').style.color = 'var(--am)';
+}
+
+function clearW2RForm() {
+  weEditId = null;
+  ['we-month','we-year','we-cardboard','we-plastic','we-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('we-status').textContent = '';
+}
+
+async function saveW2RRow() {
+  const month       = document.getElementById('we-month').value.trim();
+  const year        = parseInt(document.getElementById('we-year').value);
+  const cardboard   = parseFloat(document.getElementById('we-cardboard').value) || 0;
+  const plastic     = parseFloat(document.getElementById('we-plastic').value)   || 0;
+  const notes       = document.getElementById('we-notes').value.trim();
+  if (!month || !year) { toast('Month and Year are required', true); return; }
+  const status = document.getElementById('we-status');
+  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
+  try {
+    let res;
+    if (weEditId) {
+      res = await fetch(`${API}/recycling/${weEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
+    } else {
+      res = await fetch(`${API}/recycling`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month, year, cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
+    }
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
+    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
+    clearW2RForm();
+    await loadW2RRows();
+    toast('Recycling data saved');
+  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
+}
+
+async function deleteW2RRow(id, month) {
+  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/recycling/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast(`Deleted ${month}`);
+    await loadW2RRows();
+  } catch(e) { toast(e.message, true); }
+}
+
+</script>
 <style>
 :root{
   --gd:#1B4332;--gm:#2D6A4F;--gs:#52B788;--gp:#D8F3DC;
@@ -266,6 +421,32 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   </div>
 </div>
 
+
+  <!-- ── Energy Data Editor (admin only) ── -->
+  <div id="energy-editor-wrap" style="display:none;margin-top:20px">
+    <div class="editor-panel">
+      <h3>⚡ Edit Energy Data</h3>
+      <div class="form-row">
+        <div class="form-field"><label>Month (e.g. Jun 2026)</label><input type="text" id="ee-month" placeholder="Jun 2026"></div>
+        <div class="form-field"><label>Year</label><input type="number" id="ee-year" placeholder="2026" min="2020" max="2099"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Electricity (kWh)</label><input type="number" id="ee-kwh" placeholder="97855" step="0.01" min="0"></div>
+        <div class="form-field"><label>Water (m³)</label><input type="number" id="ee-m3" placeholder="412" step="0.01" min="0"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes (optional)</label><input type="text" id="ee-notes" placeholder="e.g. Includes GPC event"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="saveEnergyRow()">💾 Save Row</button>
+        <button class="btn btn-outline" onclick="clearEnergyForm()" style="background:none;border:1.5px solid var(--br);border-radius:8px;padding:10px 18px;cursor:pointer;font-family:inherit;font-size:.88rem">✕ Clear</button>
+      </div>
+      <div id="ee-status" style="margin-top:10px;font-size:.82rem;color:var(--gm)"></div>
+      <div style="margin-top:20px">
+        <div class="section-title" style="font-size:.88rem;margin-bottom:10px">Existing Records <button onclick="loadEnergyRows()" style="font-size:.72rem;padding:2px 8px;background:var(--gp);border:none;border-radius:6px;cursor:pointer;margin-left:8px">↻ Refresh</button></div>
+        <div style="overflow-x:auto"><table class="roster-table"><thead><tr><th>Month</th><th>kWh</th><th>m³</th><th>Notes</th><th></th></tr></thead><tbody id="ee-tbody"><tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr></tbody></table></div>
+      </div>
+    </div>
+  </div>
+
 <!-- ═══ RECYCLING ════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-recycling">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:4px">
@@ -308,6 +489,32 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     </div>
   </div>
 </div>
+
+
+  <!-- ── W2R Data Editor (admin only) ── -->
+  <div id="w2r-editor-wrap" style="display:none;margin-top:20px">
+    <div class="editor-panel">
+      <h3>♻️ Edit Recycling Data</h3>
+      <div class="form-row">
+        <div class="form-field"><label>Month (e.g. Jun 2026)</label><input type="text" id="we-month" placeholder="Jun 2026"></div>
+        <div class="form-field"><label>Year</label><input type="number" id="we-year" placeholder="2026" min="2020" max="2099"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>Cardboard (kg)</label><input type="number" id="we-cardboard" placeholder="52.3" step="0.01" min="0"></div>
+        <div class="form-field"><label>Plastic (kg)</label><input type="number" id="we-plastic" placeholder="0.8" step="0.01" min="0"></div>
+      </div>
+      <div class="form-field" style="margin-bottom:12px"><label>Notes (optional)</label><input type="text" id="we-notes" placeholder="e.g. Jan camp collection"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="saveW2RRow()">💾 Save Row</button>
+        <button class="btn btn-outline" onclick="clearW2RForm()" style="background:none;border:1.5px solid var(--br);border-radius:8px;padding:10px 18px;cursor:pointer;font-family:inherit;font-size:.88rem">✕ Clear</button>
+      </div>
+      <div id="we-status" style="margin-top:10px;font-size:.82rem;color:var(--gm)"></div>
+      <div style="margin-top:20px">
+        <div class="section-title" style="font-size:.88rem;margin-bottom:10px">Existing Records <button onclick="loadW2RRows()" style="font-size:.72rem;padding:2px 8px;background:var(--gp);border:none;border-radius:6px;cursor:pointer;margin-left:8px">↻ Refresh</button></div>
+        <div style="overflow-x:auto"><table class="roster-table"><thead><tr><th>Month</th><th>Cardboard (kg)</th><th>Plastic (kg)</th><th>Notes</th><th></th></tr></thead><tbody id="we-tbody"><tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr></tbody></table></div>
+      </div>
+    </div>
+  </div>
 
 <!-- ═══ COMMS ════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-comms">
@@ -611,6 +818,11 @@ function unlockAdmin() {
   adminKey = key; isAdmin = true;
   document.getElementById('admin-lock-panel').style.display = 'none';
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  // Show data editor panels
+  const ee = document.getElementById('energy-editor-wrap');
+  const we = document.getElementById('w2r-editor-wrap');
+  if (ee) { ee.style.display = ''; loadEnergyRows(); }
+  if (we) { we.style.display = ''; loadW2RRows(); }
   // Refresh both views to show edit actions
   renderRoster(currentFilter);
   renderCalendarView();

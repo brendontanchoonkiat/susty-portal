@@ -154,6 +154,62 @@ router.post('/refresh', (req, res, next) => req.app.get('requireApiKey')(req, re
   res.json({ ok: true, source: d.source, electricityRecs: d.electricity.length, waterRecs: d.water.length });
 });
 
+// ─── Admin write endpoints (Supabase-backed) ─────────────────────────────────
+const db = require('../utils/supabase');
+const adminOnly = (req, res, next) => req.app.get('requireApiKey')(req, res, next);
+
+// GET /api/energy/rows — all stored energy rows for the editor
+router.get('/rows', adminOnly, async (_req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { data, error } = await supa.from('energy_monthly')
+    .select('*').order('year').order('month_num');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// POST /api/energy — add or update a monthly energy record
+// Body: { month, year, kwh, m3 }  e.g. { month: "Jun 2026", year: 2026, kwh: 97855, m3: 412 }
+router.post('/', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { month, year, kwh, m3 } = req.body;
+  if (!month || !year) return res.status(400).json({ error: 'month and year are required' });
+  const monthNum = new Date(`${month} 1`).getMonth() + 1;
+  const { data, error } = await supa.from('energy_monthly')
+    .upsert({ month, year: Number(year), month_num: monthNum, kwh: kwh ?? null, m3: m3 ?? null, updated_at: new Date().toISOString() }, { onConflict: 'month' })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null; // bust cache
+  res.json({ ok: true, data });
+});
+
+// PATCH /api/energy/:id — update specific fields on an existing row
+router.patch('/:id', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { kwh, m3, notes } = req.body;
+  const patch = { updated_at: new Date().toISOString() };
+  if (kwh  !== undefined) patch.kwh   = kwh;
+  if (m3   !== undefined) patch.m3    = m3;
+  if (notes !== undefined) patch.notes = notes;
+  const { data, error } = await supa.from('energy_monthly')
+    .update(patch).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null;
+  res.json({ ok: true, data });
+});
+
+// DELETE /api/energy/:id
+router.delete('/:id', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { error } = await supa.from('energy_monthly').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null;
+  res.json({ ok: true });
+});
+
 // Export getData for weekly snapshot
 router.getData = getData;
 

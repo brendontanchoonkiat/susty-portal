@@ -189,6 +189,66 @@ router.post('/refresh', (req, res, next) => {
   res.json({ ok: true, source: d.source, cardboardRecords: d.cardboard.length, plasticRecords: d.plastic.length });
 });
 
+// ─── Admin write endpoints (Supabase-backed) ─────────────────────────────────
+const db = require('../utils/supabase');
+const adminOnly = (req, res, next) => req.app.get('requireApiKey')(req, res, next);
+
+// GET /api/recycling/rows — all monthly rows for the editor table
+router.get('/rows', adminOnly, async (_req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { data, error } = await supa.from('recycling_monthly')
+    .select('*').order('year').order('month');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data || []);
+});
+
+// POST /api/recycling — add or update a monthly record
+// Body: { month, year, cardboard_kg, plastic_kg }
+router.post('/', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { month, year, cardboard_kg, plastic_kg, notes } = req.body;
+  if (!month || !year) return res.status(400).json({ error: 'month and year are required' });
+  const { data, error } = await supa.from('recycling_monthly')
+    .upsert({
+      month, year: Number(year),
+      cardboard_kg: cardboard_kg ?? 0,
+      plastic_kg:   plastic_kg   ?? 0,
+      notes:        notes || '',
+      source:       'manual',
+      updated_at:   new Date().toISOString(),
+    }, { onConflict: 'month' })
+    .select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null;
+  res.json({ ok: true, data });
+});
+
+// PATCH /api/recycling/:id — edit individual fields
+router.patch('/:id', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const allowed = ['cardboard_kg', 'plastic_kg', 'notes', 'month', 'year'];
+  const patch   = { updated_at: new Date().toISOString() };
+  for (const key of allowed) if (req.body[key] !== undefined) patch[key] = req.body[key];
+  const { data, error } = await supa.from('recycling_monthly')
+    .update(patch).eq('id', req.params.id).select().single();
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null;
+  res.json({ ok: true, data });
+});
+
+// DELETE /api/recycling/:id
+router.delete('/:id', adminOnly, async (req, res) => {
+  const supa = db.getClient();
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
+  const { error } = await supa.from('recycling_monthly').delete().eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  cache.lastFetched = null;
+  res.json({ ok: true });
+});
+
 // Export getData so weeklySnapshot.js can reuse the cache
 router.getData = getData;
 
