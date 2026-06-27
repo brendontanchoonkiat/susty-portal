@@ -102,6 +102,29 @@ async function getData() {
   const now = Date.now();
   if (cache.lastFetched && (now - cache.lastFetched) < CACHE_TTL_MS) return cache;
 
+  // ── 1. Try Supabase first ────────────────────────────────────────────────
+  try {
+    const db = require('../utils/supabase');
+    const supa = db.getClient();
+    if (supa) {
+      const { data: rows, error } = await supa.from('energy_monthly')
+        .select('*').order('year').order('month_num');
+      if (!error && rows && rows.length > 0) {
+        cache = {
+          electricity: rows.filter(r => r.kwh != null).map(r => ({ month: r.month, kwh: Number(r.kwh) })),
+          water:       rows.filter(r => r.m3  != null).map(r => ({ month: r.month, m3:  Number(r.m3)  })),
+          lastFetched: now,
+          source:      'supabase',
+        };
+        console.log(`[Energy] Supabase: ${rows.length} monthly records`);
+        return cache;
+      }
+    }
+  } catch (err) {
+    console.warn('[Energy] Supabase read failed, trying Sheets:', err.message);
+  }
+
+  // ── 2. Fall back to Google Sheets ───────────────────────────────────────
   try {
     const live = await fetchFromSheets();
     if (live && live.electricity.length > 0) {
@@ -111,8 +134,8 @@ async function getData() {
       throw new Error('no live data');
     }
   } catch (err) {
+    // ── 3. Last resort: static JSON file ──────────────────────────────────
     console.warn('[Energy] Using static fallback:', err.message);
-    // eslint-disable-next-line global-require
     const { electricityData, waterData } = require('../data/energy');
     cache = {
       electricity: (electricityData || []).filter(r => r.kwh),

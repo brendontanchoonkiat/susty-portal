@@ -104,11 +104,31 @@ async function getData() {
   const now = Date.now();
   if (cache.lastFetched && (now - cache.lastFetched) < CACHE_TTL_MS) return cache;
 
+  // ── 1. Try Supabase first ────────────────────────────────────────────────
+  try {
+    const db   = require('../utils/supabase');
+    const rows = await db.getRecyclingStats();
+    if (rows && rows.length > 0) {
+      const toArr = (type) => rows.map(r => ({ month: r.month, kg: Number(r[type] || 0) }))
+                                  .filter(r => r.kg > 0);
+      cache = {
+        cardboard:   aggregateByMonth(toArr('cardboard_kg')),
+        plastic:     aggregateByMonth(toArr('plastic_kg')),
+        lastFetched: now,
+        source:      'supabase',
+      };
+      console.log(`[Recycling] Supabase: ${rows.length} monthly records`);
+      return cache;
+    }
+  } catch (err) {
+    console.warn('[Recycling] Supabase read failed, trying Sheets:', err.message);
+  }
+
+  // ── 2. Fall back to Google Sheets ───────────────────────────────────────
   try {
     const live = await fetchFromSheets();
     if (live && (live.cardboard.length > 0 || live.plastic.length > 0)) {
       cache = {
-        // Use live data where available; fall back per-type if a column is missing
         cardboard:   aggregateByMonth(filterFromTrackingStart(
                        live.cardboard.length > 0 ? live.cardboard : FALLBACK.cardboard)),
         plastic:     aggregateByMonth(filterFromTrackingStart(
@@ -118,21 +138,12 @@ async function getData() {
         liveCardboard: live.cardboard.length > 0,
         livePlastic:   live.plastic.length   > 0,
       };
-      if (live.cardboard.length === 0)
-        console.warn('[Recycling] No live cardboard data parsed — check sheet column layout.');
-      if (live.plastic.length === 0)
-        console.warn('[Recycling] No live plastic data parsed — check Total tab has a row with "Plastic" in col B.');
     } else {
-      console.warn('[Recycling] No live data parsed from Sheets — using fallback. Check GOOGLE_SHEETS_API_KEY and sheet structure.');
-      cache = {
-        cardboard:   aggregateByMonth(FALLBACK.cardboard),
-        plastic:     aggregateByMonth(FALLBACK.plastic),
-        lastFetched: now,
-        source:      'fallback',
-      };
+      throw new Error('no live data from Sheets');
     }
   } catch (err) {
-    console.warn('[Recycling] Sheets fetch failed, using fallback:', err.message);
+    // ── 3. Last resort: static JSON file ──────────────────────────────────
+    console.warn('[Recycling] Using static fallback:', err.message);
     cache = {
       cardboard:   aggregateByMonth(FALLBACK.cardboard),
       plastic:     aggregateByMonth(FALLBACK.plastic),
