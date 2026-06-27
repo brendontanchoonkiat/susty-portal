@@ -102,39 +102,41 @@ async function getData() {
   const now = Date.now();
   if (cache.lastFetched && (now - cache.lastFetched) < CACHE_TTL_MS) return cache;
 
-  // ── 1. Try Supabase first ────────────────────────────────────────────────
-  try {
-    const db = require('../utils/supabase');
-    const supa = db.getClient();
-    if (supa) {
-      const { data: rows, error } = await supa.from('energy_monthly')
-        .select('*').order('year').order('month_num');
-      if (!error && rows && rows.length > 0) {
-        cache = {
-          electricity: rows.filter(r => r.kwh != null).map(r => ({ month: r.month, kwh: Number(r.kwh) })),
-          water:       rows.filter(r => r.m3  != null).map(r => ({ month: r.month, m3:  Number(r.m3)  })),
-          lastFetched: now,
-          source:      'supabase',
-        };
-        console.log(`[Energy] Supabase: ${rows.length} monthly records`);
-        return cache;
+  // ── Primary: Google Sheets (source of truth for energy data) ────────────
+  // Switch to Supabase by setting ENERGY_SOURCE=supabase in Railway env vars.
+  if (process.env.ENERGY_SOURCE === 'supabase') {
+    try {
+      const db   = require('../utils/supabase');
+      const supa = db.getClient();
+      if (supa) {
+        const { data: rows, error } = await supa.from('energy_monthly')
+          .select('*').order('year').order('month_num');
+        if (!error && rows && rows.length > 0) {
+          cache = {
+            electricity: rows.filter(r => r.kwh != null).map(r => ({ month: r.month, kwh: Number(r.kwh) })),
+            water:       rows.filter(r => r.m3  != null).map(r => ({ month: r.month, m3:  Number(r.m3)  })),
+            lastFetched: now,
+            source:      'supabase',
+          };
+          console.log(`[Energy] Supabase: ${rows.length} monthly records`);
+          return cache;
+        }
       }
+    } catch (err) {
+      console.warn('[Energy] Supabase read failed, falling through to Sheets:', err.message);
     }
-  } catch (err) {
-    console.warn('[Energy] Supabase read failed, trying Sheets:', err.message);
   }
 
-  // ── 2. Fall back to Google Sheets ───────────────────────────────────────
+  // ── Google Sheets → static file fallback ────────────────────────────────
   try {
     const live = await fetchFromSheets();
     if (live && live.electricity.length > 0) {
       cache = { ...live, lastFetched: now, source: 'live' };
-      console.log(`[Energy] Live: ${live.electricity.length} elec, ${live.water.length} water records`);
+      console.log(`[Energy] Sheets: ${live.electricity.length} elec, ${live.water.length} water records`);
     } else {
-      throw new Error('no live data');
+      throw new Error('no live data from Sheets');
     }
   } catch (err) {
-    // ── 3. Last resort: static JSON file ──────────────────────────────────
     console.warn('[Energy] Using static fallback:', err.message);
     const { electricityData, waterData } = require('../data/energy');
     cache = {

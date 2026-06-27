@@ -196,6 +196,11 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <button class="nav-tab" data-page="roster">📋 Roster</button>
     <button class="nav-tab" data-page="test">🧪 Test</button>
   </div>
+  <div id="nav-admin-bar" style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
+    <input type="password" id="nav-admin-key" placeholder="Admin key" style="padding:5px 10px;border-radius:6px;border:none;font-size:.78rem;width:120px;background:rgba(255,255,255,.15);color:#fff;outline:none" onkeydown="if(event.key==='Enter')unlockAdminNav()">
+    <button onclick="unlockAdminNav()" style="padding:5px 12px;background:var(--gs);border:none;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:700;color:var(--gd)">🔓</button>
+    <span id="nav-admin-status" style="font-size:.72rem;color:var(--gs);display:none">✅ Admin</span>
+  </div>
 </nav>
 
 <!-- ═══ OVERVIEW ════════════════════════════════════════════════════════════ -->
@@ -635,6 +640,17 @@ function navigateTo(pageId) {
   if (tab)  tab.classList.add('active');
   if (page) page.classList.add('active');
   location.hash = pageId;
+  // Reveal editor panels if admin mode is already unlocked
+  if (isAdmin) {
+    if (pageId === 'energy') {
+      const ee = document.getElementById('energy-editor-wrap');
+      if (ee && ee.style.display === 'none') { ee.style.display = ''; loadEnergyRows(); }
+    }
+    if (pageId === 'recycling') {
+      const we = document.getElementById('w2r-editor-wrap');
+      if (we && we.style.display === 'none') { we.style.display = ''; loadW2RRows(); }
+    }
+  }
 }
 
 document.querySelectorAll('.nav-tab').forEach(t => {
@@ -657,20 +673,37 @@ function toast(msg, isError=false) {
 }
 
 // ═══ ADMIN ═══════════════════════════════════════════════════════════════════
+function applyAdminMode() {
+  document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
+  const ee = document.getElementById('energy-editor-wrap');
+  const we = document.getElementById('w2r-editor-wrap');
+  if (ee) { ee.style.display = ''; loadEnergyRows(); }
+  if (we) { we.style.display = ''; loadW2RRows(); }
+  document.getElementById('nav-admin-status').style.display = '';
+  document.getElementById('nav-admin-bar').querySelector('input').style.display = 'none';
+  document.getElementById('nav-admin-bar').querySelector('button').style.display = 'none';
+  renderRoster(currentFilter);
+  renderCalendarView();
+}
+
 function unlockAdmin() {
   const key = document.getElementById('admin-key-input').value.trim();
   if (!key) { toast('Enter your admin key', true); return; }
   adminKey = key; isAdmin = true;
   document.getElementById('admin-lock-panel').style.display = 'none';
-  document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-  // Show data editor panels
-  const ee = document.getElementById('energy-editor-wrap');
-  const we = document.getElementById('w2r-editor-wrap');
-  if (ee) { ee.style.display = ''; loadEnergyRows(); }
-  if (we) { we.style.display = ''; loadW2RRows(); }
-  // Refresh both views to show edit actions
-  renderRoster(currentFilter);
-  renderCalendarView();
+  // Also fill the nav key input so nav bar reflects state
+  document.getElementById('nav-admin-key').value = key;
+  applyAdminMode();
+  toast('✅ Admin mode unlocked');
+}
+
+function unlockAdminNav() {
+  const key = document.getElementById('nav-admin-key').value.trim();
+  if (!key) { toast('Enter your admin key', true); return; }
+  adminKey = key; isAdmin = true;
+  const lockPanel = document.getElementById('admin-lock-panel');
+  if (lockPanel) lockPanel.style.display = 'none';
+  applyAdminMode();
   toast('✅ Admin mode unlocked');
 }
 

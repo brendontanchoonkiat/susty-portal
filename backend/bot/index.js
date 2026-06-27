@@ -48,7 +48,7 @@ if (!BOT_TOKEN) {
 const bot = new Bot(BOT_TOKEN);
 
 // Session stores pending state (e.g. waiting for name after /start)
-bot.use(session({ initial: () => ({ awaitingName: false, awaitingLogKg: null }) }));
+bot.use(session({ initial: () => ({ awaitingName: false, awaitingLogKg: null, cachedName: null }) }));
 
 // ─── Group → PM redirect middleware ──────────────────────────────────────────
 // Group chat is OUTPUT only (swap alerts, summaries, reminders).
@@ -83,8 +83,20 @@ bot.use(async (ctx, next) => {
 
 // ─── Resolve member name from Telegram context ────────────────────────────────
 async function resolveName(ctx) {
-  const member = await db.getMemberByTelegramId(ctx.from.id);
-  return member?.name || null;
+  // 1. Use session cache (survives within a Railway process lifetime)
+  if (ctx.session?.cachedName) return ctx.session.cachedName;
+
+  // 2. Query Supabase
+  try {
+    const member = await db.getMemberByTelegramId(ctx.from.id);
+    if (member?.name) {
+      if (ctx.session) ctx.session.cachedName = member.name; // warm the cache
+      return member.name;
+    }
+  } catch (err) {
+    console.warn('[Bot] resolveName Supabase error:', err.message);
+  }
+  return null;
 }
 
 // ─── Format a roster slot for display ────────────────────────────────────────
@@ -107,6 +119,7 @@ function today() { return new Date().toISOString().split('T')[0]; }
 bot.command('start', async (ctx) => {
   const existing = await db.getMemberByTelegramId(ctx.from.id);
   if (existing) {
+    if (ctx.session) ctx.session.cachedName = existing.name; // refresh cache
     return ctx.reply(
       `Welcome back, <b>${existing.name}</b>! 🌿\nType /help to see all commands.`,
       { parse_mode: 'HTML' }
@@ -664,6 +677,7 @@ bot.on('message:text', async (ctx) => {
     }
     await db.upsertMember(ctx.from.id, name);
     ctx.session.awaitingName = false;
+    ctx.session.cachedName   = name; // cache so restarts don't re-prompt
     return ctx.reply(
       `✅ Got it, <b>${name}</b>! You're all set. 🌿\n\nType /help to see what I can do.`,
       { parse_mode: 'HTML' }

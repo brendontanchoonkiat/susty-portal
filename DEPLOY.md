@@ -4,6 +4,18 @@ Plain, step-by-step. No prior experience needed. Free, no credit card required.
 
 ---
 
+## ⚠️ Deployment Rule
+
+**All deployments must go through `git-push.command`.**
+
+Never push directly from the terminal or GitHub web editor for this project.
+Always double-click `git-push.command` in Finder to deploy.
+
+This ensures commits are consistent, Railway always redeploys cleanly,
+and the post-deploy checklist is printed each time.
+
+---
+
 ## What you'll set up
 
 | Part | Host | Cost |
