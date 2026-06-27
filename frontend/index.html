@@ -467,7 +467,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <div class="form-row">
       <div class="form-field">
         <label>Session</label>
-        <select id="ed-session"><option value="SAT">Saturday (SAT)</option><option value="SUN">Sunday (SUN)</option></select>
+        <select id="ed-session"><option value="SAT">Saturday (SAT)</option><option value="SUN">Sunday (SUN)</option><option value="GPC">GPC</option></select>
       </div>
       <div class="form-field">
         <label>Weight logged (kg) — optional</label>
@@ -739,10 +739,7 @@ function toast(msg, isError=false) {
 // ═══ ADMIN ═══════════════════════════════════════════════════════════════════
 function applyAdminMode() {
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
-  const ee = document.getElementById('energy-editor-wrap');
-  const we = document.getElementById('w2r-editor-wrap');
-  if (ee) { ee.style.display = ''; loadEnergyRows(); }
-  if (we) { we.style.display = ''; loadW2RRows(); }
+  // Energy and W2R editors are revealed lazily when the user navigates to those tabs
   document.getElementById('nav-admin-status').style.display = '';
   document.getElementById('nav-admin-bar').querySelector('input').style.display = 'none';
   document.getElementById('nav-admin-bar').querySelector('button').style.display = 'none';
@@ -1644,7 +1641,8 @@ function renderCalendarView() {
       const kgTag  = s.kg !== null ? `<span class="kg-tag">${s.kg}kg</span>` : '';
       const cls    = isAdmin ? ` editable` : '';
       const click  = isAdmin ? `onclick="openEditSlot(${s.id})"` : '';
-      return `<div class="cal-slot ${sess}${cls}" ${click}><strong>${s.session}</strong> ${s.team.join(' & ')}${kgTag}</div>`;
+      const editHint = isAdmin ? `<span style="float:right;opacity:.5;font-size:.6rem">✏️</span>` : '';
+      return `<div class="cal-slot ${sess}${cls}" ${click}>${editHint}<strong>${s.session}</strong> ${s.team.join(' & ')}${kgTag}</div>`;
     }).join('');
 
     cells += `<div class="cal-cell${isToday?' today':''}"><div class="cal-day-num">${d}</div>${slotHtml}</div>`;
@@ -1780,8 +1778,11 @@ async function loadW2RRows() {
       try { const e = await res.json(); msg += ': ' + (e.error || JSON.stringify(e)); } catch(_) {}
       tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${msg}</td></tr>`; return;
     }
-    const rows = await res.json();
+    let rows = await res.json();
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
+    // Sort chronologically — month is text so alphabetical order is wrong
+    const MN = {Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
+    rows.sort((a,b) => a.year !== b.year ? a.year - b.year : (MN[a.month.split(' ')[0]]||0) - (MN[b.month.split(' ')[0]]||0));
     tbody.innerHTML = rows.map(r => `
       <tr>
         <td><b>${r.month}</b></td>
