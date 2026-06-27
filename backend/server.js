@@ -14,8 +14,8 @@ app.use(helmet({
       defaultSrc:      ["'self'"],
       scriptSrc:       ["'self'", "https://cdnjs.cloudflare.com"],
       styleSrc:        ["'self'", "'unsafe-inline'"],
-      imgSrc:          ["'self'", "data:"],
-      connectSrc:      ["'self'"],
+      imgSrc:          ["'self'", "data:", "https://*.supabase.co"],
+      connectSrc:      ["'self'", "https://*.supabase.co"],
       fontSrc:         ["'self'"],
       objectSrc:       ["'none'"],
       frameAncestors:  ["'none'"],
@@ -76,6 +76,7 @@ app.use('/api/roster',    require('./routes/roster'));
 app.use('/api/comms',     require('./routes/comms'));
 app.use('/api/swap',      require('./routes/swap'));
 app.use('/api/telegram',  require('./routes/telegram'));
+app.use('/api/stats',     require('./routes/stats'));      // carbon + YoY aggregates
 
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '../frontend/index.html')));
@@ -113,4 +114,23 @@ function startWeeklyCron() {
 app.listen(PORT, () => {
   console.log(`🌿 Susty Portal on port ${PORT}`);
   startWeeklyCron();
+
+  // ─── Start Telegram bot ───────────────────────────────────────────────────
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    try {
+      const { start } = require('./bot/index');
+      start();
+    } catch (err) {
+      console.warn('[Bot] Failed to start:', err.message);
+    }
+
+    // ─── Duty reminder cron (daily 09:00 SGT) ──────────────────────────────
+    try {
+      const { bot }               = require('./bot/index');
+      const { startReminderCron } = require('./utils/reminders');
+      startReminderCron(bot);
+    } catch (err) {
+      console.warn('[Reminders] Failed to start:', err.message);
+    }
+  }
 });
