@@ -4,162 +4,7 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Sustainability Ministry Portal</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js">
-// ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════
-let eeEditId = null;
-
-async function loadEnergyRows() {
-  const tbody = document.getElementById('ee-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
-  try {
-    const res = await fetch(`${API}/energy/rows`, { headers: { 'x-api-key': adminKey } });
-    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
-    const rows = await res.json();
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td><b>${r.month}</b></td>
-        <td>${r.kwh != null ? Number(r.kwh).toLocaleString() : '—'}</td>
-        <td>${r.m3  != null ? Number(r.m3).toLocaleString()  : '—'}</td>
-        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
-        <td style="white-space:nowrap">
-          <button class="action-btn" onclick="editEnergyRow(${r.id},'${r.month}',${r.year},${r.kwh||'null'},${r.m3||'null'},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
-          <button class="action-btn danger" onclick="deleteEnergyRow(${r.id},'${r.month}')">Delete</button>
-        </td>
-      </tr>`).join('');
-  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
-}
-
-function editEnergyRow(id, month, year, kwh, m3, notes) {
-  eeEditId = id;
-  document.getElementById('ee-month').value = month;
-  document.getElementById('ee-year').value  = year;
-  document.getElementById('ee-kwh').value   = kwh !== null && kwh !== undefined ? kwh : '';
-  document.getElementById('ee-m3').value    = m3  !== null && m3  !== undefined ? m3  : '';
-  document.getElementById('ee-notes').value = notes || '';
-  document.getElementById('ee-status').textContent = `Editing: ${month}`;
-  document.getElementById('ee-status').style.color = 'var(--am)';
-}
-
-function clearEnergyForm() {
-  eeEditId = null;
-  ['ee-month','ee-year','ee-kwh','ee-m3','ee-notes'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('ee-status').textContent = '';
-}
-
-async function saveEnergyRow() {
-  const month = document.getElementById('ee-month').value.trim();
-  const year  = parseInt(document.getElementById('ee-year').value);
-  const kwh   = document.getElementById('ee-kwh').value !== '' ? parseFloat(document.getElementById('ee-kwh').value) : null;
-  const m3    = document.getElementById('ee-m3').value  !== '' ? parseFloat(document.getElementById('ee-m3').value)  : null;
-  const notes = document.getElementById('ee-notes').value.trim();
-  if (!month || !year) { toast('Month and Year are required', true); return; }
-  const status = document.getElementById('ee-status');
-  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
-  try {
-    let res;
-    if (eeEditId) {
-      res = await fetch(`${API}/energy/${eeEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({kwh,m3,notes}) });
-    } else {
-      res = await fetch(`${API}/energy`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month,year,kwh,m3,notes}) });
-    }
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
-    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
-    clearEnergyForm();
-    await loadEnergyRows();
-    toast('Energy data saved');
-  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
-}
-
-async function deleteEnergyRow(id, month) {
-  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
-  try {
-    const res = await fetch(`${API}/energy/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
-    if (!res.ok) throw new Error((await res.json()).error);
-    toast(`Deleted ${month}`);
-    await loadEnergyRows();
-  } catch(e) { toast(e.message, true); }
-}
-
-// ═══ W2R RECYCLING EDITOR ════════════════════════════════════════════════════
-let weEditId = null;
-
-async function loadW2RRows() {
-  const tbody = document.getElementById('we-tbody');
-  if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
-  try {
-    const res = await fetch(`${API}/recycling/rows`, { headers: { 'x-api-key': adminKey } });
-    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
-    const rows = await res.json();
-    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
-    tbody.innerHTML = rows.map(r => `
-      <tr>
-        <td><b>${r.month}</b></td>
-        <td>${Number(r.cardboard_kg || 0).toFixed(2)}</td>
-        <td>${Number(r.plastic_kg   || 0).toFixed(2)}</td>
-        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
-        <td style="white-space:nowrap">
-          <button class="action-btn" onclick="editW2RRow(${r.id},'${r.month}',${r.year},${r.cardboard_kg||0},${r.plastic_kg||0},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
-          <button class="action-btn danger" onclick="deleteW2RRow(${r.id},'${r.month}')">Delete</button>
-        </td>
-      </tr>`).join('');
-  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
-}
-
-function editW2RRow(id, month, year, cb, pl, notes) {
-  weEditId = id;
-  document.getElementById('we-month').value    = month;
-  document.getElementById('we-year').value     = year;
-  document.getElementById('we-cardboard').value = cb;
-  document.getElementById('we-plastic').value   = pl;
-  document.getElementById('we-notes').value    = notes || '';
-  document.getElementById('we-status').textContent = `Editing: ${month}`;
-  document.getElementById('we-status').style.color = 'var(--am)';
-}
-
-function clearW2RForm() {
-  weEditId = null;
-  ['we-month','we-year','we-cardboard','we-plastic','we-notes'].forEach(id => document.getElementById(id).value = '');
-  document.getElementById('we-status').textContent = '';
-}
-
-async function saveW2RRow() {
-  const month       = document.getElementById('we-month').value.trim();
-  const year        = parseInt(document.getElementById('we-year').value);
-  const cardboard   = parseFloat(document.getElementById('we-cardboard').value) || 0;
-  const plastic     = parseFloat(document.getElementById('we-plastic').value)   || 0;
-  const notes       = document.getElementById('we-notes').value.trim();
-  if (!month || !year) { toast('Month and Year are required', true); return; }
-  const status = document.getElementById('we-status');
-  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
-  try {
-    let res;
-    if (weEditId) {
-      res = await fetch(`${API}/recycling/${weEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
-    } else {
-      res = await fetch(`${API}/recycling`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month, year, cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
-    }
-    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
-    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
-    clearW2RForm();
-    await loadW2RRows();
-    toast('Recycling data saved');
-  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
-}
-
-async function deleteW2RRow(id, month) {
-  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
-  try {
-    const res = await fetch(`${API}/recycling/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
-    if (!res.ok) throw new Error((await res.json()).error);
-    toast(`Deleted ${month}`);
-    await loadW2RRows();
-  } catch(e) { toast(e.message, true); }
-}
-
-</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 :root{
   --gd:#1B4332;--gm:#2D6A4F;--gs:#52B788;--gp:#D8F3DC;
@@ -1740,6 +1585,160 @@ async function testTelegram() {
   renderEventPills();
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
 })();
+
+// ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════
+let eeEditId = null;
+
+async function loadEnergyRows() {
+  const tbody = document.getElementById('ee-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
+  try {
+    const res = await fetch(`${API}/energy/rows`, { headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    const rows = await res.json();
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><b>${r.month}</b></td>
+        <td>${r.kwh != null ? Number(r.kwh).toLocaleString() : '—'}</td>
+        <td>${r.m3  != null ? Number(r.m3).toLocaleString()  : '—'}</td>
+        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
+        <td style="white-space:nowrap">
+          <button class="action-btn" onclick="editEnergyRow(${r.id},'${r.month}',${r.year},${r.kwh||'null'},${r.m3||'null'},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
+          <button class="action-btn danger" onclick="deleteEnergyRow(${r.id},'${r.month}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
+}
+
+function editEnergyRow(id, month, year, kwh, m3, notes) {
+  eeEditId = id;
+  document.getElementById('ee-month').value = month;
+  document.getElementById('ee-year').value  = year;
+  document.getElementById('ee-kwh').value   = kwh !== null && kwh !== undefined ? kwh : '';
+  document.getElementById('ee-m3').value    = m3  !== null && m3  !== undefined ? m3  : '';
+  document.getElementById('ee-notes').value = notes || '';
+  document.getElementById('ee-status').textContent = `Editing: ${month}`;
+  document.getElementById('ee-status').style.color = 'var(--am)';
+}
+
+function clearEnergyForm() {
+  eeEditId = null;
+  ['ee-month','ee-year','ee-kwh','ee-m3','ee-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('ee-status').textContent = '';
+}
+
+async function saveEnergyRow() {
+  const month = document.getElementById('ee-month').value.trim();
+  const year  = parseInt(document.getElementById('ee-year').value);
+  const kwh   = document.getElementById('ee-kwh').value !== '' ? parseFloat(document.getElementById('ee-kwh').value) : null;
+  const m3    = document.getElementById('ee-m3').value  !== '' ? parseFloat(document.getElementById('ee-m3').value)  : null;
+  const notes = document.getElementById('ee-notes').value.trim();
+  if (!month || !year) { toast('Month and Year are required', true); return; }
+  const status = document.getElementById('ee-status');
+  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
+  try {
+    let res;
+    if (eeEditId) {
+      res = await fetch(`${API}/energy/${eeEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({kwh,m3,notes}) });
+    } else {
+      res = await fetch(`${API}/energy`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month,year,kwh,m3,notes}) });
+    }
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
+    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
+    clearEnergyForm();
+    await loadEnergyRows();
+    toast('Energy data saved');
+  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
+}
+
+async function deleteEnergyRow(id, month) {
+  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/energy/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast(`Deleted ${month}`);
+    await loadEnergyRows();
+  } catch(e) { toast(e.message, true); }
+}
+
+// ═══ W2R RECYCLING EDITOR ════════════════════════════════════════════════════
+let weEditId = null;
+
+async function loadW2RRows() {
+  const tbody = document.getElementById('we-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
+  try {
+    const res = await fetch(`${API}/recycling/rows`, { headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    const rows = await res.json();
+    if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td><b>${r.month}</b></td>
+        <td>${Number(r.cardboard_kg || 0).toFixed(2)}</td>
+        <td>${Number(r.plastic_kg   || 0).toFixed(2)}</td>
+        <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
+        <td style="white-space:nowrap">
+          <button class="action-btn" onclick="editW2RRow(${r.id},'${r.month}',${r.year},${r.cardboard_kg||0},${r.plastic_kg||0},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
+          <button class="action-btn danger" onclick="deleteW2RRow(${r.id},'${r.month}')">Delete</button>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
+}
+
+function editW2RRow(id, month, year, cb, pl, notes) {
+  weEditId = id;
+  document.getElementById('we-month').value    = month;
+  document.getElementById('we-year').value     = year;
+  document.getElementById('we-cardboard').value = cb;
+  document.getElementById('we-plastic').value   = pl;
+  document.getElementById('we-notes').value    = notes || '';
+  document.getElementById('we-status').textContent = `Editing: ${month}`;
+  document.getElementById('we-status').style.color = 'var(--am)';
+}
+
+function clearW2RForm() {
+  weEditId = null;
+  ['we-month','we-year','we-cardboard','we-plastic','we-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('we-status').textContent = '';
+}
+
+async function saveW2RRow() {
+  const month       = document.getElementById('we-month').value.trim();
+  const year        = parseInt(document.getElementById('we-year').value);
+  const cardboard   = parseFloat(document.getElementById('we-cardboard').value) || 0;
+  const plastic     = parseFloat(document.getElementById('we-plastic').value)   || 0;
+  const notes       = document.getElementById('we-notes').value.trim();
+  if (!month || !year) { toast('Month and Year are required', true); return; }
+  const status = document.getElementById('we-status');
+  status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
+  try {
+    let res;
+    if (weEditId) {
+      res = await fetch(`${API}/recycling/${weEditId}`, { method:'PATCH', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
+    } else {
+      res = await fetch(`${API}/recycling`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month, year, cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
+    }
+    if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
+    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
+    clearW2RForm();
+    await loadW2RRows();
+    toast('Recycling data saved');
+  } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
+}
+
+async function deleteW2RRow(id, month) {
+  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`${API}/recycling/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
+    if (!res.ok) throw new Error((await res.json()).error);
+    toast(`Deleted ${month}`);
+    await loadW2RRows();
+  } catch(e) { toast(e.message, true); }
+}
 </script>
 </body>
 </html>
