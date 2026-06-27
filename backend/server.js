@@ -78,6 +78,28 @@ app.use('/api/swap',      require('./routes/swap'));
 app.use('/api/telegram',  require('./routes/telegram'));
 app.use('/api/stats',     require('./routes/stats'));      // carbon + YoY aggregates
 
+// ─── Debug: Supabase connectivity check (admin only) ─────────────────────────
+app.get('/api/debug', requireApiKey, async (_req, res) => {
+  const { getClient } = require('./utils/supabase');
+  const supa = getClient();
+  const out  = {
+    supabaseConfigured: !!supa,
+    supabaseUrl:        process.env.SUPABASE_URL ? process.env.SUPABASE_URL.replace(/\/.*$/, '') + '/...' : null,
+    adminKeySet:        !!process.env.ADMIN_API_KEY,
+    botTokenSet:        !!process.env.TELEGRAM_BOT_TOKEN,
+    tables: {},
+  };
+  if (supa) {
+    for (const t of ['members','roster_slots','recycling_monthly','energy_monthly','data_logs','swap_requests']) {
+      try {
+        const { count, error } = await supa.from(t).select('*', { count: 'exact', head: true });
+        out.tables[t] = error ? `ERROR: ${error.message}` : count;
+      } catch (e) { out.tables[t] = `THROW: ${e.message}`; }
+    }
+  }
+  res.json(out);
+});
+
 app.use('/api/*', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '../frontend/index.html')));
 

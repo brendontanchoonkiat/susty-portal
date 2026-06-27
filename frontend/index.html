@@ -1628,7 +1628,11 @@ async function loadEnergyRows() {
   tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
   try {
     const res = await fetch(`${API}/energy/rows`, { headers: { 'x-api-key': adminKey } });
-    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const e = await res.json(); msg += ': ' + (e.error || JSON.stringify(e)); } catch(_) {}
+      tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${msg}</td></tr>`; return;
+    }
     const rows = await res.json();
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
     tbody.innerHTML = rows.map(r => `
@@ -1705,7 +1709,11 @@ async function loadW2RRows() {
   tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">Loading…</td></tr>';
   try {
     const res = await fetch(`${API}/recycling/rows`, { headers: { 'x-api-key': adminKey } });
-    if (!res.ok) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">Error: ${res.status}</td></tr>`; return; }
+    if (!res.ok) {
+      let msg = `Error ${res.status}`;
+      try { const e = await res.json(); msg += ': ' + (e.error || JSON.stringify(e)); } catch(_) {}
+      tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${msg}</td></tr>`; return;
+    }
     const rows = await res.json();
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
     tbody.innerHTML = rows.map(r => `

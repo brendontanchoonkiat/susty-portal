@@ -113,6 +113,22 @@ INSERT INTO recycling_monthly (month, year, cardboard_kg, plastic_kg, source) VA
 ON CONFLICT (month) DO NOTHING;
 
 -- ============================================================
+-- Migration: add month_num column if it was missing from an earlier schema run
+-- Safe to run multiple times (DO NOTHING if already exists)
+-- ============================================================
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='energy_monthly' AND column_name='month_num'
+  ) THEN
+    ALTER TABLE energy_monthly ADD COLUMN month_num INT NOT NULL DEFAULT 0;
+    -- Backfill month_num from month text (e.g. "Jun 2026" → 6)
+    UPDATE energy_monthly SET month_num = EXTRACT(MONTH FROM TO_DATE(month, 'Mon YYYY'))::INT;
+  END IF;
+END $$;
+
+-- ============================================================
 -- Row Level Security (enable after testing)
 -- For now, the backend uses the service key which bypasses RLS.
 -- ============================================================

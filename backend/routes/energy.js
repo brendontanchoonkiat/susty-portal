@@ -186,11 +186,14 @@ const adminOnly = (req, res, next) => req.app.get('requireApiKey')(req, res, nex
 // GET /api/energy/rows — all stored energy rows for the editor
 router.get('/rows', adminOnly, async (_req, res) => {
   const supa = db.getClient();
-  if (!supa) return res.status(503).json({ error: 'Supabase not configured' });
-  const { data, error } = await supa.from('energy_monthly')
-    .select('*').order('year').order('month_num');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  if (!supa) return res.status(503).json({ error: 'Supabase not configured — add SUPABASE_URL + SUPABASE_SERVICE_KEY to Railway env vars' });
+  // Try ordering by year+month_num; fall back to year+month if month_num column missing
+  let result = await supa.from('energy_monthly').select('*').order('year').order('month_num');
+  if (result.error && result.error.message.includes('month_num')) {
+    result = await supa.from('energy_monthly').select('*').order('year').order('month');
+  }
+  if (result.error) return res.status(500).json({ error: result.error.message });
+  res.json(result.data || []);
 });
 
 // POST /api/energy — add or update a monthly energy record
