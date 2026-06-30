@@ -35,7 +35,8 @@ const bot = new Bot(BOT_TOKEN);
 bot.use(session({
   initial: () => ({
     awaitingName:       false,
-    awaitingLogKg:      null,   // { type, photoFileId? }
+    awaitingLogKg:      null,   // { type } — waiting for weight input
+    awaitingLogPhoto:   null,   // { type, kg } — waiting for photo after weight
     awaitingSwapDate:   false,
     pendingSwapDate:    null,
     awaitingSwapReason: false,
@@ -50,6 +51,9 @@ bot.use(session({
     availMonth:            null,   // month being collected e.g. "Aug 2026"
     availDates:            [],     // roster dates for that month
     availSelected:         [],     // dates member marked available
+    // Unavailability reasons
+    unavailReasons:        {},     // { date: reason }
+    awaitingUnavailReason: null,   // date string currently waiting for reason text
     // Admin flows
     awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
@@ -445,8 +449,7 @@ bot.callbackQuery('action:log:cardboard', async (ctx) => {
   await ctx.answerCallbackQuery();
   ctx.session.awaitingLogKg = { type: 'cardboard' };
   await ctx.reply(
-    `📦 <b>Log Cardboard</b>\n\nHow many kg? (e.g. <code>42.5</code>)\n\n` +
-    `<i>💡 Or send a photo with caption: <code>cardboard 42.5</code></i>`,
+    `📦 <b>Log Cardboard — Step 1 of 2</b>\n\nHow many kg did you collect? (e.g. <code>42.5</code>)`,
     { parse_mode: 'HTML' }
   );
 });
@@ -455,8 +458,7 @@ bot.callbackQuery('action:log:plastic', async (ctx) => {
   await ctx.answerCallbackQuery();
   ctx.session.awaitingLogKg = { type: 'plastic' };
   await ctx.reply(
-    `🍶 <b>Log Plastic</b>\n\nHow many kg? (e.g. <code>8.2</code>)\n\n` +
-    `<i>💡 Or send a photo with caption: <code>plastic 8.2</code></i>`,
+    `🍶 <b>Log Plastic — Step 1 of 2</b>\n\nHow many kg did you collect? (e.g. <code>8.2</code>)`,
     { parse_mode: 'HTML' }
   );
 });
@@ -505,74 +507,121 @@ bot.callbackQuery('menu:avail', async (ctx) => {
   ctx.session.availSelected = [];
 
   await ctx.editMessageText(
-    `📅 <b>Availability — ${targetMonth}</b>\n\nTap the dates you <b>CAN</b> serve. Tap again to deselect.\n\n` +
-    `<i>Dates will turn ✅ when selected.</i>`,
+    `📅 <b>Unavailability — ${targetMonth}</b>\n\nTap any date you <b>cannot</b> serve. You'll be asked for a reason.\nLeave dates untouched if you're available.\n\n` +
+    `<i>❌ = can't serve  ·  no mark = available</i>`,
     { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
   );
 });
 
-function buildAvailKeyboard(slots, selected) {
+// unavailDates = dates the member CANNOT serve (shown with ❌)
+// Unmarked dates = available
+function buildAvailKeyboard(slots, unavailDates) {
   const kb = new InlineKeyboard();
   for (const s of slots) {
-    const badge = selected.includes(s.date) ? '✅ ' : '';
-    const sess  = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
-    kb.text(`${badge}${sess} ${s.date} (${s.session})`, `avail:toggle:${s.date}`).row();
+    const isUnavail = unavailDates.includes(s.date);
+    const prefix    = isUnavail ? '❌ ' : '';
+    const sess      = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
+    kb.text(`${prefix}${sess} ${s.date} (${s.session})`, `avail:toggle:${s.date}`).row();
   }
-  kb.text('💾 Submit Availability', 'avail:submit').text('← Cancel', 'avail:cancel');
+  kb.text('✅ Done — Submit', 'avail:submit').text('← Cancel', 'avail:cancel');
   return kb;
 }
 
 bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
-  const date = ctx.match[1];
-  const sel  = ctx.session.availSelected || [];
+  const date    = ctx.match[1];
+  const unavail = ctx.session.availSelected || [];
 
-  if (sel.includes(date)) {
-    ctx.session.availSelected = sel.filter(d => d !== date);
+  const isNowUnavail = !unavail.includes(date);
+  if (isNowUnavail) {
+    ctx.session.availSelected = [...unavail, date];
   } else {
-    ctx.session.availSelected = [...sel, date];
+    ctx.session.availSelected = unavail.filter(d => d !== date);
+    if (ctx.session.unavailReasons) delete ctx.session.unavailReasons[date];
   }
 
-  const month = ctx.session.availMonth;
-  const supa  = db.getClient();
-  const { data: slots } = supa
-    ? await supa.from('roster_slots').select('date,session')
-        .in('date', ctx.session.availDates).order('date')
-    : { data: ctx.session.availDates.map(d => ({ date: d, session: '?' })) };
+  // Recover availDates from the keyboard if session was lost (e.g. after bot restart)
+  if (!ctx.session.availDates?.length) {
+    const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
+    ctx.session.availDates = rows
+      .flat()
+      .filter(b => b.callback_data?.startsWith('avail:toggle:'))
+      .map(b => b.callback_data.replace('avail:toggle:', ''));
+  }
+
+  // Rebuild slots list for keyboard
+  const supa = db.getClient();
+  let slots   = [];
+  if (supa && ctx.session.availDates?.length) {
+    const { data } = await supa.from('roster_slots')
+      .select('date,session').in('date', ctx.session.availDates).order('date');
+    slots = data || [];
+  }
+  if (!slots.length) {
+    slots = (ctx.session.availDates || []).map(d => ({ date: d, session: '?' }));
+  }
 
   await ctx.editMessageReplyMarkup({
-    reply_markup: buildAvailKeyboard(slots || [], ctx.session.availSelected),
+    reply_markup: buildAvailKeyboard(slots, ctx.session.availSelected),
   }).catch(() => {});
+
+  // If just marked unavailable, ask for reason
+  if (isNowUnavail) {
+    ctx.session.awaitingUnavailReason = date;
+    await ctx.reply(
+      `📝 Why can't you make it on <b>${fmtDate(date)}</b>?\n\n<i>Type your reason below, or tap Skip.</i>`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('Skip', 'avail:skipreason') }
+    );
+  }
+});
+
+bot.callbackQuery('avail:skipreason', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const date = ctx.session.awaitingUnavailReason;
+  if (date) {
+    if (!ctx.session.unavailReasons) ctx.session.unavailReasons = {};
+    ctx.session.unavailReasons[date] = '';
+    ctx.session.awaitingUnavailReason = null;
+  }
+  await ctx.editMessageText(
+    `❌ <b>${fmtDate(date)}</b> marked as unavailable.\n\n<i>Tap more dates above, or Submit when done.</i>`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
 });
 
 bot.callbackQuery('avail:submit', async (ctx) => {
   await ctx.answerCallbackQuery();
-  const name   = await resolveName(ctx);
-  const month  = ctx.session.availMonth;
-  const avail  = ctx.session.availSelected || [];
-  const allD   = ctx.session.availDates    || [];
-  const unavail = allD.filter(d => !avail.includes(d));
+  const name    = await resolveName(ctx);
+  const month   = ctx.session.availMonth;
+  const unavail = ctx.session.availSelected || [];
+  const allD    = ctx.session.availDates    || [];
+  const avail   = allD.filter(d => !unavail.includes(d));
+  const reasons = ctx.session.unavailReasons || {};
 
   if (!month) return ctx.reply('⚠️ Session expired. Please try again.', { reply_markup: backToMain() });
 
-  await db.saveAvailability(month, name, avail, unavail);
-  ctx.session.availMonth    = null;
-  ctx.session.availDates    = [];
-  ctx.session.availSelected = [];
+  const notes = Object.keys(reasons).length ? JSON.stringify({ reasons }) : '';
+  await db.saveAvailability(month, name, avail, unavail, notes);
 
-  const lines = avail.length
-    ? avail.map(d => `✅ ${d}`).join('\n')
-    : '(None selected — marked as unavailable for all dates)';
+  ctx.session.availMonth            = null;
+  ctx.session.availDates            = [];
+  ctx.session.availSelected         = [];
+  ctx.session.unavailReasons        = {};
+  ctx.session.awaitingUnavailReason = null;
 
-  await ctx.editMessageText(
-    `✅ <b>Availability saved for ${month}!</b>\n\n${lines}\n\n` +
-    `<i>Your TL will see this when planning the next roster.</i>`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  ).catch(() => ctx.reply(
-    `✅ <b>Availability saved for ${month}!</b>\n\n${lines}\n\n` +
-    `<i>Your TL will see this when planning the next roster.</i>`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  ));
+  const lines = unavail.length
+    ? unavail.map(d => {
+        const r = reasons[d];
+        return `❌ ${d}${r ? ` — <i>${r}</i>` : ''}`;
+      }).join('\n')
+    : '✅ All clear — you\'re available for every date!';
+
+  const msg =
+    `✅ <b>Submitted for ${month}!</b>\n\n${lines}\n\n` +
+    `<i>Your TL will see this when planning the roster.</i>`;
+
+  await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: backToMain() })
+    .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() }));
 });
 
 bot.callbackQuery('avail:cancel', async (ctx) => {
@@ -628,7 +677,7 @@ bot.command('collect', async (ctx) => {
       const kb = buildAvailKeyboard(monthSlots, []);
       await bot.api.sendMessage(
         m.telegram_id,
-        `📅 <b>Availability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve.\nTap a date to select ✅, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
+        `📅 <b>Unavailability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve. You'll be asked for a reason each time.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
         { parse_mode: 'HTML', reply_markup: kb }
       );
       await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date));
@@ -849,42 +898,37 @@ bot.callbackQuery('action:mystats', async (ctx) => {
 
 // ─── Photo handler ────────────────────────────────────────────────────────────
 bot.on('message:photo', async (ctx) => {
-  const name = await resolveName(ctx);
-  if (!name) return;
+  // Step 2 of 2: photo received after weight was entered
+  if (ctx.session.awaitingLogPhoto) {
+    const { type, kg } = ctx.session.awaitingLogPhoto;
+    ctx.session.awaitingLogPhoto = null;
 
-  const caption = (ctx.message.caption || '').trim().toLowerCase();
-  if (!caption) {
-    if (ctx.chat.type === 'private') {
-      ctx.session.awaitingLogKg = { photoFileId: ctx.message.photo.at(-1).file_id };
-      return ctx.reply(
-        '📷 Photo received! What are you logging?\n\n' +
-        'Reply with: <code>cardboard 42.5</code>  or  <code>plastic 8.2</code>',
-        { parse_mode: 'HTML' }
-      );
+    const name = await resolveName(ctx);
+    if (!name) return promptRegister(ctx);
+
+    const photo = ctx.message.photo.at(-1);
+    let imageUrl = null;
+    try {
+      const file    = await bot.api.getFile(photo.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
+      const resp    = await fetch(fileUrl, { signal: AbortSignal.timeout(10000) });
+      const buffer  = Buffer.from(await resp.arrayBuffer());
+      const fname   = `${today()}_${name.replace(/\s+/g, '_')}_${type}_${Date.now()}.jpg`;
+      imageUrl      = await db.uploadImage(buffer, fname, 'image/jpeg');
+    } catch (err) {
+      console.warn('[Bot] Image upload failed:', err.message);
     }
-    return;
+
+    return saveLog({ name, type, kg, sessionDate: today(), fileId: photo.file_id, imageUrl, ctx });
   }
 
-  const match = caption.match(/^(cardboard|plastic)\s+(\d+(?:\.\d+)?)/);
-  if (!match) return;
-
-  const type  = match[1];
-  const kg    = parseFloat(match[2]);
-  const photo = ctx.message.photo.at(-1);
-
-  let imageUrl = null;
-  try {
-    const file    = await bot.api.getFile(photo.file_id);
-    const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
-    const resp    = await fetch(fileUrl, { signal: AbortSignal.timeout(10000) });
-    const buffer  = Buffer.from(await resp.arrayBuffer());
-    const fname   = `${today()}_${name.replace(/\s+/g, '_')}_${type}_${Date.now()}.jpg`;
-    imageUrl      = await db.uploadImage(buffer, fname, 'image/jpeg');
-  } catch (err) {
-    console.warn('[Bot] Image upload failed:', err.message);
+  // Photo sent without going through the weight step — prompt them to use the menu
+  if (ctx.chat.type === 'private') {
+    return ctx.reply(
+      '📷 Got a photo! To log a collection, tap <b>Log Duty Data</b> from the menu first so I can record the weight too.',
+      { parse_mode: 'HTML' }
+    );
   }
-
-  await saveLog({ name, type, kg, sessionDate: today(), fileId: photo.file_id, imageUrl, ctx });
 });
 
 // ─── Shared log saver ─────────────────────────────────────────────────────────
@@ -967,33 +1011,33 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  // Log weight — button flow (no photo)
-  if (ctx.session.awaitingLogKg && !ctx.session.awaitingLogKg.photoFileId) {
+  // Log — step 1: weight received, now ask for photo
+  if (ctx.session.awaitingLogKg) {
     const { type } = ctx.session.awaitingLogKg;
     const kg = parseFloat(text.replace(/[^0-9.]/g, ''));
     if (isNaN(kg) || kg <= 0 || kg > 5000) {
       return ctx.reply(`⚠️ Enter a valid weight in kg, e.g. <code>42.5</code>`, { parse_mode: 'HTML' });
     }
-    ctx.session.awaitingLogKg = null;
-    const name = await resolveName(ctx);
-    if (!name) return promptRegister(ctx);
-    return saveLog({ name, type, kg, sessionDate: today(), ctx });
+    ctx.session.awaitingLogKg   = null;
+    ctx.session.awaitingLogPhoto = { type, kg };
+    const emoji = type === 'cardboard' ? '📦' : '🍶';
+    return ctx.reply(
+      `${emoji} <b>Step 2 of 2 — Photo</b>\n\n` +
+      `Got it: <b>${kg} kg</b> of ${type}.\n\nNow send a photo of the haul. 📷`,
+      { parse_mode: 'HTML' }
+    );
   }
 
-  // Log weight — after photo without caption
-  if (ctx.session.awaitingLogKg?.photoFileId) {
-    const match = text.toLowerCase().match(/^(cardboard|plastic)\s+(\d+(?:\.\d+)?)/);
-    if (!match) {
-      return ctx.reply(
-        'Reply with: <code>cardboard 42.5</code>  or  <code>plastic 8.2</code>',
-        { parse_mode: 'HTML' }
-      );
-    }
-    const { photoFileId } = ctx.session.awaitingLogKg;
-    ctx.session.awaitingLogKg = null;
-    const name = await resolveName(ctx);
-    if (!name) return promptRegister(ctx);
-    return saveLog({ name, type: match[1], kg: parseFloat(match[2]), sessionDate: today(), fileId: photoFileId, ctx });
+  // Unavailability reason
+  if (ctx.session.awaitingUnavailReason) {
+    const date = ctx.session.awaitingUnavailReason;
+    if (!ctx.session.unavailReasons) ctx.session.unavailReasons = {};
+    ctx.session.unavailReasons[date] = text;
+    ctx.session.awaitingUnavailReason = null;
+    return ctx.reply(
+      `❌ <b>${fmtDate(date)}</b> marked as unavailable.\n<i>Reason: ${text}</i>\n\nTap more dates above, or Submit when done.`,
+      { parse_mode: 'HTML' }
+    );
   }
 
   // Admin: collect availability month
