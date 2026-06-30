@@ -1030,6 +1030,9 @@ async function saveLog({ name, type, kg, sessionDate, fileId = null, imageUrl = 
     console.warn('[Bot] Failed to update monthly totals:', err.message);
   }
 
+  // Bust the recycling route cache so the portal shows updated data immediately
+  try { require('../routes/recycling').bustCache(); } catch (_) {}
+
   const impact    = carbon.calcCO2e(type === 'cardboard' ? kg : 0, type === 'plastic' ? kg : 0);
   const emoji     = type === 'cardboard' ? '📦' : '🍶';
   const photoLine = imageUrl ? '\n📷 Photo saved.' : fileId ? '\n📷 Photo received.' : '';

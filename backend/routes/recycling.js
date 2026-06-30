@@ -260,7 +260,8 @@ router.delete('/:id', adminOnly, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Export getData so weeklySnapshot.js can reuse the cache
-router.getData = getData;
+// Export getData and bustCache so bot can invalidate after logging
+router.getData   = getData;
+router.bustCache = () => { cache.lastFetched = null; };
 
 module.exports = router;
