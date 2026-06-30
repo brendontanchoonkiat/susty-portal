@@ -998,6 +998,38 @@ async function saveLog({ name, type, kg, sessionDate, fileId = null, imageUrl = 
     created_at: new Date().toISOString(),
   });
 
+  // Roll up all logs for this month → update recycling_monthly
+  try {
+    const supa = db.getClient();
+    if (supa) {
+      const dt       = new Date(sessionDate + 'T00:00:00');
+      const monthNum = dt.getMonth() + 1;          // 1–12
+      const yearNum  = dt.getFullYear();
+      const from     = `${yearNum}-${String(monthNum).padStart(2,'0')}-01`;
+      const nextM    = monthNum === 12 ? 1 : monthNum + 1;
+      const nextY    = monthNum === 12 ? yearNum + 1 : yearNum;
+      const to       = `${nextY}-${String(nextM).padStart(2,'0')}-01`;
+
+      const { data: logs } = await supa.from('data_logs')
+        .select('type, kg')
+        .gte('session_date', from)
+        .lt('session_date', to);
+
+      if (logs) {
+        const cbTotal = logs.filter(l => l.type === 'cardboard').reduce((s, l) => s + Number(l.kg), 0);
+        const plTotal = logs.filter(l => l.type === 'plastic').reduce((s, l) => s + Number(l.kg), 0);
+        await db.upsertMonthlyTotal(
+          String(monthNum), yearNum,
+          Math.round(cbTotal * 100) / 100,
+          Math.round(plTotal * 100) / 100,
+          'logged'
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[Bot] Failed to update monthly totals:', err.message);
+  }
+
   const impact    = carbon.calcCO2e(type === 'cardboard' ? kg : 0, type === 'plastic' ? kg : 0);
   const emoji     = type === 'cardboard' ? '📦' : '🍶';
   const photoLine = imageUrl ? '\n📷 Photo saved.' : fileId ? '\n📷 Photo received.' : '';
