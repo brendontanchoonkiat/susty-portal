@@ -788,8 +788,8 @@ async function loadRecycling() {
     document.getElementById('pl-total').textContent     = `Total: ${sum.plastic.total} kg`;
 
     // Update source badges
-    const src = sum.source === 'live' ? 'live' : 'fallback';
-    const lbl = sum.source === 'live' ? '● Live from Sheets' : '⚠ Cached data';
+    const src = (sum.source === 'live' || sum.source === 'supabase') ? 'live' : 'fallback';
+    const lbl = sum.source === 'supabase' ? '● Live from Supabase' : sum.source === 'live' ? '● Live from Sheets' : '⚠ Cached data';
     ['ov-source-badge','w2r-source-badge'].forEach(id => {
       const b = document.getElementById(id);
       b.className = `live-badge ${src}`; b.textContent = lbl;
