@@ -39,12 +39,20 @@ bot.use(session({
     awaitingSwapDate:   false,
     pendingSwapDate:    null,
     awaitingSwapReason: false,
-    awaitingAcceptDate: null,   // { swapId, requesterName, requesterDate }
-    cachedName:         null,
+    awaitingAcceptDate:    null,   // { swapId, requesterName, requesterDate }
+    cachedName:            null,
+    pendingDeeplink:       null,   // deep-link payload to handle after registration
+    // Name confirmation (fuzzy match)
+    awaitingNameConfirm:   false,  // showing candidate name options to user
+    pendingNameCandidates: [],     // roster names to show as options
+    pendingTypedName:      null,   // what the user originally typed
     // Availability collation
-    availMonth:         null,   // month being collected e.g. "Aug 2026"
-    availDates:         [],     // roster dates for that month
-    availSelected:      [],     // dates member marked available
+    availMonth:            null,   // month being collected e.g. "Aug 2026"
+    availDates:            [],     // roster dates for that month
+    availSelected:         [],     // dates member marked available
+    // Admin flows
+    awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
+    awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
   }),
 }));
 
@@ -123,6 +131,54 @@ function promptRegister(ctx) {
   );
 }
 
+// Generate Sat/Sun dates for a month string like "Aug 2026"
+function generateWeekends(monthStr) {
+  const months = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+  const parts  = monthStr.trim().split(/\s+/);
+  if (parts.length < 2) return [];
+  const mIdx = months.findIndex(m => m.startsWith(parts[0].toLowerCase()));
+  const year = parseInt(parts[1]);
+  if (mIdx < 0 || isNaN(year)) return [];
+  const dates = [];
+  const d = new Date(year, mIdx, 1);
+  while (d.getMonth() === mIdx) {
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) {
+      dates.push({ date: d.toISOString().split('T')[0], session: dow === 6 ? 'SAT' : 'SUN' });
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+// Returns "August 2026" for the month after today
+function nextCalendarMonth() {
+  const now  = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return next.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+}
+
+// Shared logic for accepting a swap — used by deep-link and the accept: callback
+async function handleAcceptSwap(ctx, swapId, name) {
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+  const { data: swap } = await supa.from('swap_requests').select('*').eq('id', swapId).single();
+  if (!swap || swap.status !== 'open') {
+    return ctx.reply(`⚠️ Swap #${swapId} is no longer available.`, { reply_markup: backToMain() });
+  }
+  if (swap.requester_name.toLowerCase() === name.toLowerCase()) {
+    return ctx.reply(`⚠️ You can't accept your own swap.`, { reply_markup: backToMain() });
+  }
+  ctx.session.awaitingAcceptDate = {
+    swapId, requesterName: swap.requester_name, requesterDate: swap.requester_date,
+  };
+  return ctx.reply(
+    `🔄 Accepting swap for <b>${swap.requester_name}</b>'s duty on <b>${swap.requester_date}</b>.\n\n` +
+    `📅 What date are <b>you</b> offering in return? (e.g. <code>5 Jul</code>)`,
+    { parse_mode: 'HTML' }
+  );
+}
+
 // ─── Keyboards ────────────────────────────────────────────────────────────────
 const mainMenu = new InlineKeyboard()
   .text('📋 Roster',         'menu:roster').row()
@@ -146,8 +202,19 @@ const statsMenu = new InlineKeyboard()
   .text('🌿 My Stats',    'action:mystats').row()
   .text('← Back',         'menu:main');
 
+const adminMenu = new InlineKeyboard()
+  .text('📅 Collect Availability', 'admin:collect').row()
+  .text('📋 Send Roster to Group', 'admin:sendcalendar').row()
+  .text('✏️ Edit Member Availability', 'admin:editavail').row()
+  .text('👥 View Registered Members', 'admin:members').row()
+  .text('← Back', 'menu:main');
+
 function backToMain() {
   return new InlineKeyboard().text('← Back to Menu', 'menu:main');
+}
+
+function backToAdmin() {
+  return new InlineKeyboard().text('← Back to Admin', 'admin:menu');
 }
 
 async function sendMainMenu(ctx, text) {
@@ -159,7 +226,26 @@ async function sendMainMenu(ctx, text) {
 
 // ─── /start ───────────────────────────────────────────────────────────────────
 bot.command('start', async (ctx) => {
+  const payload  = (ctx.message.text.split(' ')[1] || '').trim();
   const existing = await db.getMemberByTelegramId(ctx.from.id);
+
+  // Deep-link: /start acceptswap_123 — jump straight to acceptance flow
+  if (payload.startsWith('acceptswap_')) {
+    const swapId = parseInt(payload.replace('acceptswap_', ''));
+    if (existing) {
+      if (ctx.session) ctx.session.cachedName = existing.name;
+      return handleAcceptSwap(ctx, swapId, existing.name);
+    }
+    // Not registered yet — register first, then resume swap
+    ctx.session.awaitingName    = true;
+    ctx.session.pendingDeeplink = payload;
+    return ctx.reply(
+      `👋 Hi! I'm the <b>Susty Ministry Bot</b> 🌿\n\n` +
+      `To accept this swap, first tell me your name <b>as it appears on the roster</b>:`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
   if (existing) {
     if (ctx.session) ctx.session.cachedName = existing.name;
     return sendMainMenu(ctx, `Welcome back, <b>${existing.name}</b>! 🌿\n\nWhat do you need?`);
@@ -171,6 +257,38 @@ bot.command('start', async (ctx) => {
     `<i>(e.g. "Brendon" or "Wee Shing")</i>`,
     { parse_mode: 'HTML' }
   );
+});
+
+// ─── Callback: name confirmation (fuzzy match) ────────────────────────────────
+bot.callbackQuery(/^nameconfirm:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const val        = ctx.match[1];
+  const candidates = ctx.session.pendingNameCandidates || [];
+  const typedName  = ctx.session.pendingTypedName || '';
+
+  const finalName = val === 'custom'
+    ? typedName
+    : (candidates[parseInt(val)] || typedName);
+
+  ctx.session.awaitingNameConfirm   = false;
+  ctx.session.pendingNameCandidates = [];
+  ctx.session.pendingTypedName      = null;
+  ctx.session.cachedName            = finalName;
+
+  await db.upsertMember(ctx.from.id, finalName);
+
+  // Resume any pending deep-link (e.g. accept a swap)
+  if (ctx.session.pendingDeeplink?.startsWith('acceptswap_')) {
+    const swapId = parseInt(ctx.session.pendingDeeplink.replace('acceptswap_', ''));
+    ctx.session.pendingDeeplink = null;
+    await ctx.editMessageText(`✅ Registered as <b>${finalName}</b>! 🌿`, { parse_mode: 'HTML' }).catch(() => {});
+    return handleAcceptSwap(ctx, swapId, finalName);
+  }
+
+  return ctx.editMessageText(
+    `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`,
+    { parse_mode: 'HTML', reply_markup: mainMenu }
+  ).catch(() => sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`));
 });
 
 // ─── Callback: main menus ─────────────────────────────────────────────────────
@@ -306,29 +424,9 @@ bot.callbackQuery('action:swaps', async (ctx) => {
 
 bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
-  const name   = await resolveName(ctx);
+  const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
-
-  const swapId = parseInt(ctx.match[1]);
-  const supa   = db.getClient();
-  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
-
-  const { data: swap } = await supa.from('swap_requests').select('*').eq('id', swapId).single();
-  if (!swap || swap.status !== 'open') {
-    return ctx.reply(`⚠️ Swap #${swapId} is no longer available.`, { reply_markup: backToMain() });
-  }
-  if (swap.requester_name.toLowerCase() === name.toLowerCase()) {
-    return ctx.reply(`⚠️ You can't accept your own swap.`, { reply_markup: backToMain() });
-  }
-
-  ctx.session.awaitingAcceptDate = {
-    swapId, requesterName: swap.requester_name, requesterDate: swap.requester_date,
-  };
-  await ctx.reply(
-    `🔄 Accepting swap for <b>${swap.requester_name}</b>'s duty on <b>${swap.requester_date}</b>.\n\n` +
-    `📅 What date are <b>you</b> offering in return? (e.g. <code>5 Jul</code>)`,
-    { parse_mode: 'HTML' }
-  );
+  return handleAcceptSwap(ctx, parseInt(ctx.match[1]), name);
 });
 
 bot.callbackQuery('action:swap', async (ctx) => {
@@ -369,29 +467,45 @@ bot.callbackQuery('menu:avail', async (ctx) => {
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
-  // Find next upcoming month with roster slots
+  // Target the NEXT calendar month (so TL can collect before rostering it)
+  const targetMonth = nextCalendarMonth();
+
+  // Check if member already submitted for this month
   const supa = db.getClient();
-  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
-
-  const today = new Date().toISOString().split('T')[0];
-  const { data: upcoming } = await supa.from('roster_slots')
-    .select('date, week, session').gte('date', today).order('date').limit(20);
-
-  if (!upcoming || !upcoming.length) {
-    return ctx.reply('No upcoming roster slots found.', { reply_markup: backToMain() });
+  if (supa) {
+    const { data: existing } = await supa.from('availability')
+      .select('id').eq('member_name', name).eq('month', targetMonth).limit(1);
+    if (existing?.length) {
+      return ctx.reply(
+        `📅 You've already submitted availability for <b>${targetMonth}</b>.\n\n` +
+        `<i>To make changes, contact your TL.</i>`,
+        { parse_mode: 'HTML', reply_markup: backToMain() }
+      );
+    }
   }
 
-  // Group by month, show the nearest upcoming month
-  const monthOf = d => { const dt = new Date(d); return dt.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' }); };
-  const nearestMonth = monthOf(upcoming[0].date);
-  const monthSlots   = upcoming.filter(s => monthOf(s.date) === nearestMonth);
+  // Get slots for next month from DB; fall back to generated weekends
+  let monthSlots = [];
+  if (supa) {
+    const { data } = await supa.from('roster_slots')
+      .select('date, session').order('date');
+    monthSlots = (data || []).filter(s => {
+      const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+      return label === targetMonth;
+    });
+  }
+  if (!monthSlots.length) monthSlots = generateWeekends(targetMonth);
 
-  ctx.session.availMonth    = nearestMonth;
+  if (!monthSlots.length) {
+    return ctx.reply(`No dates available for ${targetMonth} yet.`, { reply_markup: backToMain() });
+  }
+
+  ctx.session.availMonth    = targetMonth;
   ctx.session.availDates    = monthSlots.map(s => s.date);
   ctx.session.availSelected = [];
 
   await ctx.editMessageText(
-    `📅 <b>Availability — ${nearestMonth}</b>\n\nTap the dates you <b>CAN</b> serve. Tap again to deselect.\n\n` +
+    `📅 <b>Availability — ${targetMonth}</b>\n\nTap the dates you <b>CAN</b> serve. Tap again to deselect.\n\n` +
     `<i>Dates will turn ✅ when selected.</i>`,
     { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
   );
@@ -400,12 +514,11 @@ bot.callbackQuery('menu:avail', async (ctx) => {
 function buildAvailKeyboard(slots, selected) {
   const kb = new InlineKeyboard();
   for (const s of slots) {
-    const label = s.date;
     const badge = selected.includes(s.date) ? '✅ ' : '';
     const sess  = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
     kb.text(`${badge}${sess} ${s.date} (${s.session})`, `avail:toggle:${s.date}`).row();
   }
-  kb.text('💾 Submit Availability', 'avail:submit');
+  kb.text('💾 Submit Availability', 'avail:submit').text('← Cancel', 'avail:cancel');
   return kb;
 }
 
@@ -451,12 +564,27 @@ bot.callbackQuery('avail:submit', async (ctx) => {
     ? avail.map(d => `✅ ${d}`).join('\n')
     : '(None selected — marked as unavailable for all dates)';
 
-  await ctx.reply(
+  await ctx.editMessageText(
     `✅ <b>Availability saved for ${month}!</b>\n\n${lines}\n\n` +
     `<i>Your TL will see this when planning the next roster.</i>`,
     { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+  ).catch(() => ctx.reply(
+    `✅ <b>Availability saved for ${month}!</b>\n\n${lines}\n\n` +
+    `<i>Your TL will see this when planning the next roster.</i>`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  ));
 });
+
+bot.callbackQuery('avail:cancel', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.availMonth    = null;
+  ctx.session.availDates    = [];
+  ctx.session.availSelected = [];
+  await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
+    parse_mode: 'HTML', reply_markup: mainMenu,
+  }).catch(() => sendMainMenu(ctx));
+});
+
 
 // ─── /collect command (TL only) — broadcast availability request to all members
 bot.command('collect', async (ctx) => {
@@ -471,18 +599,23 @@ bot.command('collect', async (ctx) => {
   const supa = db.getClient();
   if (!supa) return ctx.reply('⚠️ Supabase not configured.');
 
-  // Get roster slots for that month
-  const { data: slots } = await supa.from('roster_slots')
+  // Get roster slots for that month from DB
+  const { data: allSlots } = await supa.from('roster_slots')
     .select('date, session').order('date');
 
-  const monthSlots = (slots || []).filter(s => {
-    const dt = new Date(s.date);
-    const label = dt.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+  let monthSlots = (allSlots || []).filter(s => {
+    const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
     return label.toLowerCase() === args.toLowerCase();
   });
 
+  // If the month hasn't been created yet, generate Sat/Sun dates as placeholders
+  let generatedFallback = false;
   if (!monthSlots.length) {
-    return ctx.reply(`⚠️ No roster slots found for "${args}". Check the portal roster.`);
+    monthSlots = generateWeekends(args);
+    if (!monthSlots.length) {
+      return ctx.reply(`⚠️ Could not parse "${args}". Use format: <code>Aug 2026</code>`, { parse_mode: 'HTML' });
+    }
+    generatedFallback = true;
   }
 
   // Get all registered members
@@ -495,10 +628,9 @@ bot.command('collect', async (ctx) => {
       const kb = buildAvailKeyboard(monthSlots, []);
       await bot.api.sendMessage(
         m.telegram_id,
-        `📅 <b>Availability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve next month.\nTap ✅ to select, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
+        `📅 <b>Availability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve.\nTap a date to select ✅, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
         { parse_mode: 'HTML', reply_markup: kb }
       );
-      // Prime their session state via a workaround — store in DB instead
       await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date));
       sent++;
     } catch (err) {
@@ -506,11 +638,125 @@ bot.command('collect', async (ctx) => {
     }
   }
 
-  // Store month + dates in a simple config so members' button presses know the context
+  const note = generatedFallback
+    ? `\n\n<i>⚠️ No roster created for ${args} yet — used generated Sat/Sun dates. Update the portal roster and re-run /collect if needed.</i>`
+    : '';
+
   await ctx.reply(
-    `✅ Sent availability request for <b>${args}</b> to <b>${sent}/${members.length}</b> registered members.\n\n` +
+    `✅ Sent availability request for <b>${args}</b> to <b>${sent}/${members.length}</b> registered members.${note}\n\n` +
     `Use the portal → Members to view responses as they come in.`,
     { parse_mode: 'HTML' }
+  );
+});
+
+// ─── /admin command + TL menu ────────────────────────────────────────────────
+bot.command('admin', async (ctx) => {
+  if (!(await isTL(ctx))) {
+    return ctx.reply('⚠️ This section is for Team Leaders only.');
+  }
+  return ctx.reply(
+    `🔧 <b>Admin Panel</b>\n\nTL-only actions. What do you need?`,
+    { parse_mode: 'HTML', reply_markup: adminMenu }
+  );
+});
+
+bot.callbackQuery('admin:menu', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+  await ctx.editMessageText(
+    `🔧 <b>Admin Panel</b>\n\nTL-only actions. What do you need?`,
+    { parse_mode: 'HTML', reply_markup: adminMenu }
+  ).catch(() => ctx.reply(
+    `🔧 <b>Admin Panel</b>\n\nTL-only actions. What do you need?`,
+    { parse_mode: 'HTML', reply_markup: adminMenu }
+  ));
+});
+
+// Admin: Collect Availability — ask for month
+bot.callbackQuery('admin:collect', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.awaitingCollectMonth = true;
+  await ctx.editMessageText(
+    `📅 <b>Collect Availability</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)\n\n` +
+    `<i>This will DM all registered members asking for their availability.</i>`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
+// Admin: Send Roster to Group
+bot.callbackQuery('admin:sendcalendar', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!GROUP_ID) {
+    return ctx.editMessageText('⚠️ TELEGRAM_CHAT_ID not set.', { reply_markup: backToAdmin() });
+  }
+
+  const supa = db.getClient();
+  let slots  = [];
+  if (supa) {
+    const td    = today();
+    const limit = new Date(); limit.setMonth(limit.getMonth() + 2);
+    const { data } = await supa.from('roster_slots')
+      .select('*').gte('date', td)
+      .lte('date', limit.toISOString().split('T')[0])
+      .order('date');
+    slots = data || [];
+  }
+  if (!slots.length) slots = getFallbackRoster().filter(s => s.date >= today());
+  if (!slots.length) {
+    return ctx.editMessageText('No upcoming roster slots found.', { reply_markup: backToAdmin() });
+  }
+
+  const byMonth = {};
+  for (const s of slots) {
+    const m = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+    if (!byMonth[m]) byMonth[m] = [];
+    byMonth[m].push(s);
+  }
+
+  for (const [month, mSlots] of Object.entries(byMonth)) {
+    const lines = mSlots.map(s => {
+      const badge = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
+      const team  = (s.team || []).join(', ') || '—';
+      const note  = s.notes ? `\n   📌 ${s.notes}` : '';
+      return `${badge} <b>${s.date}</b> (${s.session})\n   👥 ${team}${note}`;
+    }).join('\n\n');
+    await bot.api.sendMessage(GROUP_ID, `📋 <b>W2R Roster — ${month}</b>\n\n${lines}`, { parse_mode: 'HTML' })
+      .catch(err => console.warn('[sendcalendar] failed:', err.message));
+    await new Promise(r => setTimeout(r, 600));
+  }
+
+  await ctx.editMessageText(
+    `✅ Roster for <b>${Object.keys(byMonth).join(' & ')}</b> posted to group.`,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
+
+// Admin: Edit Member Availability — ask for name
+bot.callbackQuery('admin:editavail', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.awaitingEditAvailName = true;
+  await ctx.editMessageText(
+    `✏️ <b>Edit Member Availability</b>\n\nEnter the member's name to clear their submission for <b>${nextCalendarMonth()}</b>:\n\n` +
+    `<i>They'll be able to re-submit via the bot.</i>`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
+// Admin: View registered members
+bot.callbackQuery('admin:members', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const supa = db.getClient();
+  if (!supa) {
+    return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
+  }
+  const members = await db.getAllRegisteredMembers();
+  if (!members.length) {
+    return ctx.editMessageText('No registered members yet.', { reply_markup: backToAdmin() });
+  }
+  const lines = members.map((m, i) => `${i + 1}. <b>${m.name}</b>`).join('\n');
+  await ctx.editMessageText(
+    `👥 <b>Registered Members (${members.length})</b>\n\n${lines}`,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
   );
 });
 
@@ -667,22 +913,58 @@ async function saveLog({ name, type, kg, sessionDate, fileId = null, imageUrl = 
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
 
+  // Registration — if user types again while in name-confirm, restart matching
+  if (ctx.session.awaitingNameConfirm) {
+    ctx.session.awaitingNameConfirm   = false;
+    ctx.session.pendingNameCandidates = [];
+    ctx.session.pendingTypedName      = null;
+    ctx.session.awaitingName          = true;
+    // fall through to the awaitingName block below
+  }
+
   // Registration
   if (ctx.session.awaitingName) {
     if (text.length < 2 || text.length > 60) {
       return ctx.reply('Please enter your name as it appears on the roster (2–60 chars).');
     }
-    // Try to match to a canonical name via aliases
+
+    // Step 1 — exact / alias match
     const canonical = await resolveTypedName(text);
-    const finalName = canonical || text.trim();
+    if (canonical) {
+      const finalName = canonical;
+      ctx.session.awaitingName = false;
+      ctx.session.cachedName   = finalName;
+      await db.upsertMember(ctx.from.id, finalName);
 
-    await db.upsertMember(ctx.from.id, finalName);
-    ctx.session.awaitingName = false;
-    ctx.session.cachedName   = finalName;
+      const matchNote = canonical.toLowerCase() !== text.trim().toLowerCase()
+        ? `\n<i>(Matched to roster name: <b>${canonical}</b>)</i>` : '';
 
-    const matchNote = canonical && canonical.toLowerCase() !== text.trim().toLowerCase()
-      ? `\n<i>(Matched to roster name: <b>${canonical}</b>)</i>` : '';
-    return sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿${matchNote}\n\nWhat do you need?`);
+      if (ctx.session.pendingDeeplink?.startsWith('acceptswap_')) {
+        const swapId = parseInt(ctx.session.pendingDeeplink.replace('acceptswap_', ''));
+        ctx.session.pendingDeeplink = null;
+        await ctx.reply(`✅ Got it, <b>${finalName}</b>! 🌿${matchNote}`, { parse_mode: 'HTML' });
+        return handleAcceptSwap(ctx, swapId, finalName);
+      }
+      return sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿${matchNote}\n\nWhat do you need?`);
+    }
+
+    // Step 2 — no exact match: show full roster list to pick from
+    const rosterMembers = await db.getMemberRoster();
+    const rosterNames   = rosterMembers.map(m => m.name);
+
+    ctx.session.awaitingName          = false;
+    ctx.session.awaitingNameConfirm   = true;
+    ctx.session.pendingNameCandidates = rosterNames;
+    ctx.session.pendingTypedName      = text.trim();
+
+    const kb = new InlineKeyboard();
+    rosterNames.forEach((name, i) => kb.text(name, `nameconfirm:${i}`).row());
+    kb.text('None of these — use my typed name', 'nameconfirm:custom');
+
+    return ctx.reply(
+      `🤔 I couldn't find "<b>${text}</b>" on the roster.\n\nPlease select your name from the list:`,
+      { parse_mode: 'HTML', reply_markup: kb }
+    );
   }
 
   // Log weight — button flow (no photo)
@@ -712,6 +994,74 @@ bot.on('message:text', async (ctx) => {
     const name = await resolveName(ctx);
     if (!name) return promptRegister(ctx);
     return saveLog({ name, type: match[1], kg: parseFloat(match[2]), sessionDate: today(), fileId: photoFileId, ctx });
+  }
+
+  // Admin: collect availability month
+  if (ctx.session.awaitingCollectMonth) {
+    ctx.session.awaitingCollectMonth = false;
+    const monthArg = text.trim();
+
+    const supa = db.getClient();
+    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+    const { data: allSlots } = await supa.from('roster_slots').select('date, session').order('date');
+    let monthSlots = (allSlots || []).filter(s => {
+      const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+      return label.toLowerCase() === monthArg.toLowerCase();
+    });
+
+    let generatedFallback = false;
+    if (!monthSlots.length) {
+      monthSlots = generateWeekends(monthArg);
+      if (!monthSlots.length) {
+        return ctx.reply(`⚠️ Could not parse "${monthArg}". Try: <code>Aug 2026</code>`, {
+          parse_mode: 'HTML', reply_markup: backToAdmin(),
+        });
+      }
+      generatedFallback = true;
+    }
+
+    const members = await db.getAllRegisteredMembers();
+    if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
+
+    let sent = 0;
+    for (const m of members) {
+      try {
+        await bot.api.sendMessage(
+          m.telegram_id,
+          `📅 <b>Availability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve.\nTap a date to select ✅, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
+          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
+        );
+        await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
+        sent++;
+      } catch (err) {
+        console.warn(`[Bot] collect: failed to DM ${m.name}:`, err.message);
+      }
+    }
+
+    const note = generatedFallback
+      ? `\n\n<i>⚠️ No roster created for ${monthArg} yet — used generated Sat/Sun dates.</i>`
+      : '';
+    return ctx.reply(
+      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> members.${note}`,
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
+  }
+
+  // Admin: edit (clear) member availability
+  if (ctx.session.awaitingEditAvailName) {
+    ctx.session.awaitingEditAvailName = false;
+    const memberName  = text.trim();
+    const targetMonth = nextCalendarMonth();
+    const supa = db.getClient();
+    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+    const { error } = await supa.from('availability')
+      .delete().eq('member_name', memberName).eq('month', targetMonth);
+    if (error) return ctx.reply(`⚠️ Error: ${error.message}`, { reply_markup: backToAdmin() });
+    return ctx.reply(
+      `✅ Cleared <b>${memberName}</b>'s availability for <b>${targetMonth}</b>.\n\nThey can now re-submit via the bot.`,
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
   }
 
   // Swap: step 1 — collect date
@@ -750,11 +1100,18 @@ bot.on('message:text', async (ctx) => {
     const groupMsg =
       `🔄 <b>Swap Request</b>\n\n` +
       `👤 <b>${name}</b> needs a swap for <b>${swapDate}</b>\n📝 ${reason}\n\n` +
-      `<i>Open the bot and tap Roster → Open Swaps to volunteer.</i>`;
+      `<i>Tap the button below to volunteer for this swap.</i>`;
 
     if (GROUP_ID) {
       try {
-        const sent = await bot.api.sendMessage(GROUP_ID, groupMsg, { parse_mode: 'HTML' });
+        const botUsername = await BOT_USERNAME_PROMISE;
+        const swapKb = botUsername && savedId
+          ? new InlineKeyboard().url(`✋ Accept swap`, `https://t.me/${botUsername}?start=acceptswap_${savedId}`)
+          : undefined;
+        const sent = await bot.api.sendMessage(GROUP_ID, groupMsg, {
+          parse_mode: 'HTML',
+          reply_markup: swapKb,
+        });
         if (supa && savedId) {
           await supa.from('swap_requests')
             .update({ telegram_message_id: sent.message_id }).eq('id', savedId);

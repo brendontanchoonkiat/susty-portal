@@ -81,8 +81,7 @@ function fiveDayMsg(slot, name) {
     `You're rostered to serve W2R on:\n` +
     `📅 <b>${slot.date}</b> (${slot.session})\n` +
     `👥 Serving with: ${partners}\n\n` +
-    `📦 Bring: Gloves &amp; comfortable shoes\n\n` +
-    `Can't make it? Use /swap ${slot.date} [reason] to request a swap.\n\n` +
+    `Can't make it? Open the bot and tap Roster → Request Swap.\n\n` +
     `— Sustainability Ministry 🌿`
   );
 }
@@ -92,11 +91,10 @@ function oneDayMsg(slot, name) {
   return (
     `🌿 <b>W2R Reminder — Serving Tomorrow!</b>\n\n` +
     `Hi <b>${name}</b>!\n\n` +
-    `Just a heads-up — you're on duty <b>tomorrow</b>:\n` +
+    `You're on duty <b>tomorrow</b>:\n` +
     `📅 <b>${slot.date}</b> (${slot.session})\n` +
     `👥 With: ${partners}\n\n` +
-    `Reply ✅ to confirm you're coming!\n` +
-    `Or use /confirm ${slot.date} in the bot.\n\n` +
+    `See you there! 💪\n\n` +
     `— Sustainability Ministry 🌿`
   );
 }

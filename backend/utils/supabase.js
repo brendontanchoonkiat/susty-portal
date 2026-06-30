@@ -107,6 +107,36 @@ async function resolveCanonicalName(typedName) {
   return null;
 }
 
+// ─── Fuzzy name matching ──────────────────────────────────────────────────────
+// Returns roster names that are likely matches for a typed name.
+// Matching rules (in priority order):
+//   1. Typed name is a substring of a roster name   ("Shing"  → "Wee Shing")
+//   2. A roster name word starts with the typed name ("Wee"    → "Wee Shing")
+//   3. Any typed word (≥3 chars) appears in a roster name
+async function fuzzyMatchRosterNames(typedName) {
+  const db = getClient();
+  if (!db) return [];
+  const { data: all } = await db.from('member_roster').select('name').eq('is_active', true);
+  if (!all) return [];
+
+  const lower      = typedName.trim().toLowerCase();
+  const typedWords = lower.split(/\s+/).filter(w => w.length >= 3);
+  const results    = [];
+
+  for (const m of all) {
+    const rosterLower = m.name.toLowerCase();
+    const rosterWords = rosterLower.split(/\s+/);
+
+    if (rosterLower.includes(lower))                                             { results.push({ name: m.name, score: 3 }); continue; }
+    if (rosterWords.some(w => w.startsWith(lower)))                              { results.push({ name: m.name, score: 2 }); continue; }
+    if (typedWords.length && typedWords.some(w => rosterLower.includes(w)))      { results.push({ name: m.name, score: 1 }); }
+  }
+
+  // Sort by score desc, dedupe, return names only
+  return [...new Map(results.sort((a, b) => b.score - a.score).map(r => [r.name, r])).values()]
+    .map(r => r.name);
+}
+
 // ─── Availability helpers ─────────────────────────────────────────────────────
 async function getAllRegisteredMembers() {
   const db = getClient();
@@ -251,7 +281,7 @@ module.exports = {
   getClient,
   query, insert, update, remove,
   getMemberByTelegramId, getMemberByName, upsertMember,
-  resolveCanonicalName,
+  resolveCanonicalName, fuzzyMatchRosterNames,
   getUpcomingRosterForMember, getUpcomingRoster,
   insertDataLog, getDataLogsForDate,
   getRecyclingStats, upsertMonthlyTotal,
