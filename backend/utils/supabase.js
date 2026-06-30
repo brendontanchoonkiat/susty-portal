@@ -253,7 +253,7 @@ async function upsertMonthlyTotal(month, year, cardboardKg, plasticKg, source = 
   const { data, error } = await db.from('recycling_monthly')
     .upsert(
       { month, year, cardboard_kg: cardboardKg, plastic_kg: plasticKg, source, updated_at: new Date().toISOString() },
-      { onConflict: 'month' }
+      { onConflict: 'month,year' }
     ).select().single();
   if (error) { console.error('[Supabase] upsertMonthlyTotal:', error.message); return null; }
   return data;

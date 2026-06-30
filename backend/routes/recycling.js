@@ -229,7 +229,7 @@ router.post('/', adminOnly, async (req, res) => {
       notes:        notes || '',
       source:       'manual',
       updated_at:   new Date().toISOString(),
-    }, { onConflict: 'month' })
+    }, { onConflict: 'month,year' })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
   cache.lastFetched = null;
