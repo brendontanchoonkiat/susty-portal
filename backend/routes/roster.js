@@ -6,6 +6,7 @@ const path    = require('path');
 const { sanitise } = require('../middleware/validate');
 const { notifyTelegram } = require('../utils/telegram');
 const { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg } = require('../data/messages');
+const { getClient } = require('../utils/supabase');
 
 const ROSTER_FILE = path.join(__dirname, '../data/roster.json');
 
@@ -153,12 +154,37 @@ function mergeWithLocal(sheetSlots, localSlots) {
   });
 }
 
+async function getRosterFromSupabase() {
+  const db = getClient();
+  if (!db) return null;
+  try {
+    const { data, error } = await db.from('roster_slots')
+      .select('*')
+      .order('date', { ascending: true });
+    if (error) { console.warn('[Roster] Supabase error:', error.message); return null; }
+    return (data && data.length > 0) ? data : null;
+  } catch (err) {
+    console.warn('[Roster] Supabase fetch failed:', err.message);
+    return null;
+  }
+}
+
 async function getRoster() {
   const now = Date.now();
+
+  // 1. Try Supabase (always fresh — no caching needed, Supabase is fast)
+  const supaSlots = await getRosterFromSupabase();
+  if (supaSlots) {
+    sheetCache = { data: supaSlots, lastFetched: now };
+    return { data: supaSlots, source: 'supabase' };
+  }
+
+  // 2. Try in-memory cache
   if (sheetCache.data && sheetCache.lastFetched && (now - sheetCache.lastFetched) < CACHE_TTL_MS) {
     return { data: sheetCache.data, source: 'sheets-cache' };
   }
 
+  // 3. Try Google Sheets
   if (ROSTER_SHEET_ID && GOOGLE_API_KEY) {
     try {
       const sheetSlots = await fetchRosterFromSheets();
@@ -176,6 +202,7 @@ async function getRoster() {
     console.warn('[Roster] ROSTER_SHEET_ID set but GOOGLE_SHEETS_API_KEY missing — using local file');
   }
 
+  // 4. Local file fallback
   return { data: loadRosterFile(), source: 'local' };
 }
 

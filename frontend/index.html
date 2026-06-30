@@ -418,13 +418,13 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       <button class="cal-nav-btn" onclick="nextMonth()">›</button>
     </div>
     <div class="cal-weekgrid">
-      <div class="cal-day-header">Sun</div>
       <div class="cal-day-header">Mon</div>
       <div class="cal-day-header">Tue</div>
       <div class="cal-day-header">Wed</div>
       <div class="cal-day-header">Thu</div>
       <div class="cal-day-header">Fri</div>
       <div class="cal-day-header">Sat</div>
+      <div class="cal-day-header">Sun</div>
     </div>
     <div class="cal-weekgrid" id="cal-grid" style="margin-top:4px">
       <div class="loading" style="grid-column:1/-1">Loading…</div>
@@ -1584,7 +1584,7 @@ function renderManualChecklist() {
 }
 
 // ═══ ROSTER CALENDAR VIEW ════════════════════════════════════════════════════
-let calViewDate = new Date(2026, 5, 1); // June 2026
+let calViewDate = new Date(); calViewDate.setDate(1); // current month
 let rosterViewMode = 'calendar';
 
 function switchRosterView(mode) {
@@ -1612,7 +1612,7 @@ function renderCalendarView() {
   document.getElementById('cal-month-label').textContent =
     new Date(year, month, 1).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
 
-  const firstDay    = new Date(year, month, 1).getDay();  // 0=Sun
+  const firstDay    = (new Date(year, month, 1).getDay() + 6) % 7;  // 0=Mon
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   // Index roster entries by YYYY-MM-DD

@@ -58,6 +58,8 @@ bot.use(session({
     // Admin flows
     awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
+    awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
+    awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
   }),
 }));
 
@@ -231,6 +233,7 @@ const adminMenu = new InlineKeyboard()
   .text('📅 Collect Availability', 'admin:collect').row()
   .text('📋 Send Roster to Group', 'admin:sendcalendar').row()
   .text('✏️ Edit Member Availability', 'admin:editavail').row()
+  .text('🤰 Excuse Member from Roster', 'admin:excuse').row()
   .text('👥 View Registered Members', 'admin:members').row()
   .text('← Back', 'menu:main');
 
@@ -850,6 +853,20 @@ bot.callbackQuery('admin:members', async (ctx) => {
   );
 });
 
+// ─── Admin: Excuse member from roster ─────────────────────────────────────────
+bot.callbackQuery('admin:excuse', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.awaitingExcuseName = true;
+  await ctx.editMessageText(
+    `🤰 <b>Excuse Member from Roster</b>\n\n` +
+    `Send the member's name and the date to excuse them until (inclusive):\n\n` +
+    `Format: <code>Clarice 2026-11-30</code>\n\n` +
+    `<i>They will be removed from all slots from today up to that date.\n` +
+    `Their member_roster status will be set to inactive until that date.</i>`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
 // ─── Callback: stats ──────────────────────────────────────────────────────────
 bot.callbackQuery('action:stats', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -1145,6 +1162,55 @@ bot.on('message:text', async (ctx) => {
     if (error) return ctx.reply(`⚠️ Error: ${error.message}`, { reply_markup: backToAdmin() });
     return ctx.reply(
       `✅ Cleared <b>${memberName}</b>'s availability for <b>${targetMonth}</b>.\n\nThey can now re-submit via the bot.`,
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
+  }
+
+  // Admin: excuse member from roster — format: "Clarice 2026-11-30"
+  if (ctx.session.awaitingExcuseName) {
+    ctx.session.awaitingExcuseName = false;
+    const parts      = text.trim().split(/\s+/);
+    const untilDate  = parts[parts.length - 1];
+    const memberName = parts.slice(0, -1).join(' ');
+
+    if (!memberName || !/^\d{4}-\d{2}-\d{2}$/.test(untilDate)) {
+      return ctx.reply(
+        `⚠️ Invalid format. Use: <code>Clarice 2026-11-30</code>`,
+        { parse_mode: 'HTML', reply_markup: backToAdmin() }
+      );
+    }
+
+    const supa = db.getClient();
+    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    // Remove member from all roster_slots between today and untilDate
+    const { data: slotsToUpdate } = await supa.from('roster_slots')
+      .select('id, date, team')
+      .gte('date', todayStr)
+      .lte('date', untilDate)
+      .contains('team', [memberName]);
+
+    let slotsChanged = 0;
+    for (const slot of (slotsToUpdate || [])) {
+      const newTeam = (slot.team || []).filter(n => n !== memberName);
+      await supa.from('roster_slots')
+        .update({ team: newTeam, updated_at: new Date().toISOString() })
+        .eq('id', slot.id);
+      slotsChanged++;
+    }
+
+    // Mark member inactive in member_roster
+    await supa.from('member_roster')
+      .update({ is_active: false, notes: `On leave until ${untilDate}`, updated_at: new Date().toISOString() })
+      .ilike('name', memberName);
+
+    return ctx.reply(
+      `✅ <b>${memberName}</b> excused until <b>${untilDate}</b>\n\n` +
+      `📋 Removed from <b>${slotsChanged}</b> upcoming slot${slotsChanged !== 1 ? 's' : ''}\n` +
+      `🔒 Marked inactive in member roster\n\n` +
+      `<i>To reinstate, use /admin → Excuse Member again with a past date, or update Supabase directly.</i>`,
       { parse_mode: 'HTML', reply_markup: backToAdmin() }
     );
   }
