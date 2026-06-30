@@ -109,7 +109,9 @@ async function getData() {
     const db   = require('../utils/supabase');
     const rows = await db.getRecyclingStats();
     if (rows && rows.length > 0) {
-      const toArr = (type) => rows.map(r => ({ month: r.month, kg: Number(r[type] || 0) }))
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const fmtMonth = (r) => `${MONTHS[(r.month || 1) - 1]} ${r.year || new Date().getFullYear()}`;
+      const toArr = (type) => rows.map(r => ({ month: fmtMonth(r), kg: Number(r[type] || 0) }))
                                   .filter(r => r.kg > 0);
       cache = {
         cardboard:   aggregateByMonth(toArr('cardboard_kg')),
