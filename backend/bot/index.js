@@ -50,7 +50,8 @@ bot.use(session({
     // Availability collation
     availMonth:            null,   // month being collected e.g. "Aug 2026"
     availDates:            [],     // roster dates for that month
-    availSelected:         [],     // dates member marked available
+    availSlots:            [],     // full slot objects { date, session } for keyboard rebuild
+    availSelected:         [],     // dates member marked unavailable
     // Unavailability reasons
     unavailReasons:        {},     // { date: reason }
     awaitingUnavailReason: null,   // date string currently waiting for reason text
@@ -121,9 +122,16 @@ function fmtSlot(slot) {
 }
 
 function fmtDate(d) {
-  const dt = new Date(d);
+  const dt = new Date(d + 'T00:00:00');
   if (isNaN(dt)) return d;
   return dt.toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// DD MMM YYYY — used in keyboard buttons (e.g. "01 Aug 2026")
+function fmtDateShort(d) {
+  const dt = new Date(d + 'T00:00:00');
+  if (isNaN(dt)) return d;
+  return dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
@@ -184,11 +192,24 @@ async function handleAcceptSwap(ctx, swapId, name) {
 }
 
 // ─── Keyboards ────────────────────────────────────────────────────────────────
-const mainMenu = new InlineKeyboard()
-  .text('📋 Roster',         'menu:roster').row()
-  .text('🪣 Duty Needs',     'menu:duty').row()
-  .text('📊 Stats & Impact', 'menu:stats').row()
-  .text('📅 My Availability','menu:avail');
+// Builds the main menu dynamically — hides "My Availability" if user already submitted
+async function buildMainMenu(ctx) {
+  const name      = ctx.session?.cachedName || (await resolveName(ctx));
+  const nextMonth = nextCalendarMonth();
+  const supa      = db.getClient();
+  let showAvail   = true;
+  if (supa && name) {
+    const { data } = await supa.from('availability')
+      .select('id').eq('member_name', name).eq('month', nextMonth).limit(1);
+    if (data?.length) showAvail = false;
+  }
+  const kb = new InlineKeyboard()
+    .text('📋 Roster',         'menu:roster').row()
+    .text('🪣 Duty Needs',     'menu:duty').row()
+    .text('📊 Stats & Impact', 'menu:stats');
+  if (showAvail) kb.row().text('📅 My Availability', 'menu:avail');
+  return kb;
+}
 
 const rosterMenu = new InlineKeyboard()
   .text('🗓 My Roster',     'action:myroster').text('⏭ Next Duty',    'action:nextduty').row()
@@ -222,9 +243,10 @@ function backToAdmin() {
 }
 
 async function sendMainMenu(ctx, text) {
+  const kb = await buildMainMenu(ctx);
   return ctx.reply(text || '🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
     parse_mode: 'HTML',
-    reply_markup: mainMenu,
+    reply_markup: kb,
   });
 }
 
@@ -289,17 +311,19 @@ bot.callbackQuery(/^nameconfirm:(.+)$/, async (ctx) => {
     return handleAcceptSwap(ctx, swapId, finalName);
   }
 
+  const kb = await buildMainMenu(ctx);
   return ctx.editMessageText(
     `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`,
-    { parse_mode: 'HTML', reply_markup: mainMenu }
+    { parse_mode: 'HTML', reply_markup: kb }
   ).catch(() => sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`));
 });
 
 // ─── Callback: main menus ─────────────────────────────────────────────────────
 bot.callbackQuery('menu:main', async (ctx) => {
   await ctx.answerCallbackQuery();
+  const kb = await buildMainMenu(ctx);
   await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
-    parse_mode: 'HTML', reply_markup: mainMenu,
+    parse_mode: 'HTML', reply_markup: kb,
   }).catch(() => sendMainMenu(ctx));
 });
 
@@ -504,6 +528,7 @@ bot.callbackQuery('menu:avail', async (ctx) => {
 
   ctx.session.availMonth    = targetMonth;
   ctx.session.availDates    = monthSlots.map(s => s.date);
+  ctx.session.availSlots    = monthSlots;
   ctx.session.availSelected = [];
 
   await ctx.editMessageText(
@@ -520,8 +545,9 @@ function buildAvailKeyboard(slots, unavailDates) {
   for (const s of slots) {
     const isUnavail = unavailDates.includes(s.date);
     const prefix    = isUnavail ? '❌ ' : '';
-    const sess      = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
-    kb.text(`${prefix}${sess} ${s.date} (${s.session})`, `avail:toggle:${s.date}`).row();
+    const sessLabel = (s.session && s.session !== '?') ? ` (${s.session})` : '';
+    const sessIcon  = s.session === 'GPC' ? ' 🟣' : s.session === 'SAT' ? ' 🟡' : s.session === '?' ? '' : ' 🟢';
+    kb.text(`${prefix}${fmtDateShort(s.date)}${sessIcon}${sessLabel}`, `avail:toggle:${s.date}`).row();
   }
   kb.text('✅ Done — Submit', 'avail:submit').text('← Cancel', 'avail:cancel');
   return kb;
@@ -540,25 +566,16 @@ bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
     if (ctx.session.unavailReasons) delete ctx.session.unavailReasons[date];
   }
 
-  // Recover availDates from the keyboard if session was lost (e.g. after bot restart)
-  if (!ctx.session.availDates?.length) {
+  // Recover slots from session, or fall back to reading dates from the keyboard buttons
+  let slots = ctx.session.availSlots || [];
+  if (!slots.length) {
     const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
-    ctx.session.availDates = rows
-      .flat()
+    const dates = rows.flat()
       .filter(b => b.callback_data?.startsWith('avail:toggle:'))
       .map(b => b.callback_data.replace('avail:toggle:', ''));
-  }
-
-  // Rebuild slots list for keyboard
-  const supa = db.getClient();
-  let slots   = [];
-  if (supa && ctx.session.availDates?.length) {
-    const { data } = await supa.from('roster_slots')
-      .select('date,session').in('date', ctx.session.availDates).order('date');
-    slots = data || [];
-  }
-  if (!slots.length) {
-    slots = (ctx.session.availDates || []).map(d => ({ date: d, session: '?' }));
+    slots = dates.map(d => ({ date: d, session: '?' }));
+    ctx.session.availSlots = slots;
+    ctx.session.availDates = dates;
   }
 
   await ctx.editMessageReplyMarkup({
@@ -592,11 +609,30 @@ bot.callbackQuery('avail:skipreason', async (ctx) => {
 bot.callbackQuery('avail:submit', async (ctx) => {
   await ctx.answerCallbackQuery();
   const name    = await resolveName(ctx);
-  const month   = ctx.session.availMonth;
   const unavail = ctx.session.availSelected || [];
-  const allD    = ctx.session.availDates    || [];
-  const avail   = allD.filter(d => !unavail.includes(d));
   const reasons = ctx.session.unavailReasons || {};
+
+  // Recover month from session or parse from the message header text
+  let month = ctx.session.availMonth;
+  if (!month) {
+    const msgText = ctx.callbackQuery.message?.text || '';
+    const mm = msgText.match(/—\s+(.+)/);
+    if (mm) month = mm[1].trim();
+  }
+
+  // Recover all dates from session or from keyboard buttons
+  let allD = ctx.session.availDates || [];
+  if (!allD.length && ctx.session.availSlots?.length) {
+    allD = ctx.session.availSlots.map(s => s.date);
+  }
+  if (!allD.length) {
+    // Last resort: read from the keyboard (the avail:submit button is on this message)
+    const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
+    allD = rows.flat()
+      .filter(b => b.callback_data?.startsWith('avail:toggle:'))
+      .map(b => b.callback_data.replace('avail:toggle:', ''));
+  }
+  const avail = allD.filter(d => !unavail.includes(d));
 
   if (!month) return ctx.reply('⚠️ Session expired. Please try again.', { reply_markup: backToMain() });
 
@@ -605,6 +641,7 @@ bot.callbackQuery('avail:submit', async (ctx) => {
 
   ctx.session.availMonth            = null;
   ctx.session.availDates            = [];
+  ctx.session.availSlots            = [];
   ctx.session.availSelected         = [];
   ctx.session.unavailReasons        = {};
   ctx.session.awaitingUnavailReason = null;
@@ -612,7 +649,7 @@ bot.callbackQuery('avail:submit', async (ctx) => {
   const lines = unavail.length
     ? unavail.map(d => {
         const r = reasons[d];
-        return `❌ ${d}${r ? ` — <i>${r}</i>` : ''}`;
+        return `❌ ${fmtDateShort(d)}${r ? ` — <i>${r}</i>` : ''}`;
       }).join('\n')
     : '✅ All clear — you\'re available for every date!';
 
@@ -626,11 +663,15 @@ bot.callbackQuery('avail:submit', async (ctx) => {
 
 bot.callbackQuery('avail:cancel', async (ctx) => {
   await ctx.answerCallbackQuery();
-  ctx.session.availMonth    = null;
-  ctx.session.availDates    = [];
-  ctx.session.availSelected = [];
+  ctx.session.availMonth            = null;
+  ctx.session.availDates            = [];
+  ctx.session.availSlots            = [];
+  ctx.session.availSelected         = [];
+  ctx.session.unavailReasons        = {};
+  ctx.session.awaitingUnavailReason = null;
+  const kb = await buildMainMenu(ctx);
   await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
-    parse_mode: 'HTML', reply_markup: mainMenu,
+    parse_mode: 'HTML', reply_markup: kb,
   }).catch(() => sendMainMenu(ctx));
 });
 
