@@ -140,6 +140,16 @@ function fmtDateShort(d) {
 
 function today() { return new Date().toISOString().split('T')[0]; }
 
+// Validates a day/month(/year) combo is a real calendar date — rejects things
+// like "36 July" or "31 June" that a loose regex would otherwise accept.
+function isValidDayMonth(day, monthText, yearText) {
+  const monIdx = MONTH_NAMES.findIndex(mn => mn.startsWith((monthText || '').toLowerCase()));
+  if (monIdx < 0 || isNaN(day) || day < 1 || day > 31) return false;
+  const year = yearText ? parseInt(yearText) : new Date().getFullYear();
+  const dt = new Date(year, monIdx, day);
+  return dt.getMonth() === monIdx && dt.getDate() === day;
+}
+
 // Parse a typed date like "20 Jun" or "20 Jun 2025" → ISO "YYYY-MM-DD", or null if unparseable.
 // No year given + result would be in the future → assume the person meant last year.
 const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
@@ -215,7 +225,7 @@ async function handleAcceptSwap(ctx, swapId, name) {
   return ctx.reply(
     `🔄 Accepting swap for <b>${swap.requester_name}</b>'s duty on <b>${swap.requester_date}</b>.\n\n` +
     `📅 What date are <b>you</b> offering in return? (e.g. <code>5 Jul</code>)`,
-    { parse_mode: 'HTML' }
+    { parse_mode: 'HTML', reply_markup: swapPromptKb() }
   );
 }
 
@@ -266,6 +276,31 @@ const adminMenu = new InlineKeyboard()
 function backToMain() {
   return new InlineKeyboard().text('← Back to Menu', 'menu:main');
 }
+
+function swapPromptKb() {
+  return new InlineKeyboard().text('✖️ Cancel', 'swap:cancel');
+}
+
+// Discards an in-progress swap request or swap-acceptance flow.
+async function cancelSwapFlow(ctx, { viaButton = false } = {}) {
+  ctx.session.awaitingSwapDate   = false;
+  ctx.session.pendingSwapDate    = null;
+  ctx.session.awaitingSwapReason = false;
+  ctx.session.awaitingAcceptDate = null;
+
+  const kb  = new InlineKeyboard().text('← Back to Menu', 'menu:main');
+  const msg = '❌ <b>Swap cancelled.</b> Nothing was submitted.';
+  if (viaButton) {
+    return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb })
+      .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb }));
+  }
+  return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}
+
+bot.callbackQuery('swap:cancel', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return cancelSwapFlow(ctx, { viaButton: true });
+});
 
 function backToAdmin() {
   return new InlineKeyboard().text('← Back to Admin', 'admin:menu');
@@ -493,7 +528,7 @@ bot.callbackQuery('action:swap', async (ctx) => {
   ctx.session.awaitingSwapDate = true;
   await ctx.reply(
     `📨 <b>Request a Swap</b>\n\n📅 Which date do you need to swap? (e.g. <code>28 Jun</code>)`,
-    { parse_mode: 'HTML' }
+    { parse_mode: 'HTML', reply_markup: swapPromptKb() }
   );
 });
 
@@ -1181,9 +1216,13 @@ bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
 
   // Typed cancel — safety net alongside the Cancel button, works at any stage
-  // of the log flow (date entry, waiting for photo, waiting for weight).
-  if (/^(cancel|stop|restart)$/i.test(text) && (ctx.session.awaitingLogDate || ctx.session.logSession)) {
-    return cancelLogFlow(ctx);
+  // of the log flow (date entry, waiting for photo, waiting for weight) or the
+  // swap-request / swap-acceptance flow.
+  if (/^(cancel|stop|restart)$/i.test(text)) {
+    if (ctx.session.awaitingLogDate || ctx.session.logSession) return cancelLogFlow(ctx);
+    if (ctx.session.awaitingSwapDate || ctx.session.awaitingSwapReason || ctx.session.awaitingAcceptDate) {
+      return cancelSwapFlow(ctx);
+    }
   }
 
   // Registration — if user types again while in name-confirm, restart matching
@@ -1417,16 +1456,19 @@ bot.on('message:text', async (ctx) => {
 
   // Swap: step 1 — collect date
   if (ctx.session.awaitingSwapDate) {
-    const dateMatch = text.match(/^(\d{1,2}\s+\w+(?:\s+\d{4})?)/);
-    if (!dateMatch) {
-      return ctx.reply('⚠️ Try a format like: <code>28 Jun</code>', { parse_mode: 'HTML' });
+    const dateMatch = text.match(/^((\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?)/);
+    if (!dateMatch || !isValidDayMonth(parseInt(dateMatch[2]), dateMatch[3], dateMatch[4])) {
+      return ctx.reply(
+        `⚠️ "${text}" isn't a valid date. Try a format like <code>28 Jun</code>.`,
+        { parse_mode: 'HTML', reply_markup: swapPromptKb() }
+      );
     }
     ctx.session.awaitingSwapDate   = false;
     ctx.session.pendingSwapDate    = dateMatch[1].trim();
     ctx.session.awaitingSwapReason = true;
     return ctx.reply(
       `📅 Date: <b>${ctx.session.pendingSwapDate}</b>\n\n📝 What's the reason for swapping?`,
-      { parse_mode: 'HTML' }
+      { parse_mode: 'HTML', reply_markup: swapPromptKb() }
     );
   }
 
@@ -1479,9 +1521,12 @@ bot.on('message:text', async (ctx) => {
 
   // Accept swap — collect volunteer date
   if (ctx.session.awaitingAcceptDate) {
-    const dateMatch = text.match(/^(\d{1,2}\s+\w+(?:\s+\d{4})?)/);
-    if (!dateMatch) {
-      return ctx.reply('⚠️ Try a format like: <code>5 Jul</code>', { parse_mode: 'HTML' });
+    const dateMatch = text.match(/^((\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?)/);
+    if (!dateMatch || !isValidDayMonth(parseInt(dateMatch[2]), dateMatch[3], dateMatch[4])) {
+      return ctx.reply(
+        `⚠️ "${text}" isn't a valid date. Try a format like <code>5 Jul</code>.`,
+        { parse_mode: 'HTML', reply_markup: swapPromptKb() }
+      );
     }
     const volunteerDate = dateMatch[1].trim();
     const { swapId, requesterName, requesterDate } = ctx.session.awaitingAcceptDate;
