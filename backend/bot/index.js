@@ -152,8 +152,15 @@ function parseLogDate(text) {
   const typedYear = m[3] ? parseInt(m[3]) : null;
   let year = typedYear || new Date().getFullYear();
   let dt   = new Date(year, monIdx, day);
-  if (isNaN(dt.getTime())) return null;
-  if (!typedYear && dt > new Date()) dt = new Date(year - 1, monIdx, day);
+  // JS Date silently rolls overflow days into the next month (e.g. 32 Jul → 1 Aug,
+  // 31 Jun → 1 Jul, 30 Feb → 2 Mar) — reject anything that didn't land exactly
+  // on the month/day requested, since that means the date doesn't exist.
+  if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null;
+  if (!typedYear && dt > new Date()) {
+    year -= 1;
+    dt = new Date(year, monIdx, day);
+    if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null; // e.g. 29 Feb on a non-leap year
+  }
   return dt.toISOString().split('T')[0];
 }
 
@@ -492,6 +499,31 @@ bot.callbackQuery('action:swap', async (ctx) => {
 
 // ─── Callback: duty needs ─────────────────────────────────────────────────────
 // Starts (or resumes) a multi-measurement log session for `type` on `sessionDate`.
+function logPromptKb() {
+  return new InlineKeyboard().text('✖️ Cancel', 'log:cancel');
+}
+
+// Discards whatever's in progress and offers to start the same type over again.
+// Used by both the Cancel button and typing "cancel"/"stop"/"restart" mid-flow.
+async function cancelLogFlow(ctx, { viaButton = false } = {}) {
+  const type = ctx.session.logSession?.type || ctx.session.awaitingLogDate?.type || null;
+  ctx.session.logSession       = null;
+  ctx.session.awaitingLogPhoto = false;
+  ctx.session.awaitingLogKg    = false;
+  ctx.session.awaitingLogDate  = null;
+
+  const kb = new InlineKeyboard();
+  if (type) kb.text(`🔄 Start Over — ${type === 'cardboard' ? 'Cardboard' : 'Plastic'}`, `action:log:${type}`).row();
+  kb.text('← Back to Menu', 'menu:main');
+
+  const msg = '❌ <b>Entry discarded.</b> Nothing was saved.\n\nWant to start over?';
+  if (viaButton) {
+    return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: kb })
+      .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb }));
+  }
+  return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: kb });
+}
+
 async function startLogSession(ctx, type, sessionDate) {
   ctx.session.awaitingLogDate  = null;
   ctx.session.logSession       = { type, sessionDate, measurements: [] };
@@ -501,7 +533,7 @@ async function startLogSession(ctx, type, sessionDate) {
   const dateTag = sessionDate === today() ? ' (today)' : '';
   await ctx.reply(
     `${emoji} <b>Logging ${type} — ${fmtDate(sessionDate)}${dateTag}</b>\n\n📷 Send a photo of measurement #1.`,
-    { parse_mode: 'HTML' }
+    { parse_mode: 'HTML', reply_markup: logPromptKb() }
   );
 }
 
@@ -539,7 +571,10 @@ bot.callbackQuery('log:more', async (ctx) => {
   ctx.session.awaitingLogPhoto = true;
   ctx.session.awaitingLogKg    = false;
   const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
-  await ctx.reply(`${emoji} Send a photo of measurement #${ls.measurements.length + 1}.`, { parse_mode: 'HTML' });
+  await ctx.reply(
+    `${emoji} Send a photo of measurement #${ls.measurements.length + 1}.`,
+    { parse_mode: 'HTML', reply_markup: logPromptKb() }
+  );
 });
 
 bot.callbackQuery('log:done', async (ctx) => {
@@ -561,11 +596,7 @@ bot.callbackQuery('log:done', async (ctx) => {
 
 bot.callbackQuery('log:cancel', async (ctx) => {
   await ctx.answerCallbackQuery();
-  ctx.session.logSession       = null;
-  ctx.session.awaitingLogPhoto = false;
-  ctx.session.awaitingLogKg    = false;
-  await ctx.editMessageText('❌ Log discarded — nothing saved.', { parse_mode: 'HTML' }).catch(() => {});
-  return sendMainMenu(ctx);
+  return cancelLogFlow(ctx, { viaButton: true });
 });
 
 bot.callbackQuery('log:confirm', async (ctx) => {
@@ -590,10 +621,14 @@ bot.callbackQuery('log:confirm', async (ctx) => {
     });
   }
 
-  await rollUpMonthlyTotal(ls.sessionDate);
+  const total = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
+  await rollUpMonthlyTotal(
+    ls.sessionDate,
+    ls.type === 'cardboard' ? total : 0,
+    ls.type === 'plastic'   ? total : 0
+  );
   try { require('../routes/recycling').bustCache(); } catch (_) {}
 
-  const total  = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
   const impact = carbon.calcCO2e(ls.type === 'cardboard' ? total : 0, ls.type === 'plastic' ? total : 0);
   const emoji  = ls.type === 'cardboard' ? '📦' : '🍶';
   const n      = ls.measurements.length;
@@ -1098,7 +1133,7 @@ bot.on('message:photo', async (ctx) => {
     const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
     return ctx.reply(
       `${emoji} <b>Photo #${ls.measurements.length} saved.</b>\n\nHow many kg was this measurement? (e.g. <code>42.5</code>)`,
-      { parse_mode: 'HTML' }
+      { parse_mode: 'HTML', reply_markup: logPromptKb() }
     );
   }
 
@@ -1112,36 +1147,30 @@ bot.on('message:photo', async (ctx) => {
 });
 
 // ─── Monthly rollup ───────────────────────────────────────────────────────────
-// Re-sums all data_logs for the calendar month containing sessionDate and
-// upserts the total into recycling_monthly. Called after every confirmed log
-// (including back-added ones) so past months stay in sync too.
-async function rollUpMonthlyTotal(sessionDate) {
+// Adds `addCardboardKg`/`addPlasticKg` onto whatever recycling_monthly already
+// has for the calendar month containing sessionDate (creates the row if it
+// doesn't exist yet). Deliberately additive, NOT a re-sum of all data_logs for
+// that month: many months (everything before the bot went live) have a
+// recycling_monthly total sourced from the imported Total-sheet baseline with
+// no matching data_logs rows at all. A full re-sum would silently overwrite
+// that baseline down to just whatever's in data_logs — which is exactly how a
+// back-added log for an old month could wipe out real history. Incrementing
+// is safe for both old (imported) and new (bot-only) months.
+async function rollUpMonthlyTotal(sessionDate, addCardboardKg = 0, addPlasticKg = 0) {
   try {
     const supa = db.getClient();
     if (!supa) return;
     const dt       = new Date(sessionDate + 'T00:00:00');
-    const monthNum = dt.getMonth() + 1;          // 1–12
+    const monthNum = String(dt.getMonth() + 1);  // '1'–'12' — matches recycling_monthly.month (text)
     const yearNum  = dt.getFullYear();
-    const from     = `${yearNum}-${String(monthNum).padStart(2,'0')}-01`;
-    const nextM    = monthNum === 12 ? 1 : monthNum + 1;
-    const nextY    = monthNum === 12 ? yearNum + 1 : yearNum;
-    const to       = `${nextY}-${String(nextM).padStart(2,'0')}-01`;
 
-    const { data: logs } = await supa.from('data_logs')
-      .select('type, kg')
-      .gte('session_date', from)
-      .lt('session_date', to);
+    const rows     = await db.query('recycling_monthly', { month: monthNum, year: yearNum });
+    const existing = rows && rows[0];
 
-    if (logs) {
-      const cbTotal = logs.filter(l => l.type === 'cardboard').reduce((s, l) => s + Number(l.kg), 0);
-      const plTotal = logs.filter(l => l.type === 'plastic').reduce((s, l) => s + Number(l.kg), 0);
-      await db.upsertMonthlyTotal(
-        String(monthNum), yearNum,
-        Math.round(cbTotal * 100) / 100,
-        Math.round(plTotal * 100) / 100,
-        'logged'
-      );
-    }
+    const newCardboard = Math.round(((existing?.cardboard_kg || 0) + addCardboardKg) * 100) / 100;
+    const newPlastic   = Math.round(((existing?.plastic_kg   || 0) + addPlasticKg)   * 100) / 100;
+
+    await db.upsertMonthlyTotal(monthNum, yearNum, newCardboard, newPlastic, 'logged');
   } catch (err) {
     console.warn('[Bot] Failed to update monthly totals:', err.message);
   }
@@ -1150,6 +1179,12 @@ async function rollUpMonthlyTotal(sessionDate) {
 // ─── Text handler — multi-step flows ─────────────────────────────────────────
 bot.on('message:text', async (ctx) => {
   const text = ctx.message.text.trim();
+
+  // Typed cancel — safety net alongside the Cancel button, works at any stage
+  // of the log flow (date entry, waiting for photo, waiting for weight).
+  if (/^(cancel|stop|restart)$/i.test(text) && (ctx.session.awaitingLogDate || ctx.session.logSession)) {
+    return cancelLogFlow(ctx);
+  }
 
   // Registration — if user types again while in name-confirm, restart matching
   if (ctx.session.awaitingNameConfirm) {
@@ -1211,12 +1246,15 @@ bot.on('message:text', async (ctx) => {
     const parsed = parseLogDate(text);
     if (!parsed) {
       return ctx.reply(
-        `⚠️ Try a format like <code>20 Jun</code> or <code>20 Jun 2025</code>, or tap Today above.`,
-        { parse_mode: 'HTML' }
+        `⚠️ "${text}" isn't a valid date. Try a format like <code>20 Jun</code> or <code>20 Jun 2025</code>, or tap Today above.`,
+        { parse_mode: 'HTML', reply_markup: logPromptKb() }
       );
     }
     if (parsed > today()) {
-      return ctx.reply(`⚠️ That's in the future — enter a past date, or tap Today.`, { parse_mode: 'HTML' });
+      return ctx.reply(
+        `⚠️ That's in the future — enter a past date, or tap Today.`,
+        { parse_mode: 'HTML', reply_markup: logPromptKb() }
+      );
     }
     return startLogSession(ctx, type, parsed);
   }
@@ -1225,7 +1263,10 @@ bot.on('message:text', async (ctx) => {
   if (ctx.session.awaitingLogKg && ctx.session.logSession) {
     const kg = parseFloat(text.replace(/[^0-9.]/g, ''));
     if (isNaN(kg) || kg <= 0 || kg > 5000) {
-      return ctx.reply(`⚠️ Enter a valid weight in kg, e.g. <code>42.5</code>`, { parse_mode: 'HTML' });
+      return ctx.reply(
+        `⚠️ Enter a valid weight in kg, e.g. <code>42.5</code>`,
+        { parse_mode: 'HTML', reply_markup: logPromptKb() }
+      );
     }
     ctx.session.awaitingLogKg = false;
     const ls   = ctx.session.logSession;
@@ -1240,7 +1281,8 @@ bot.on('message:text', async (ctx) => {
       `Is there another measurement to add for this same session? ` +
       `<i>(e.g. a second box that was weighed separately)</i>`,
       { parse_mode: 'HTML', reply_markup: new InlineKeyboard()
-          .text('➕ Add another', 'log:more').text('✅ That\'s all', 'log:done') }
+          .text('➕ Add another', 'log:more').text('✅ That\'s all', 'log:done').row()
+          .text('✖️ Cancel', 'log:cancel') }
     );
   }
 
