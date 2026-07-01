@@ -39,6 +39,8 @@ bot.use(session({
     logSession:         null,   // { type, sessionDate, measurements: [{kg, fileId, imageUrl}] } — active multi-measurement log flow
     awaitingLogPhoto:   false,  // waiting for a photo for the current measurement in logSession
     awaitingLogKg:      false,  // waiting for a weight for the current measurement (after its photo)
+    awaitingAnomalyReason: false, // waiting for a reason after an unusually high total was confirmed
+    pendingAnomaly:        null,  // { ls, name, total } — staged until the anomaly reason step finishes
     awaitingSwapDate:   false,
     pendingSwapDate:    null,
     awaitingSwapReason: false,
@@ -758,29 +760,64 @@ bot.callbackQuery('log:cancel', async (ctx) => {
   return cancelLogFlow(ctx, { viaButton: true });
 });
 
-bot.callbackQuery('log:confirm', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const ls = ctx.session.logSession;
-  if (!ls) return;
-  const name = await resolveName(ctx);
-  if (!name) return promptRegister(ctx);
+// Compares a just-logged total against the trailing average for that type
+// (summed per session_date, last 8 sessions). Needs at least 3 prior sessions
+// of history before it'll flag anything, to avoid false positives early on.
+const ANOMALY_THRESHOLD_MULTIPLIER = parseFloat(process.env.ANOMALY_THRESHOLD_MULTIPLIER || '1.75');
+const ANOMALY_MIN_HISTORY = 3;
+const ANOMALY_SAMPLE_SIZE = 8;
 
-  ctx.session.logSession       = null;
-  ctx.session.awaitingLogPhoto = false;
-  ctx.session.awaitingLogKg    = false;
+async function checkAnomaly(type, total) {
+  const supa = db.getClient();
+  if (!supa) return { isAnomaly: false };
+
+  const { data: logs } = await supa.from('data_logs')
+    .select('session_date, kg')
+    .eq('type', type)
+    .order('session_date', { ascending: false })
+    .limit(300);
+  if (!logs?.length) return { isAnomaly: false };
+
+  const byDate = new Map();
+  for (const l of logs) byDate.set(l.session_date, (byDate.get(l.session_date) || 0) + Number(l.kg));
+
+  const sessionTotals = [...byDate.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([, kg]) => kg);
+
+  if (sessionTotals.length < ANOMALY_MIN_HISTORY) return { isAnomaly: false };
+
+  const sample = sessionTotals.slice(0, ANOMALY_SAMPLE_SIZE);
+  const avg    = sample.reduce((s, v) => s + v, 0) / sample.length;
+  const isAnomaly = avg > 0 && total > avg * ANOMALY_THRESHOLD_MULTIPLIER;
+
+  return { isAnomaly, avg: Math.round(avg * 10) / 10 };
+}
+
+// Writes the confirmed log to data_logs, rolls up the month, and replies —
+// shared by the normal-total path and the anomaly-reason path.
+async function finalizeLogSave(ctx, ls, name, total, anomalyNote) {
+  ctx.session.logSession            = null;
+  ctx.session.awaitingLogPhoto      = false;
+  ctx.session.awaitingLogKg         = false;
+  ctx.session.awaitingAnomalyReason = false;
+  ctx.session.pendingAnomaly        = null;
 
   const isBackdated = ls.sessionDate !== today();
+  const noteParts = [isBackdated ? 'Backdated entry' : '', anomalyNote ? `Reason for spike: ${anomalyNote}` : '']
+    .filter(Boolean);
+  const notes = noteParts.join(' — ');
+
   for (const m of ls.measurements) {
     await db.insertDataLog({
       session_date: ls.sessionDate, type: ls.type, kg: m.kg,
       image_url: m.imageUrl, file_id: m.fileId,
-      notes: isBackdated ? 'Backdated entry' : '',
+      notes,
       logged_by: name,
       created_at: new Date().toISOString(),
     });
   }
 
-  const total = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
   await rollUpMonthlyTotal(
     ls.sessionDate,
     ls.type === 'cardboard' ? total : 0,
@@ -792,12 +829,45 @@ bot.callbackQuery('log:confirm', async (ctx) => {
   const emoji  = ls.type === 'cardboard' ? '📦' : '🍶';
   const n      = ls.measurements.length;
 
-  await ctx.editMessageText(
+  await ctx.reply(
     `${emoji} <b>Logged!</b>\n\n${n} measurement${n > 1 ? 's' : ''} · <b>${total} kg</b> ${ls.type}\n` +
-    `🌍 CO₂e avoided: <b>${impact.co2eKg} kg</b>\n📅 ${fmtDate(ls.sessionDate)}${isBackdated ? ' (backdated)' : ''}`,
+    `🌍 CO₂e avoided: <b>${impact.co2eKg} kg</b>\n📅 ${fmtDate(ls.sessionDate)}${isBackdated ? ' (backdated)' : ''}` +
+    `${anomalyNote ? `\n📝 <i>${anomalyNote}</i>` : ''}`,
     { parse_mode: 'HTML' }
   ).catch(() => {});
   return sendMainMenu(ctx);
+}
+
+bot.callbackQuery('log:confirm', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const ls = ctx.session.logSession;
+  if (!ls) return;
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+
+  const total   = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
+  const anomaly = await checkAnomaly(ls.type, total);
+
+  if (anomaly.isAnomaly) {
+    ctx.session.awaitingAnomalyReason = true;
+    ctx.session.pendingAnomaly        = { ls, name, total };
+    const kb = new InlineKeyboard().text('Nothing special — just save it', 'log:anomalyskip');
+    const text =
+      `📈 <b>Heads up</b> — ${total} kg is well above the usual average for ${ls.type} (~${anomaly.avg} kg).\n\n` +
+      `Anything special happening (a big event, planned contractor collection, etc.)? This helps explain spikes later when someone looks back.\n\n` +
+      `Type a reason, or tap the button to save without one.`;
+    return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+      .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+  }
+
+  return finalizeLogSave(ctx, ls, name, total, '');
+});
+
+bot.callbackQuery('log:anomalyskip', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const pending = ctx.session.pendingAnomaly;
+  if (!pending) return;
+  return finalizeLogSave(ctx, pending.ls, pending.name, pending.total, '');
 });
 
 // ─── Callback: availability ───────────────────────────────────────────────────
@@ -1518,6 +1588,12 @@ bot.on('message:text', async (ctx) => {
     return startLogSession(ctx, type, parsed);
   }
 
+  // Anomaly reason — typed instead of tapping "Nothing special"
+  if (ctx.session.awaitingAnomalyReason && ctx.session.pendingAnomaly) {
+    const { ls, name, total } = ctx.session.pendingAnomaly;
+    return finalizeLogSave(ctx, ls, name, total, text);
+  }
+
   // Log — weight for the current measurement (after its photo was received)
   if (ctx.session.awaitingLogKg && ctx.session.logSession) {
     const kg = parseFloat(text.replace(/[^0-9.]/g, ''));
@@ -1666,9 +1742,13 @@ bot.on('message:text', async (ctx) => {
     }
 
     // Mark member inactive in member_roster
-    await supa.from('member_roster')
-      .update({ is_active: false, notes: `On leave until ${untilDate}`, updated_at: new Date().toISOString() })
+    // NOTE: member_roster has no `notes` column — writing to it used to make
+    // this whole update silently fail, so is_active never actually flipped.
+    // Use the real `excused_until` column instead (see add_excused_until_column.sql).
+    const { error: excuseErr } = await supa.from('member_roster')
+      .update({ is_active: false, excused_until: untilDate, updated_at: new Date().toISOString() })
       .ilike('name', memberName);
+    if (excuseErr) console.error('[Bot] admin:excuse update failed:', excuseErr.message);
 
     return ctx.reply(
       `✅ <b>${memberName}</b> excused until <b>${untilDate}</b>\n\n` +
