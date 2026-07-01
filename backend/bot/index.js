@@ -294,6 +294,7 @@ const adminMenu = new InlineKeyboard()
   .text('✏️ Edit Member Availability', 'admin:editavail').row()
   .text('🤰 Excuse Member from Roster', 'admin:excuse').row()
   .text('👥 View Registered Members', 'admin:members').row()
+  .text('📇 Member Profiles', 'admin:profiles').row()
   .text('← Back', 'menu:main');
 
 function backToMain() {
@@ -360,14 +361,28 @@ bot.command('start', async (ctx) => {
   }
 
   if (existing) {
-    if (ctx.session) ctx.session.cachedName = existing.name;
+    // Self-heal: if their stored name doesn't match the roster's canonical
+    // spelling (e.g. someone registered as "Judy Koh" back when "judy koh"
+    // wasn't yet a recognised alias for "Judy"), quietly correct it. Without
+    // this, roster/duty lookups silently come up empty forever since
+    // roster_slots.team only ever contains the canonical name.
+    let canonicalName = existing.name;
+    const resolved = await db.resolveCanonicalName(existing.name);
+    if (resolved?.canonical && resolved.canonical !== existing.name) {
+      canonicalName = resolved.canonical;
+    }
+    if (ctx.session) ctx.session.cachedName = canonicalName;
+
     // Opportunistically keep telegram_username fresh for already-registered
     // members too (covers anyone who registered before this was tracked, or
-    // who has since changed their @username).
-    if (ctx.from.username && ctx.from.username !== existing.telegram_username) {
-      db.upsertMember(ctx.from.id, existing.name, ctx.from.username).catch(() => {});
+    // who has since changed their @username), and fix a drifted name at the
+    // same time.
+    if (canonicalName !== existing.name || (ctx.from.username && ctx.from.username !== existing.telegram_username)) {
+      // Fall back to whatever username is already stored so a fix triggered
+      // purely by the name drift never clobbers a previously-captured username.
+      db.upsertMember(ctx.from.id, canonicalName, ctx.from.username || existing.telegram_username).catch(() => {});
     }
-    return sendMainMenu(ctx, `Welcome back, <b>${existing.name}</b>! 🌿\n\nWhat do you need?`);
+    return sendMainMenu(ctx, `Welcome back, <b>${canonicalName}</b>! 🌿\n\nWhat do you need?`);
   }
   ctx.session.awaitingName = true;
   return ctx.reply(
@@ -473,7 +488,7 @@ bot.callbackQuery(/^profile:service:(SAT|SUN|BOTH)$/, async (ctx) => {
   ctx.session.pendingProfile.service  = code;
   ctx.session.awaitingProfileService  = false;
   ctx.session.awaitingProfileCG       = true;
-  const text = `✅ Service: <b>${serviceLabel(code)}</b>\n\n👥 Which CG (cell group) are you part of? <i>(Type "None" if you're not in one.)</i>`;
+  const text = `✅ Service: <b>${serviceLabel(code)}</b>\n\n👥 Which CG (cell group) are you part of?`;
   await ctx.editMessageText(text, { parse_mode: 'HTML' }).catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
 });
 
@@ -1181,6 +1196,33 @@ bot.callbackQuery('admin:members', async (ctx) => {
   );
 });
 
+// Admin: Member Profiles — service day / CG / other ministries / DOB for
+// everyone, in one place for manual roster planning (combine with
+// "Edit Member Availability" / the availability table for unavailabilities).
+bot.callbackQuery('admin:profiles', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const supa = db.getClient();
+  if (!supa) {
+    return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
+  }
+  const roster = await db.getMemberRoster();
+  if (!roster.length) {
+    return ctx.editMessageText('No active members yet.', { reply_markup: backToAdmin() });
+  }
+  const lines = roster.map((m, i) => {
+    const service   = serviceLabel(m.service_preference);
+    const cg        = m.cg || '—';
+    const ministry  = m.other_ministries || '—';
+    const dob       = m.date_of_birth ? fmtDateShort(m.date_of_birth) : '—';
+    return `${i + 1}. <b>${m.name}</b> — ${service} · CG: ${cg} · Ministries: ${ministry} · 🎂 ${dob}`;
+  }).join('\n');
+  await ctx.editMessageText(
+    `📇 <b>Member Profiles (${roster.length})</b>\n\n${lines}\n\n` +
+    `<i>"—" means they haven't filled in their profile yet (bot menu → ✏️ My Profile).</i>`,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
+
 // ─── Admin: Excuse member from roster ─────────────────────────────────────────
 bot.callbackQuery('admin:excuse', async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -1419,10 +1461,13 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  // Profile: CG
+  // Profile: CG — required, every member has one
   if (ctx.session.awaitingProfileCG && ctx.session.pendingProfile) {
-    ctx.session.pendingProfile.cg      = /^(none|skip|-)$/i.test(text) ? null : text;
-    ctx.session.awaitingProfileCG      = false;
+    if (!text || text.length < 2 || /^(none|skip|-|n\/a)$/i.test(text)) {
+      return ctx.reply(`👥 Which CG (cell group) are you part of?`, { parse_mode: 'HTML' });
+    }
+    ctx.session.pendingProfile.cg         = text;
+    ctx.session.awaitingProfileCG         = false;
     ctx.session.awaitingProfileMinistries = true;
     return ctx.reply(
       `🙏 Are you serving in any other ministries? <i>(e.g. Ushering, Worship — type "None" if not.)</i>`,
@@ -1436,21 +1481,17 @@ bot.on('message:text', async (ctx) => {
     ctx.session.awaitingProfileMinistries      = false;
     ctx.session.awaitingProfileDob             = true;
     return ctx.reply(
-      `🎂 What's your date of birth? <i>(e.g. 15 Aug 1995 — type "skip" to leave this blank.)</i>`,
+      `🎂 What's your date of birth? <i>(e.g. 15 Aug 1995)</i>`,
       { parse_mode: 'HTML' }
     );
   }
 
-  // Profile: date of birth — final step, then save
+  // Profile: date of birth — required, final step, then save
   if (ctx.session.awaitingProfileDob && ctx.session.pendingProfile) {
-    if (/^skip$/i.test(text)) {
-      ctx.session.pendingProfile.dob = null;
-      return finalizeProfile(ctx);
-    }
     const dob = parseDob(text);
     if (!dob) {
       return ctx.reply(
-        `⚠️ "${text}" isn't a valid date. Try a format like <code>15 Aug 1995</code>, or type "skip".`,
+        `⚠️ "${text}" isn't a valid date. Please enter your date of birth like <code>15 Aug 1995</code>.`,
         { parse_mode: 'HTML' }
       );
     }
