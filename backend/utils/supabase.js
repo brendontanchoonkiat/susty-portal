@@ -184,11 +184,14 @@ async function updateMemberRosterStats(name, patch) {
   return data;
 }
 
-async function upsertMember(telegramId, name) {
+async function upsertMember(telegramId, name, username = null) {
   const db = getClient();
   if (!db) return null;
   const { data, error } = await db.from('members')
-    .upsert({ telegram_id: telegramId, name: name.trim() }, { onConflict: 'telegram_id' })
+    .upsert(
+      { telegram_id: telegramId, name: name.trim(), telegram_username: username || null },
+      { onConflict: 'telegram_id' }
+    )
     .select().single();
   if (error) { console.error('[Supabase] upsertMember:', error.message); return null; }
   return data;

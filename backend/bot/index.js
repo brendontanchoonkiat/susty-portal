@@ -57,6 +57,15 @@ bot.use(session({
     // Unavailability reasons
     unavailReasons:        {},     // { date: reason }
     awaitingUnavailReason: null,   // date string currently waiting for reason text
+    // Monthly "anything happening?" note (asked once per availability submission)
+    pendingAvailSave:      null,   // { month, name, avail, unavail, reasons } — staged until the note step finishes
+    awaitingMonthlyNote:   false,
+    // Profile collection (service / CG / other ministries / DOB)
+    pendingProfile:            null,  // { name, isNew, service, cg, otherMinistries, dob }
+    awaitingProfileService:    false,
+    awaitingProfileCG:         false,
+    awaitingProfileMinistries: false,
+    awaitingProfileDob:        false,
     // Admin flows
     awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
@@ -174,6 +183,19 @@ function parseLogDate(text) {
   return dt.toISOString().split('T')[0];
 }
 
+// Parse a date of birth like "15 Aug 1995" — year is required (unlike swap/log
+// dates, DOB can't default to "current year" or "assume last year").
+function parseDob(text) {
+  const m = text.trim().match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (!m) return null;
+  const day  = parseInt(m[1]);
+  const year = parseInt(m[3]);
+  if (!isValidDayMonth(day, m[2], m[3])) return null;
+  if (year < 1900 || year > new Date().getFullYear()) return null;
+  const monIdx = MONTH_NAMES.findIndex(mn => mn.startsWith(m[2].toLowerCase()));
+  return new Date(year, monIdx, day).toISOString().split('T')[0];
+}
+
 function promptRegister(ctx) {
   return ctx.reply(
     '👋 You\'re not registered yet! Send /start to set up your account.',
@@ -244,7 +266,8 @@ async function buildMainMenu(ctx) {
   const kb = new InlineKeyboard()
     .text('📋 Roster',         'menu:roster').row()
     .text('🪣 Duty Needs',     'menu:duty').row()
-    .text('📊 Stats & Impact', 'menu:stats');
+    .text('📊 Stats & Impact', 'menu:stats').row()
+    .text('✏️ My Profile',     'menu:profile');
   if (showAvail) kb.row().text('📅 My Availability', 'menu:avail');
   return kb;
 }
@@ -338,6 +361,12 @@ bot.command('start', async (ctx) => {
 
   if (existing) {
     if (ctx.session) ctx.session.cachedName = existing.name;
+    // Opportunistically keep telegram_username fresh for already-registered
+    // members too (covers anyone who registered before this was tracked, or
+    // who has since changed their @username).
+    if (ctx.from.username && ctx.from.username !== existing.telegram_username) {
+      db.upsertMember(ctx.from.id, existing.name, ctx.from.username).catch(() => {});
+    }
     return sendMainMenu(ctx, `Welcome back, <b>${existing.name}</b>! 🌿\n\nWhat do you need?`);
   }
   ctx.session.awaitingName = true;
@@ -352,34 +381,25 @@ bot.command('start', async (ctx) => {
 // ─── Callback: name confirmation (fuzzy match) ────────────────────────────────
 bot.callbackQuery(/^nameconfirm:(.+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
-  const val        = ctx.match[1];
-  const candidates = ctx.session.pendingNameCandidates || [];
-  const typedName  = ctx.session.pendingTypedName || '';
+  const val         = ctx.match[1];
+  const candidates  = ctx.session.pendingNameCandidates || [];
+  const typedName   = ctx.session.pendingTypedName || '';
+  const isNewMember = val === 'custom'; // true = no matching roster row at all (INSERT); false = matched an existing one (UPDATE)
 
-  const finalName = val === 'custom'
-    ? typedName
-    : (candidates[parseInt(val)] || typedName);
+  const finalName = isNewMember ? typedName : (candidates[parseInt(val)] || typedName);
 
   ctx.session.awaitingNameConfirm   = false;
   ctx.session.pendingNameCandidates = [];
   ctx.session.pendingTypedName      = null;
   ctx.session.cachedName            = finalName;
 
-  await db.upsertMember(ctx.from.id, finalName);
+  await db.upsertMember(ctx.from.id, finalName, ctx.from.username);
 
-  // Resume any pending deep-link (e.g. accept a swap)
-  if (ctx.session.pendingDeeplink?.startsWith('acceptswap_')) {
-    const swapId = parseInt(ctx.session.pendingDeeplink.replace('acceptswap_', ''));
-    ctx.session.pendingDeeplink = null;
-    await ctx.editMessageText(`✅ Registered as <b>${finalName}</b>! 🌿`, { parse_mode: 'HTML' }).catch(() => {});
-    return handleAcceptSwap(ctx, swapId, finalName);
-  }
-
-  const kb = await buildMainMenu(ctx);
-  return ctx.editMessageText(
-    `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`,
-    { parse_mode: 'HTML', reply_markup: kb }
-  ).catch(() => sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿\n\nWhat do you need?`));
+  // Every first-time registration — matched to an existing roster row or not —
+  // goes through profile collection. Any pending deep-link (e.g. accept a swap)
+  // resumes automatically once finalizeProfile() finishes.
+  await ctx.editMessageText(`✅ Registered as <b>${finalName}</b>! 🌿`, { parse_mode: 'HTML' }).catch(() => {});
+  return startProfileCollection(ctx, finalName, isNewMember);
 });
 
 // ─── Callback: main menus ─────────────────────────────────────────────────────
@@ -415,6 +435,95 @@ bot.callbackQuery('menu:stats', async (ctx) => {
     { parse_mode: 'HTML', reply_markup: statsMenu }
   );
 });
+
+// ─── Profile collection (service day / CG / other ministries / DOB) ──────────
+// Triggered automatically for brand-new members right after registration, and
+// available any time via "✏️ My Profile" so existing members can fill it in
+// or update it later.
+function serviceLabel(code) {
+  return code === 'BOTH' ? 'Both / Either' : code === 'SAT' ? 'Saturday' : code === 'SUN' ? 'Sunday' : '—';
+}
+
+async function startProfileCollection(ctx, name, isNew) {
+  ctx.session.pendingProfile         = { name, isNew };
+  ctx.session.awaitingProfileService = true;
+  const kb = new InlineKeyboard()
+    .text('Saturday', 'profile:service:SAT').text('Sunday', 'profile:service:SUN').row()
+    .text('Both / Either', 'profile:service:BOTH');
+  const intro = isNew
+    ? `📝 <b>Quick profile setup</b>\n\nJust a few questions to get you set up.\n\n`
+    : `📝 <b>My Profile</b>\n\nLet's fill this in (or update it).\n\n`;
+  return ctx.reply(
+    `${intro}📅 Which service do you usually attend? <i>(Helps us roster you on the right day.)</i>`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+}
+
+bot.callbackQuery('menu:profile', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+  return startProfileCollection(ctx, name, false);
+});
+
+bot.callbackQuery(/^profile:service:(SAT|SUN|BOTH)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!ctx.session.pendingProfile) return;
+  const code = ctx.match[1];
+  ctx.session.pendingProfile.service  = code;
+  ctx.session.awaitingProfileService  = false;
+  ctx.session.awaitingProfileCG       = true;
+  const text = `✅ Service: <b>${serviceLabel(code)}</b>\n\n👥 Which CG (cell group) are you part of? <i>(Type "None" if you're not in one.)</i>`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML' }).catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
+});
+
+async function finalizeProfile(ctx) {
+  const p = ctx.session.pendingProfile;
+  ctx.session.pendingProfile            = null;
+  ctx.session.awaitingProfileService    = false;
+  ctx.session.awaitingProfileCG         = false;
+  ctx.session.awaitingProfileMinistries = false;
+  ctx.session.awaitingProfileDob        = false;
+  if (!p) return sendMainMenu(ctx);
+
+  const patch = {
+    service_preference: p.service || null,
+    cg: p.cg || null,
+    other_ministries: p.otherMinistries || null,
+    date_of_birth: p.dob || null,
+  };
+
+  if (db.getClient()) {
+    if (p.isNew) {
+      await db.insert('member_roster', {
+        name: p.name,
+        aliases: [],
+        sat_serves: 0, sun_serves: 0, gpc_serves: 0, total_serves: 0,
+        points: 0, priority: '✅ Serve Next', is_active: true,
+        ...patch,
+      });
+    } else {
+      await db.updateMemberRosterStats(p.name, patch);
+    }
+  }
+
+  const summary =
+    `✅ <b>Profile saved!</b>\n\n` +
+    `📅 Service: <b>${serviceLabel(p.service)}</b>\n` +
+    `👥 CG: <b>${p.cg || 'None'}</b>\n` +
+    `🙏 Other ministries: <b>${p.otherMinistries || 'None'}</b>\n` +
+    `🎂 DOB: <b>${p.dob ? fmtDate(p.dob) : 'Not provided'}</b>`;
+
+  // Resume a pending deep-link (e.g. this happened mid registration for an accept-swap link)
+  if (ctx.session.pendingDeeplink?.startsWith('acceptswap_')) {
+    const swapId = parseInt(ctx.session.pendingDeeplink.replace('acceptswap_', ''));
+    ctx.session.pendingDeeplink = null;
+    await ctx.reply(summary, { parse_mode: 'HTML' });
+    return handleAcceptSwap(ctx, swapId, p.name);
+  }
+
+  return sendMainMenu(ctx, `${summary}\n\nWhat do you need?`);
+}
 
 // ─── Callback: roster ─────────────────────────────────────────────────────────
 bot.callbackQuery('action:myroster', async (ctx) => {
@@ -825,7 +934,32 @@ bot.callbackQuery('avail:submit', async (ctx) => {
 
   if (!month) return ctx.reply('⚠️ Session expired. Please try again.', { reply_markup: backToMain() });
 
-  const notes = Object.keys(reasons).length ? JSON.stringify({ reasons }) : '';
+  // Stage everything and ask one more general question before actually saving.
+  ctx.session.pendingAvailSave   = { month, name, avail, unavail, reasons };
+  ctx.session.awaitingMonthlyNote = true;
+
+  const text =
+    `📝 Last thing — is anything happening this month we should know about?\n\n` +
+    `<i>e.g. celebrating a wedding or birthday, an unusually busy work stretch, travel, exams — anything that might affect your availability or energy for duty.</i>\n\n` +
+    `Type your answer, or tap Skip.`;
+  const kb = new InlineKeyboard().text('Skip', 'avail:skipmonthlynote');
+
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+});
+
+async function finalizeAvailability(ctx, monthlyNote) {
+  const pending = ctx.session.pendingAvailSave;
+  ctx.session.pendingAvailSave    = null;
+  ctx.session.awaitingMonthlyNote = false;
+  if (!pending) return sendMainMenu(ctx);
+
+  const { month, name, avail, unavail, reasons } = pending;
+  const note = (monthlyNote || '').trim();
+  const hasReasons = Object.keys(reasons).length > 0;
+  const notes = (hasReasons || note)
+    ? JSON.stringify({ reasons, monthlyNote: note })
+    : '';
   await db.saveAvailability(month, name, avail, unavail, notes);
 
   ctx.session.availMonth            = null;
@@ -842,12 +976,18 @@ bot.callbackQuery('avail:submit', async (ctx) => {
       }).join('\n')
     : '✅ All clear — you\'re available for every date!';
 
+  const noteLine = note ? `\n\n📝 <i>${note}</i>` : '';
+
   const msg =
-    `✅ <b>Submitted for ${month}!</b>\n\n${lines}\n\n` +
+    `✅ <b>Submitted for ${month}!</b>\n\n${lines}${noteLine}\n\n` +
     `<i>Your TL will see this when planning the roster.</i>`;
 
-  await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: backToMain() })
-    .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() }));
+  return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() });
+}
+
+bot.callbackQuery('avail:skipmonthlynote', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return finalizeAvailability(ctx, '');
 });
 
 bot.callbackQuery('avail:cancel', async (ctx) => {
@@ -858,6 +998,8 @@ bot.callbackQuery('avail:cancel', async (ctx) => {
   ctx.session.availSelected         = [];
   ctx.session.unavailReasons        = {};
   ctx.session.awaitingUnavailReason = null;
+  ctx.session.pendingAvailSave      = null;
+  ctx.session.awaitingMonthlyNote   = false;
   const kb = await buildMainMenu(ctx);
   await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
     parse_mode: 'HTML', reply_markup: kb,
@@ -1032,7 +1174,7 @@ bot.callbackQuery('admin:members', async (ctx) => {
   if (!members.length) {
     return ctx.editMessageText('No registered members yet.', { reply_markup: backToAdmin() });
   }
-  const lines = members.map((m, i) => `${i + 1}. <b>${m.name}</b>`).join('\n');
+  const lines = members.map((m, i) => `${i + 1}. <b>${m.name}</b>${m.telegram_username ? ` — @${m.telegram_username}` : ''}`).join('\n');
   await ctx.editMessageText(
     `👥 <b>Registered Members (${members.length})</b>\n\n${lines}`,
     { parse_mode: 'HTML', reply_markup: backToAdmin() }
@@ -1246,18 +1388,16 @@ bot.on('message:text', async (ctx) => {
       const finalName = canonical;
       ctx.session.awaitingName = false;
       ctx.session.cachedName   = finalName;
-      await db.upsertMember(ctx.from.id, finalName);
+      await db.upsertMember(ctx.from.id, finalName, ctx.from.username);
 
       const matchNote = canonical.toLowerCase() !== text.trim().toLowerCase()
         ? `\n<i>(Matched to roster name: <b>${canonical}</b>)</i>` : '';
 
-      if (ctx.session.pendingDeeplink?.startsWith('acceptswap_')) {
-        const swapId = parseInt(ctx.session.pendingDeeplink.replace('acceptswap_', ''));
-        ctx.session.pendingDeeplink = null;
-        await ctx.reply(`✅ Got it, <b>${finalName}</b>! 🌿${matchNote}`, { parse_mode: 'HTML' });
-        return handleAcceptSwap(ctx, swapId, finalName);
-      }
-      return sendMainMenu(ctx, `✅ Got it, <b>${finalName}</b>! You're all set. 🌿${matchNote}\n\nWhat do you need?`);
+      // Matched an existing roster row, but this is still their first-ever
+      // registration — collect their profile too (any pending deep-link
+      // resumes automatically once finalizeProfile() finishes).
+      await ctx.reply(`✅ Got it, <b>${finalName}</b>! 🌿${matchNote}`, { parse_mode: 'HTML' });
+      return startProfileCollection(ctx, finalName, false);
     }
 
     // Step 2 — no exact match: show full roster list to pick from
@@ -1277,6 +1417,45 @@ bot.on('message:text', async (ctx) => {
       `🤔 I couldn't find "<b>${text}</b>" on the roster.\n\nPlease select your name from the list:`,
       { parse_mode: 'HTML', reply_markup: kb }
     );
+  }
+
+  // Profile: CG
+  if (ctx.session.awaitingProfileCG && ctx.session.pendingProfile) {
+    ctx.session.pendingProfile.cg      = /^(none|skip|-)$/i.test(text) ? null : text;
+    ctx.session.awaitingProfileCG      = false;
+    ctx.session.awaitingProfileMinistries = true;
+    return ctx.reply(
+      `🙏 Are you serving in any other ministries? <i>(e.g. Ushering, Worship — type "None" if not.)</i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  // Profile: other ministries
+  if (ctx.session.awaitingProfileMinistries && ctx.session.pendingProfile) {
+    ctx.session.pendingProfile.otherMinistries = /^(none|skip|-)$/i.test(text) ? null : text;
+    ctx.session.awaitingProfileMinistries      = false;
+    ctx.session.awaitingProfileDob             = true;
+    return ctx.reply(
+      `🎂 What's your date of birth? <i>(e.g. 15 Aug 1995 — type "skip" to leave this blank.)</i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+
+  // Profile: date of birth — final step, then save
+  if (ctx.session.awaitingProfileDob && ctx.session.pendingProfile) {
+    if (/^skip$/i.test(text)) {
+      ctx.session.pendingProfile.dob = null;
+      return finalizeProfile(ctx);
+    }
+    const dob = parseDob(text);
+    if (!dob) {
+      return ctx.reply(
+        `⚠️ "${text}" isn't a valid date. Try a format like <code>15 Aug 1995</code>, or type "skip".`,
+        { parse_mode: 'HTML' }
+      );
+    }
+    ctx.session.pendingProfile.dob = dob;
+    return finalizeProfile(ctx);
   }
 
   // Log — step 0: date typed instead of tapping "Today" (back-add a missed log)
@@ -1335,6 +1514,11 @@ bot.on('message:text', async (ctx) => {
       `❌ <b>${fmtDate(date)}</b> marked as unavailable.\n<i>Reason: ${text}</i>\n\nTap more dates above, or Submit when done.`,
       { parse_mode: 'HTML' }
     );
+  }
+
+  // Monthly "anything happening this month?" note — final step after Submit
+  if (ctx.session.awaitingMonthlyNote) {
+    return finalizeAvailability(ctx, text);
   }
 
   // Admin: collect availability month
