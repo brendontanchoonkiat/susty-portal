@@ -35,8 +35,10 @@ const bot = new Bot(BOT_TOKEN);
 bot.use(session({
   initial: () => ({
     awaitingName:       false,
-    awaitingLogKg:      null,   // { type } — waiting for weight input
-    awaitingLogPhoto:   null,   // { type, kg } — waiting for photo after weight
+    awaitingLogDate:    null,   // { type } — waiting for date text after choosing Log Cardboard/Plastic
+    logSession:         null,   // { type, sessionDate, measurements: [{kg, fileId, imageUrl}] } — active multi-measurement log flow
+    awaitingLogPhoto:   false,  // waiting for a photo for the current measurement in logSession
+    awaitingLogKg:      false,  // waiting for a weight for the current measurement (after its photo)
     awaitingSwapDate:   false,
     pendingSwapDate:    null,
     awaitingSwapReason: false,
@@ -137,6 +139,23 @@ function fmtDateShort(d) {
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
+
+// Parse a typed date like "20 Jun" or "20 Jun 2025" → ISO "YYYY-MM-DD", or null if unparseable.
+// No year given + result would be in the future → assume the person meant last year.
+const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+function parseLogDate(text) {
+  const m = text.trim().match(/^(\d{1,2})\s+([A-Za-z]+)\.?\s*(\d{4})?$/);
+  if (!m) return null;
+  const day    = parseInt(m[1]);
+  const monIdx = MONTH_NAMES.findIndex(mn => mn.startsWith(m[2].toLowerCase()));
+  if (monIdx < 0 || day < 1 || day > 31) return null;
+  const typedYear = m[3] ? parseInt(m[3]) : null;
+  let year = typedYear || new Date().getFullYear();
+  let dt   = new Date(year, monIdx, day);
+  if (isNaN(dt.getTime())) return null;
+  if (!typedYear && dt > new Date()) dt = new Date(year - 1, monIdx, day);
+  return dt.toISOString().split('T')[0];
+}
 
 function promptRegister(ctx) {
   return ctx.reply(
@@ -341,8 +360,8 @@ bot.callbackQuery('menu:roster', async (ctx) => {
 bot.callbackQuery('menu:duty', async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(
-    '🪣 <b>Duty Needs</b>\n\nLog your recycling weight for this session.\n\n' +
-    '<i>💡 You can also send a photo with caption: <code>cardboard 42.5</code></i>',
+    '🪣 <b>Duty Needs</b>\n\nLog your recycling — photo + weight for each measurement.\n\n' +
+    '<i>💡 Missed logging on the day? You can back-add it — just type a past date when asked instead of tapping Today.</i>',
     { parse_mode: 'HTML', reply_markup: dutyMenu }
   );
 });
@@ -472,22 +491,119 @@ bot.callbackQuery('action:swap', async (ctx) => {
 });
 
 // ─── Callback: duty needs ─────────────────────────────────────────────────────
+// Starts (or resumes) a multi-measurement log session for `type` on `sessionDate`.
+async function startLogSession(ctx, type, sessionDate) {
+  ctx.session.awaitingLogDate  = null;
+  ctx.session.logSession       = { type, sessionDate, measurements: [] };
+  ctx.session.awaitingLogPhoto = true;
+  ctx.session.awaitingLogKg    = false;
+  const emoji   = type === 'cardboard' ? '📦' : '🍶';
+  const dateTag = sessionDate === today() ? ' (today)' : '';
+  await ctx.reply(
+    `${emoji} <b>Logging ${type} — ${fmtDate(sessionDate)}${dateTag}</b>\n\n📷 Send a photo of measurement #1.`,
+    { parse_mode: 'HTML' }
+  );
+}
+
+function askLogDate(type) {
+  return new InlineKeyboard().text('📅 Today', `logdate:${type}:today`).row().text('← Back', 'menu:duty');
+}
+
 bot.callbackQuery('action:log:cardboard', async (ctx) => {
   await ctx.answerCallbackQuery();
-  ctx.session.awaitingLogKg = { type: 'cardboard' };
+  ctx.session.awaitingLogDate = { type: 'cardboard' };
   await ctx.reply(
-    `📦 <b>Log Cardboard — Step 1 of 2</b>\n\nHow many kg did you collect? (e.g. <code>42.5</code>)`,
-    { parse_mode: 'HTML' }
+    `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
+    { parse_mode: 'HTML', reply_markup: askLogDate('cardboard') }
   );
 });
 
 bot.callbackQuery('action:log:plastic', async (ctx) => {
   await ctx.answerCallbackQuery();
-  ctx.session.awaitingLogKg = { type: 'plastic' };
+  ctx.session.awaitingLogDate = { type: 'plastic' };
   await ctx.reply(
-    `🍶 <b>Log Plastic — Step 1 of 2</b>\n\nHow many kg did you collect? (e.g. <code>8.2</code>)`,
-    { parse_mode: 'HTML' }
+    `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
+    { parse_mode: 'HTML', reply_markup: askLogDate('plastic') }
   );
+});
+
+bot.callbackQuery(/^logdate:(cardboard|plastic):today$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await startLogSession(ctx, ctx.match[1], today());
+});
+
+bot.callbackQuery('log:more', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const ls = ctx.session.logSession;
+  if (!ls) return;
+  ctx.session.awaitingLogPhoto = true;
+  ctx.session.awaitingLogKg    = false;
+  const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
+  await ctx.reply(`${emoji} Send a photo of measurement #${ls.measurements.length + 1}.`, { parse_mode: 'HTML' });
+});
+
+bot.callbackQuery('log:done', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const ls = ctx.session.logSession;
+  if (!ls || !ls.measurements.length) return;
+
+  const total = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
+  const lines = ls.measurements.map((m, i) => `  ${i + 1}. ${m.kg} kg`).join('\n');
+  const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
+  const text  =
+    `${emoji} <b>Confirm ${ls.type} log — ${fmtDate(ls.sessionDate)}</b>\n\n${lines}\n\n` +
+    `<b>Total: ${total} kg</b>\n\nSave this?`;
+  const kb = new InlineKeyboard().text('✅ Confirm', 'log:confirm').text('✖️ Cancel', 'log:cancel');
+
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+});
+
+bot.callbackQuery('log:cancel', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.logSession       = null;
+  ctx.session.awaitingLogPhoto = false;
+  ctx.session.awaitingLogKg    = false;
+  await ctx.editMessageText('❌ Log discarded — nothing saved.', { parse_mode: 'HTML' }).catch(() => {});
+  return sendMainMenu(ctx);
+});
+
+bot.callbackQuery('log:confirm', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const ls = ctx.session.logSession;
+  if (!ls) return;
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+
+  ctx.session.logSession       = null;
+  ctx.session.awaitingLogPhoto = false;
+  ctx.session.awaitingLogKg    = false;
+
+  const isBackdated = ls.sessionDate !== today();
+  for (const m of ls.measurements) {
+    await db.insertDataLog({
+      session_date: ls.sessionDate, type: ls.type, kg: m.kg,
+      image_url: m.imageUrl, file_id: m.fileId,
+      notes: isBackdated ? 'Backdated entry' : '',
+      logged_by: name,
+      created_at: new Date().toISOString(),
+    });
+  }
+
+  await rollUpMonthlyTotal(ls.sessionDate);
+  try { require('../routes/recycling').bustCache(); } catch (_) {}
+
+  const total  = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
+  const impact = carbon.calcCO2e(ls.type === 'cardboard' ? total : 0, ls.type === 'plastic' ? total : 0);
+  const emoji  = ls.type === 'cardboard' ? '📦' : '🍶';
+  const n      = ls.measurements.length;
+
+  await ctx.editMessageText(
+    `${emoji} <b>Logged!</b>\n\n${n} measurement${n > 1 ? 's' : ''} · <b>${total} kg</b> ${ls.type}\n` +
+    `🌍 CO₂e avoided: <b>${impact.co2eKg} kg</b>\n📅 ${fmtDate(ls.sessionDate)}${isBackdated ? ' (backdated)' : ''}`,
+    { parse_mode: 'HTML' }
+  ).catch(() => {});
+  return sendMainMenu(ctx);
 });
 
 // ─── Callback: availability ───────────────────────────────────────────────────
@@ -956,14 +1072,14 @@ bot.callbackQuery('action:mystats', async (ctx) => {
 
 // ─── Photo handler ────────────────────────────────────────────────────────────
 bot.on('message:photo', async (ctx) => {
-  // Step 2 of 2: photo received after weight was entered
-  if (ctx.session.awaitingLogPhoto) {
-    const { type, kg } = ctx.session.awaitingLogPhoto;
-    ctx.session.awaitingLogPhoto = null;
+  // Waiting for a photo for the current measurement in an active log session
+  if (ctx.session.awaitingLogPhoto && ctx.session.logSession) {
+    ctx.session.awaitingLogPhoto = false;
 
     const name = await resolveName(ctx);
     if (!name) return promptRegister(ctx);
 
+    const ls    = ctx.session.logSession;
     const photo = ctx.message.photo.at(-1);
     let imageUrl = null;
     try {
@@ -971,79 +1087,64 @@ bot.on('message:photo', async (ctx) => {
       const fileUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`;
       const resp    = await fetch(fileUrl, { signal: AbortSignal.timeout(10000) });
       const buffer  = Buffer.from(await resp.arrayBuffer());
-      const fname   = `${today()}_${name.replace(/\s+/g, '_')}_${type}_${Date.now()}.jpg`;
+      const fname   = `${ls.sessionDate}_${name.replace(/\s+/g, '_')}_${ls.type}_${Date.now()}.jpg`;
       imageUrl      = await db.uploadImage(buffer, fname, 'image/jpeg');
     } catch (err) {
       console.warn('[Bot] Image upload failed:', err.message);
     }
 
-    return saveLog({ name, type, kg, sessionDate: today(), fileId: photo.file_id, imageUrl, ctx });
+    ls.measurements.push({ kg: null, fileId: photo.file_id, imageUrl });
+    ctx.session.awaitingLogKg = true;
+    const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
+    return ctx.reply(
+      `${emoji} <b>Photo #${ls.measurements.length} saved.</b>\n\nHow many kg was this measurement? (e.g. <code>42.5</code>)`,
+      { parse_mode: 'HTML' }
+    );
   }
 
-  // Photo sent without going through the weight step — prompt them to use the menu
+  // Photo sent without going through Log Cardboard/Plastic first
   if (ctx.chat.type === 'private') {
     return ctx.reply(
-      '📷 Got a photo! To log a collection, tap <b>Log Duty Data</b> from the menu first so I can record the weight too.',
+      '📷 Got a photo! To log a collection, tap <b>Log Cardboard</b> or <b>Log Plastic</b> from the menu first so I can record the weight too.',
       { parse_mode: 'HTML' }
     );
   }
 });
 
-// ─── Shared log saver ─────────────────────────────────────────────────────────
-async function saveLog({ name, type, kg, sessionDate, fileId = null, imageUrl = null, ctx }) {
-  await db.insertDataLog({
-    session_date: sessionDate, type, kg,
-    image_url: imageUrl, file_id: fileId,
-    notes: '', logged_by: name,
-    created_at: new Date().toISOString(),
-  });
-
-  // Roll up all logs for this month → update recycling_monthly
+// ─── Monthly rollup ───────────────────────────────────────────────────────────
+// Re-sums all data_logs for the calendar month containing sessionDate and
+// upserts the total into recycling_monthly. Called after every confirmed log
+// (including back-added ones) so past months stay in sync too.
+async function rollUpMonthlyTotal(sessionDate) {
   try {
     const supa = db.getClient();
-    if (supa) {
-      const dt       = new Date(sessionDate + 'T00:00:00');
-      const monthNum = dt.getMonth() + 1;          // 1–12
-      const yearNum  = dt.getFullYear();
-      const from     = `${yearNum}-${String(monthNum).padStart(2,'0')}-01`;
-      const nextM    = monthNum === 12 ? 1 : monthNum + 1;
-      const nextY    = monthNum === 12 ? yearNum + 1 : yearNum;
-      const to       = `${nextY}-${String(nextM).padStart(2,'0')}-01`;
+    if (!supa) return;
+    const dt       = new Date(sessionDate + 'T00:00:00');
+    const monthNum = dt.getMonth() + 1;          // 1–12
+    const yearNum  = dt.getFullYear();
+    const from     = `${yearNum}-${String(monthNum).padStart(2,'0')}-01`;
+    const nextM    = monthNum === 12 ? 1 : monthNum + 1;
+    const nextY    = monthNum === 12 ? yearNum + 1 : yearNum;
+    const to       = `${nextY}-${String(nextM).padStart(2,'0')}-01`;
 
-      const { data: logs } = await supa.from('data_logs')
-        .select('type, kg')
-        .gte('session_date', from)
-        .lt('session_date', to);
+    const { data: logs } = await supa.from('data_logs')
+      .select('type, kg')
+      .gte('session_date', from)
+      .lt('session_date', to);
 
-      if (logs) {
-        const cbTotal = logs.filter(l => l.type === 'cardboard').reduce((s, l) => s + Number(l.kg), 0);
-        const plTotal = logs.filter(l => l.type === 'plastic').reduce((s, l) => s + Number(l.kg), 0);
-        await db.upsertMonthlyTotal(
-          String(monthNum), yearNum,
-          Math.round(cbTotal * 100) / 100,
-          Math.round(plTotal * 100) / 100,
-          'logged'
-        );
-      }
+    if (logs) {
+      const cbTotal = logs.filter(l => l.type === 'cardboard').reduce((s, l) => s + Number(l.kg), 0);
+      const plTotal = logs.filter(l => l.type === 'plastic').reduce((s, l) => s + Number(l.kg), 0);
+      await db.upsertMonthlyTotal(
+        String(monthNum), yearNum,
+        Math.round(cbTotal * 100) / 100,
+        Math.round(plTotal * 100) / 100,
+        'logged'
+      );
     }
   } catch (err) {
     console.warn('[Bot] Failed to update monthly totals:', err.message);
   }
-
-  // Bust the recycling route cache so the portal shows updated data immediately
-  try { require('../routes/recycling').bustCache(); } catch (_) {}
-
-  const impact    = carbon.calcCO2e(type === 'cardboard' ? kg : 0, type === 'plastic' ? kg : 0);
-  const emoji     = type === 'cardboard' ? '📦' : '🍶';
-  const photoLine = imageUrl ? '\n📷 Photo saved.' : fileId ? '\n📷 Photo received.' : '';
-
-  return ctx.reply(
-    `${emoji} <b>Logged!</b>\n\n` +
-    `${type === 'cardboard' ? '📦 Cardboard' : '🍶 Plastic'}: <b>${kg} kg</b>\n` +
-    `🌍 CO₂e avoided: <b>${impact.co2eKg} kg</b>\n` +
-    `📅 ${fmtDate(sessionDate)}${photoLine}`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
 }
 
 // ─── Text handler — multi-step flows ─────────────────────────────────────────
@@ -1104,20 +1205,42 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  // Log — step 1: weight received, now ask for photo
-  if (ctx.session.awaitingLogKg) {
-    const { type } = ctx.session.awaitingLogKg;
+  // Log — step 0: date typed instead of tapping "Today" (back-add a missed log)
+  if (ctx.session.awaitingLogDate) {
+    const { type } = ctx.session.awaitingLogDate;
+    const parsed = parseLogDate(text);
+    if (!parsed) {
+      return ctx.reply(
+        `⚠️ Try a format like <code>20 Jun</code> or <code>20 Jun 2025</code>, or tap Today above.`,
+        { parse_mode: 'HTML' }
+      );
+    }
+    if (parsed > today()) {
+      return ctx.reply(`⚠️ That's in the future — enter a past date, or tap Today.`, { parse_mode: 'HTML' });
+    }
+    return startLogSession(ctx, type, parsed);
+  }
+
+  // Log — weight for the current measurement (after its photo was received)
+  if (ctx.session.awaitingLogKg && ctx.session.logSession) {
     const kg = parseFloat(text.replace(/[^0-9.]/g, ''));
     if (isNaN(kg) || kg <= 0 || kg > 5000) {
       return ctx.reply(`⚠️ Enter a valid weight in kg, e.g. <code>42.5</code>`, { parse_mode: 'HTML' });
     }
-    ctx.session.awaitingLogKg   = null;
-    ctx.session.awaitingLogPhoto = { type, kg };
-    const emoji = type === 'cardboard' ? '📦' : '🍶';
+    ctx.session.awaitingLogKg = false;
+    const ls   = ctx.session.logSession;
+    const last = ls.measurements[ls.measurements.length - 1];
+    last.kg    = kg;
+
+    const runningTotal = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
+    const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
     return ctx.reply(
-      `${emoji} <b>Step 2 of 2 — Photo</b>\n\n` +
-      `Got it: <b>${kg} kg</b> of ${type}.\n\nNow send a photo of the haul. 📷`,
-      { parse_mode: 'HTML' }
+      `${emoji} Measurement #${ls.measurements.length}: <b>${kg} kg</b>\n` +
+      `Running total: <b>${runningTotal} kg</b>\n\n` +
+      `Is there another measurement to add for this same session? ` +
+      `<i>(e.g. a second box that was weighed separately)</i>`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard()
+          .text('➕ Add another', 'log:more').text('✅ That\'s all', 'log:done') }
     );
   }
 
