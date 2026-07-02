@@ -15,6 +15,9 @@ const {
 
 const db     = require('../utils/supabase');
 const carbon = require('../utils/carbon');
+function getReminders() {
+  try { return require('../utils/reminders'); } catch { return null; }
+}
 
 function getFallbackRoster() {
   try { return require('../data/roster.json'); } catch { return []; }
@@ -448,6 +451,7 @@ const adminMenu = new InlineKeyboard()
   .text('📇 Member Profiles', 'admin:profiles').row()
   .text('🚀 Toggle Recycling Logs Live', 'admin:togglerecycling').row()
   .text('🔄 Toggle Swap Requests Live', 'admin:toggleswaps').row()
+  .text('🔔 Test Reminders Now', 'admin:testreminders').row()
   .text('← Back', 'menu:main');
 
 function backToMain() {
@@ -1614,6 +1618,40 @@ bot.callbackQuery('admin:toggleswaps', (ctx) => handleAdminToggle(ctx, {
   onLiveMsg:   '✅ <b>Swap Requests is now LIVE</b> for all members! 🌿',
   onHiddenMsg: '🔒 <b>Swap Requests is now paused</b> for regular members (TLs still see it).',
 }));
+
+// ─── Admin: fire the daily reminder cron on demand ─────────────────────────────
+// Runs the exact same functions the 09:00 SGT cron calls (sendDutyReminders +
+// sendBirthdayReminders) right now, so Brendon can verify the whole pipeline —
+// Supabase queries, message formatting, Telegram delivery — without waiting
+// for a real duty 5 days out or a birthday to line up.
+bot.callbackQuery('admin:testreminders', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+
+  const reminders = getReminders();
+  if (!reminders) {
+    return ctx.editMessageText('⚠️ Could not load utils/reminders.js.', { reply_markup: backToAdmin() });
+  }
+
+  await ctx.editMessageText('🔔 Running duty + birthday reminders now… check your DMs and the console/Railway logs.', {
+    reply_markup: backToAdmin(),
+  });
+
+  try {
+    await reminders.sendDutyReminders(bot);
+    await reminders.sendBirthdayReminders(bot);
+    await ctx.reply(
+      `✅ <b>Test run complete.</b>\n\n` +
+      `This only sends to members who actually have a slot exactly 5 or 1 day from today, ` +
+      `or a birthday today/in 7 days — if nobody qualifies today, no DMs go out and that's expected, ` +
+      `not a failure. Check Railway logs for "[Reminders] Sent…" lines to confirm it ran.`,
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
+  } catch (err) {
+    console.error('[Bot] admin:testreminders failed:', err.message);
+    await ctx.reply(`⚠️ Reminder test failed: ${err.message}`, { reply_markup: backToAdmin() });
+  }
+});
 
 // ─── Admin: Excuse member from roster ─────────────────────────────────────────
 bot.callbackQuery('admin:excuse', async (ctx) => {

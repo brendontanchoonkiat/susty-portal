@@ -189,4 +189,4 @@ async function postSessionSummary(bot, slotDate) {
   await bot.api.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'HTML' }).catch(() => {});
 }
 
-module.exports = { startReminderCron, postSessionSummary, sendBirthdayReminders };
+module.exports = { startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders };
