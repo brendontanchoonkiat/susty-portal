@@ -41,9 +41,9 @@ bot.use(session({
     awaitingLogKg:      false,  // waiting for a weight for the current measurement (after its photo)
     awaitingAnomalyReason: false, // waiting for a reason after an unusually high total was confirmed
     pendingAnomaly:        null,  // { ls, name, total } — staged until the anomaly reason step finishes
-    awaitingSwapDate:   false,
-    pendingSwapDate:    null,
+    pendingSwapDate:    null,   // ISO date the member picked from their upcoming-duties list
     awaitingSwapReason: false,
+    pendingSwapReason:  null,   // set once reason is collected, awaiting final Confirm tap
     awaitingAcceptDate:    null,   // { swapId, requesterName, requesterDate }
     cachedName:            null,
     pendingDeeplink:       null,   // deep-link payload to handle after registration
@@ -130,10 +130,10 @@ async function isTL(ctx) {
 }
 
 // ─── Feature rollout phases ────────────────────────────────────────────────
-// Soft-launch schedule agreed with Brendon (2 Jul 2026):
-//   Phase 1 (now):        only duty-swap requests are live for regular members
+// Soft-launch schedule agreed with Brendon (2 Jul 2026, roster unlocked early 2 Jul):
+//   Phase 1 (now):        Roster viewing + duty-swap requests live for regular members
 //   Phase 2 (Sat 4 Jul):  + recycling logging ("Duty Needs")
-//   Phase 3 (Sat 11 Jul): full bot + portal launch — everything unlocked
+//   Phase 3 (Sat 11 Jul): full bot + portal launch — everything unlocked (Stats, Profile, Availability)
 // TLs (TL_NAMES) always see the full menu regardless of phase, so they can
 // test/admin ahead of each unlock. Dates are Singapore time (+08:00).
 const PHASE_2_DATE = new Date('2026-07-04T00:00:00+08:00');
@@ -312,6 +312,7 @@ async function buildMainMenu(ctx) {
   const phase = currentPhase();
   if (phase < 3 && !(await hasEarlyAccess(ctx))) {
     const kb = new InlineKeyboard()
+      .text('📋 Roster',              'menu:roster').row()
       .text('📨 Request Duty Change', 'action:swap').row()
       .text('🔄 Open Swaps',          'action:swaps');
     if (phase >= 2) kb.row().text('🪣 Duty Needs', 'menu:duty');
@@ -360,11 +361,17 @@ function swapPromptKb() {
   return new InlineKeyboard().text('✖️ Cancel', 'swap:cancel');
 }
 
+function swapConfirmKb() {
+  return new InlineKeyboard()
+    .text('✅ Confirm & Send', 'swap:confirm').row()
+    .text('✖️ Cancel',         'swap:cancel');
+}
+
 // Discards an in-progress swap request or swap-acceptance flow.
 async function cancelSwapFlow(ctx, { viaButton = false } = {}) {
-  ctx.session.awaitingSwapDate   = false;
   ctx.session.pendingSwapDate    = null;
   ctx.session.awaitingSwapReason = false;
+  ctx.session.pendingSwapReason  = null;
   ctx.session.awaitingAcceptDate = null;
 
   const kb  = new InlineKeyboard().text('← Back to Menu', 'menu:main');
@@ -379,6 +386,60 @@ async function cancelSwapFlow(ctx, { viaButton = false } = {}) {
 bot.callbackQuery('swap:cancel', async (ctx) => {
   await ctx.answerCallbackQuery();
   return cancelSwapFlow(ctx, { viaButton: true });
+});
+
+bot.callbackQuery('swap:confirm', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const name     = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+  const swapDate = ctx.session.pendingSwapDate;
+  const reason   = ctx.session.pendingSwapReason;
+  if (!swapDate || !reason) {
+    return ctx.editMessageText('⚠️ This swap request has expired — please start again.', {
+      parse_mode: 'HTML', reply_markup: backToMain(),
+    }).catch(() => ctx.reply('⚠️ This swap request has expired — please start again.', { reply_markup: backToMain() }));
+  }
+  ctx.session.pendingSwapDate   = null;
+  ctx.session.pendingSwapReason = null;
+
+  const dateLabel = fmtDateShort(swapDate);
+  let savedId = null;
+  const supa = db.getClient();
+  if (supa) {
+    const { data, error } = await supa.from('swap_requests')
+      .insert({ requester_name: name, requester_date: dateLabel, reason, status: 'open' })
+      .select().single();
+    if (error) console.error('[Bot] swap insert:', error.message);
+    savedId = data?.id;
+  }
+
+  const groupMsg =
+    `🔄 <b>Swap Request</b>\n\n` +
+    `👤 <b>${name}</b> needs a swap for <b>${dateLabel}</b>\n📝 ${reason}\n\n` +
+    `<i>Tap the button below to volunteer for this swap.</i>`;
+
+  if (GROUP_ID) {
+    try {
+      const botUsername = await BOT_USERNAME_PROMISE;
+      const swapKb = botUsername && savedId
+        ? new InlineKeyboard().url(`✋ Accept swap`, `https://t.me/${botUsername}?start=acceptswap_${savedId}`)
+        : undefined;
+      const sent = await bot.api.sendMessage(GROUP_ID, groupMsg, {
+        parse_mode: 'HTML',
+        reply_markup: swapKb,
+      });
+      if (supa && savedId) {
+        await supa.from('swap_requests')
+          .update({ telegram_message_id: sent.message_id }).eq('id', savedId);
+      }
+    } catch (err) { console.warn('[Bot] Group post failed:', err.message); }
+  }
+
+  const msg =
+    `✅ <b>Swap request posted!</b>\n\n📅 ${dateLabel}\n📝 ${reason}\n\n` +
+    `Team members will see it in the group and can accept via the bot.`;
+  return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: backToMain() })
+    .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() }));
 });
 
 function backToAdmin() {
@@ -483,7 +544,6 @@ bot.callbackQuery('menu:main', async (ctx) => {
 
 bot.callbackQuery('menu:roster', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 3)) return;
   await ctx.editMessageText(
     '📋 <b>Roster</b>\n\nView your duties, the full roster, or manage swaps.',
     { parse_mode: 'HTML', reply_markup: rosterMenu }
@@ -602,7 +662,6 @@ async function finalizeProfile(ctx) {
 // ─── Callback: roster ─────────────────────────────────────────────────────────
 bot.callbackQuery('action:myroster', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -623,7 +682,6 @@ bot.callbackQuery('action:myroster', async (ctx) => {
 
 bot.callbackQuery('action:nextduty', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -653,7 +711,6 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
 
 bot.callbackQuery('action:roster', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 3)) return;
   let slots = await db.getUpcomingRoster(4);
   if (slots === null) {
     const td    = today();
@@ -711,9 +768,43 @@ bot.callbackQuery('action:swap', async (ctx) => {
   await ctx.answerCallbackQuery();
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
-  ctx.session.awaitingSwapDate = true;
+
+  let slots = await db.getUpcomingRosterForMember(name);
+  if (slots === null) {
+    const td = today();
+    slots = getFallbackRoster().filter(s =>
+      s.date >= td && (s.team || []).some(t => t.toLowerCase() === name.toLowerCase())
+    );
+  }
+
+  if (!slots.length) {
+    return ctx.reply(
+      `📨 <b>Request a Swap</b>\n\nYou have no upcoming duties to swap. 🎉`,
+      { parse_mode: 'HTML', reply_markup: backToMain() }
+    );
+  }
+
+  const kb = new InlineKeyboard();
+  for (const s of slots.slice(0, 10)) {
+    const badge = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
+    kb.text(`${badge} ${fmtDateShort(s.date)} (${s.session})`, `swapdate:${s.date}`).row();
+  }
+  kb.text('✖️ Cancel', 'swap:cancel');
+
   await ctx.reply(
-    `📨 <b>Request a Swap</b>\n\n📅 Which date do you need to swap? (e.g. <code>28 Jun</code>)`,
+    `📨 <b>Request a Swap</b>\n\n📅 Which of your upcoming duties do you need to swap?`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
+
+bot.callbackQuery(/^swapdate:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+  ctx.session.pendingSwapDate    = ctx.match[1];
+  ctx.session.awaitingSwapReason = true;
+  await ctx.reply(
+    `📅 Date: <b>${fmtDateShort(ctx.session.pendingSwapDate)}</b>\n\n📝 What's the reason for swapping?`,
     { parse_mode: 'HTML', reply_markup: swapPromptKb() }
   );
 });
@@ -1540,7 +1631,7 @@ bot.on('message:text', async (ctx) => {
   // swap-request / swap-acceptance flow.
   if (/^(cancel|stop|restart)$/i.test(text)) {
     if (ctx.session.awaitingLogDate || ctx.session.logSession) return cancelLogFlow(ctx);
-    if (ctx.session.awaitingSwapDate || ctx.session.awaitingSwapReason || ctx.session.awaitingAcceptDate) {
+    if (ctx.session.awaitingSwapReason || ctx.session.pendingSwapReason || ctx.session.awaitingAcceptDate) {
       return cancelSwapFlow(ctx);
     }
   }
@@ -1826,68 +1917,18 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  // Swap: step 1 — collect date
-  if (ctx.session.awaitingSwapDate) {
-    const dateMatch = text.match(/^((\d{1,2})\s+([A-Za-z]+)(?:\s+(\d{4}))?)/);
-    if (!dateMatch || !isValidDayMonth(parseInt(dateMatch[2]), dateMatch[3], dateMatch[4])) {
-      return ctx.reply(
-        `⚠️ "${text}" isn't a valid date. Try a format like <code>28 Jun</code>.`,
-        { parse_mode: 'HTML', reply_markup: swapPromptKb() }
-      );
-    }
-    ctx.session.awaitingSwapDate   = false;
-    ctx.session.pendingSwapDate    = dateMatch[1].trim();
-    ctx.session.awaitingSwapReason = true;
-    return ctx.reply(
-      `📅 Date: <b>${ctx.session.pendingSwapDate}</b>\n\n📝 What's the reason for swapping?`,
-      { parse_mode: 'HTML', reply_markup: swapPromptKb() }
-    );
-  }
-
-  // Swap: step 2 — collect reason + submit
+  // Swap: collect reason, then show a confirmation card — nothing is posted
+  // until the member taps "Confirm & Send" (handled by the swap:confirm callback).
   if (ctx.session.awaitingSwapReason) {
-    const name     = await resolveName(ctx);
     const swapDate = ctx.session.pendingSwapDate;
     const reason   = text || 'No reason given';
     ctx.session.awaitingSwapReason = false;
-    ctx.session.pendingSwapDate    = null;
-
-    let savedId = null;
-    const supa = db.getClient();
-    if (supa) {
-      const { data, error } = await supa.from('swap_requests')
-        .insert({ requester_name: name, requester_date: swapDate, reason, status: 'open' })
-        .select().single();
-      if (error) console.error('[Bot] swap insert:', error.message);
-      savedId = data?.id;
-    }
-
-    const groupMsg =
-      `🔄 <b>Swap Request</b>\n\n` +
-      `👤 <b>${name}</b> needs a swap for <b>${swapDate}</b>\n📝 ${reason}\n\n` +
-      `<i>Tap the button below to volunteer for this swap.</i>`;
-
-    if (GROUP_ID) {
-      try {
-        const botUsername = await BOT_USERNAME_PROMISE;
-        const swapKb = botUsername && savedId
-          ? new InlineKeyboard().url(`✋ Accept swap`, `https://t.me/${botUsername}?start=acceptswap_${savedId}`)
-          : undefined;
-        const sent = await bot.api.sendMessage(GROUP_ID, groupMsg, {
-          parse_mode: 'HTML',
-          reply_markup: swapKb,
-        });
-        if (supa && savedId) {
-          await supa.from('swap_requests')
-            .update({ telegram_message_id: sent.message_id }).eq('id', savedId);
-        }
-      } catch (err) { console.warn('[Bot] Group post failed:', err.message); }
-    }
+    ctx.session.pendingSwapReason  = reason;
 
     return ctx.reply(
-      `✅ <b>Swap request posted!</b>\n\n📅 ${swapDate}\n📝 ${reason}\n\n` +
-      `Team members will see it in the group and can accept via the bot.`,
-      { parse_mode: 'HTML', reply_markup: backToMain() }
+      `🔄 <b>Confirm Swap Request</b>\n\n📅 ${fmtDateShort(swapDate)}\n📝 ${reason}\n\n` +
+      `<i>Team members will see this in the group and can accept it.</i>`,
+      { parse_mode: 'HTML', reply_markup: swapConfirmKb() }
     );
   }
 
