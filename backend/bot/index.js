@@ -129,6 +129,43 @@ async function isTL(ctx) {
   return name ? TL_NAMES.includes(name.toLowerCase()) : false;
 }
 
+// ─── Feature rollout phases ────────────────────────────────────────────────
+// Soft-launch schedule agreed with Brendon (2 Jul 2026):
+//   Phase 1 (now):        only duty-swap requests are live for regular members
+//   Phase 2 (Sat 4 Jul):  + recycling logging ("Duty Needs")
+//   Phase 3 (Sat 11 Jul): full bot + portal launch — everything unlocked
+// TLs (TL_NAMES) always see the full menu regardless of phase, so they can
+// test/admin ahead of each unlock. Dates are Singapore time (+08:00).
+const PHASE_2_DATE = new Date('2026-07-04T00:00:00+08:00');
+const PHASE_3_DATE = new Date('2026-07-11T00:00:00+08:00');
+function currentPhase() {
+  const now = new Date();
+  if (now >= PHASE_3_DATE) return 3;
+  if (now >= PHASE_2_DATE) return 2;
+  return 1;
+}
+// Non-TL members who also get the full menu early (testers), on top of TLs.
+const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
+  .split(',').map(n => n.trim().toLowerCase());
+async function hasEarlyAccess(ctx) {
+  if (await isTL(ctx)) return true;
+  const name = await resolveName(ctx);
+  return name ? EARLY_ACCESS_NAMES.includes(name.toLowerCase()) : false;
+}
+// Replies with a "not live yet" message and returns true if this feature is
+// still gated for this user; call at the top of a gated handler and `return`
+// if it resolves true. TLs and EARLY_ACCESS_NAMES bypass every gate.
+async function blockedByPhase(ctx, minPhase) {
+  if (currentPhase() >= minPhase) return false;
+  if (await hasEarlyAccess(ctx)) return false;
+  const unlockDate = minPhase >= 3 ? '11 Jul' : '4 Jul';
+  await ctx.reply(
+    `🚧 <b>Coming soon!</b> This feature unlocks on <b>${unlockDate}</b>. Stay tuned 🌿`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  );
+  return true;
+}
+
 function fmtSlot(slot) {
   const team  = (slot.team || []).join(', ') || '—';
   const sess  = slot.session || '';
@@ -265,6 +302,15 @@ async function buildMainMenu(ctx) {
       .select('id').eq('member_name', name).eq('month', nextMonth).limit(1);
     if (data?.length) showAvail = false;
   }
+  const phase = currentPhase();
+  if (phase < 3 && !(await hasEarlyAccess(ctx))) {
+    const kb = new InlineKeyboard()
+      .text('📨 Request Duty Change', 'action:swap').row()
+      .text('🔄 Open Swaps',          'action:swaps');
+    if (phase >= 2) kb.row().text('🪣 Duty Needs', 'menu:duty');
+    return kb;
+  }
+
   const kb = new InlineKeyboard()
     .text('📋 Roster',         'menu:roster').row()
     .text('🪣 Duty Needs',     'menu:duty').row()
@@ -430,6 +476,7 @@ bot.callbackQuery('menu:main', async (ctx) => {
 
 bot.callbackQuery('menu:roster', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   await ctx.editMessageText(
     '📋 <b>Roster</b>\n\nView your duties, the full roster, or manage swaps.',
     { parse_mode: 'HTML', reply_markup: rosterMenu }
@@ -438,6 +485,7 @@ bot.callbackQuery('menu:roster', async (ctx) => {
 
 bot.callbackQuery('menu:duty', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 2)) return;
   await ctx.editMessageText(
     '🪣 <b>Duty Needs</b>\n\nLog your recycling — photo + weight for each measurement.\n\n' +
     '<i>💡 Missed logging on the day? You can back-add it — just type a past date when asked instead of tapping Today.</i>',
@@ -447,6 +495,7 @@ bot.callbackQuery('menu:duty', async (ctx) => {
 
 bot.callbackQuery('menu:stats', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   await ctx.editMessageText(
     '📊 <b>Stats & Impact</b>\n\nSee how much W2R has recycled and the impact made.',
     { parse_mode: 'HTML', reply_markup: statsMenu }
@@ -478,6 +527,7 @@ async function startProfileCollection(ctx, name, isNew) {
 
 bot.callbackQuery('menu:profile', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
   return startProfileCollection(ctx, name, false);
@@ -545,6 +595,7 @@ async function finalizeProfile(ctx) {
 // ─── Callback: roster ─────────────────────────────────────────────────────────
 bot.callbackQuery('action:myroster', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -565,6 +616,7 @@ bot.callbackQuery('action:myroster', async (ctx) => {
 
 bot.callbackQuery('action:nextduty', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -594,6 +646,7 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
 
 bot.callbackQuery('action:roster', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   let slots = await db.getUpcomingRoster(4);
   if (slots === null) {
     const td    = today();
@@ -704,6 +757,7 @@ function askLogDate(type) {
 
 bot.callbackQuery('action:log:cardboard', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 2)) return;
   ctx.session.awaitingLogDate = { type: 'cardboard' };
   await ctx.reply(
     `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
@@ -713,6 +767,7 @@ bot.callbackQuery('action:log:cardboard', async (ctx) => {
 
 bot.callbackQuery('action:log:plastic', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 2)) return;
   ctx.session.awaitingLogDate = { type: 'plastic' };
   await ctx.reply(
     `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
@@ -873,6 +928,7 @@ bot.callbackQuery('log:anomalyskip', async (ctx) => {
 // ─── Callback: availability ───────────────────────────────────────────────────
 bot.callbackQuery('menu:avail', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
