@@ -2,7 +2,7 @@
 // ─── Susty Ministry Telegram Bot ─────────────────────────────────────────────
 // Button-driven UX. Three main menus:
 //   📋 Roster       → My Roster, Next Duty, Full Roster, Swaps, Request Swap
-//   🪣 Duty Needs   → Log Cardboard, Log Plastic (+ photo + caption)
+//   🪣 Recycling Logs → Log Cardboard, Log Plastic (+ photo + caption)
 //   📊 Stats        → Team Stats, Year on Year, My Stats
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -132,17 +132,24 @@ async function isTL(ctx) {
 // ─── Feature rollout phases ────────────────────────────────────────────────
 // Soft-launch schedule agreed with Brendon (2 Jul 2026, roster unlocked early 2 Jul):
 //   Phase 1 (now):        Roster viewing + duty-swap requests live for regular members
-//   Phase 2 (Sat 4 Jul):  + recycling logging ("Duty Needs")
+//   Recycling Logs:       manually toggled live by Brendon when he's ready — NOT
+//                          date-driven. Planned for around Sat 4 Jul, but only goes
+//                          live once RECYCLING_LOGS_LIVE=true is set on Railway (no
+//                          redeploy needed). See recyclingLogsLive() below.
 //   Phase 3 (Sat 11 Jul): full bot + portal launch — everything unlocked (Stats, Profile, Availability)
-// TLs (TL_NAMES) always see the full menu regardless of phase, so they can
+// TLs (TL_NAMES) always see the full menu regardless of phase/toggle, so they can
 // test/admin ahead of each unlock. Dates are Singapore time (+08:00).
-const PHASE_2_DATE = new Date('2026-07-04T00:00:00+08:00');
 const PHASE_3_DATE = new Date('2026-07-11T00:00:00+08:00');
 function currentPhase() {
   const now = new Date();
   if (now >= PHASE_3_DATE) return 3;
-  if (now >= PHASE_2_DATE) return 2;
   return 1;
+}
+// Recycling Logs (duty logging) is gated on a manual switch, not a date — flip
+// RECYCLING_LOGS_LIVE=true on Railway whenever Brendon is actually ready to
+// launch it. Full launch (phase 3) supersedes it automatically either way.
+function recyclingLogsLive() {
+  return process.env.RECYCLING_LOGS_LIVE === 'true' || currentPhase() >= 3;
 }
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
@@ -165,9 +172,19 @@ async function hasEarlyAccess(ctx) {
 async function blockedByPhase(ctx, minPhase) {
   if (currentPhase() >= minPhase) return false;
   if (await hasEarlyAccess(ctx)) return false;
-  const unlockDate = minPhase >= 3 ? '11 Jul' : '4 Jul';
   await ctx.reply(
-    `🚧 <b>Coming soon!</b> This feature unlocks on <b>${unlockDate}</b>. Stay tuned 🌿`,
+    `🚧 <b>Coming soon!</b> This feature unlocks on <b>11 Jul</b>. Stay tuned 🌿`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  );
+  return true;
+}
+// Same idea as blockedByPhase, but for Recycling Logs specifically — gated on
+// the manual RECYCLING_LOGS_LIVE switch rather than a fixed date.
+async function blockedByRecyclingGate(ctx) {
+  if (recyclingLogsLive()) return false;
+  if (await hasEarlyAccess(ctx)) return false;
+  await ctx.reply(
+    `🚧 <b>Coming soon!</b> Recycling Logs isn't live yet. Stay tuned 🌿`,
     { parse_mode: 'HTML', reply_markup: backToMain() }
   );
   return true;
@@ -311,17 +328,17 @@ async function buildMainMenu(ctx) {
   }
   const phase = currentPhase();
   if (phase < 3 && !(await hasEarlyAccess(ctx))) {
+    // Roster submenu already has "Open Swaps" / "Request Swap" — don't
+    // duplicate those two at the top level too.
     const kb = new InlineKeyboard()
-      .text('📋 Roster',              'menu:roster').row()
-      .text('📨 Request Duty Change', 'action:swap').row()
-      .text('🔄 Open Swaps',          'action:swaps');
-    if (phase >= 2) kb.row().text('🪣 Duty Needs', 'menu:duty');
+      .text('📋 Roster', 'menu:roster');
+    if (recyclingLogsLive()) kb.row().text('🪣 Recycling Logs', 'menu:duty');
     return kb;
   }
 
   const kb = new InlineKeyboard()
     .text('📋 Roster',         'menu:roster').row()
-    .text('🪣 Duty Needs',     'menu:duty').row()
+    .text('🪣 Recycling Logs', 'menu:duty').row()
     .text('📊 Stats & Impact', 'menu:stats').row()
     .text('✏️ My Profile',     'menu:profile');
   if (showAvail) kb.row().text('📅 My Availability', 'menu:avail');
@@ -552,9 +569,9 @@ bot.callbackQuery('menu:roster', async (ctx) => {
 
 bot.callbackQuery('menu:duty', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 2)) return;
+  if (await blockedByRecyclingGate(ctx)) return;
   await ctx.editMessageText(
-    '🪣 <b>Duty Needs</b>\n\nLog your recycling — photo + weight for each measurement.\n\n' +
+    '🪣 <b>Recycling Logs</b>\n\nLog your recycling — photo + weight for each measurement.\n\n' +
     '<i>💡 Missed logging on the day? You can back-add it — just type a past date when asked instead of tapping Today.</i>',
     { parse_mode: 'HTML', reply_markup: dutyMenu }
   );
@@ -855,7 +872,7 @@ function askLogDate(type) {
 
 bot.callbackQuery('action:log:cardboard', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 2)) return;
+  if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'cardboard' };
   await ctx.reply(
     `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
@@ -865,7 +882,7 @@ bot.callbackQuery('action:log:cardboard', async (ctx) => {
 
 bot.callbackQuery('action:log:plastic', async (ctx) => {
   await ctx.answerCallbackQuery();
-  if (await blockedByPhase(ctx, 2)) return;
+  if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'plastic' };
   await ctx.reply(
     `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
