@@ -145,6 +145,16 @@ async function getAllRegisteredMembers() {
   return data || [];
 }
 
+// Names (lowercased) of members marked duty_exempt in member_roster — active
+// team members who are never rostered for physical duty (e.g. on maternity
+// leave but still on the team). Used to skip them in availability broadcasts.
+async function getDutyExemptNames() {
+  const db = getClient();
+  if (!db) return [];
+  const { data } = await db.from('member_roster').select('name').eq('duty_exempt', true);
+  return (data || []).map(r => r.name.toLowerCase());
+}
+
 async function saveAvailability(month, memberName, datesAvail, datesUnavail, notes = '') {
   const db = getClient();
   if (!db) return null;
@@ -289,7 +299,7 @@ module.exports = {
   insertDataLog, getDataLogsForDate,
   getRecyclingStats, upsertMonthlyTotal,
   uploadImage,
-  getAllRegisteredMembers,
+  getAllRegisteredMembers, getDutyExemptNames,
   saveAvailability, getAvailabilitySummary,
   getMemberRoster, updateMemberRosterStats,
 };

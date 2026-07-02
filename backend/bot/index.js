@@ -1124,8 +1124,10 @@ bot.command('collect', async (ctx) => {
     generatedFallback = true;
   }
 
-  // Get all registered members
-  const members = await db.getAllRegisteredMembers();
+  // Get all registered members, minus anyone duty-exempt (active on the team
+  // but never rostered — no point asking them for physical-duty unavailability)
+  const exemptNames = new Set(await db.getDutyExemptNames());
+  const members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
   if (!members.length) return ctx.reply('⚠️ No registered members yet.');
 
   let sent = 0;
@@ -1284,7 +1286,8 @@ bot.callbackQuery('admin:profiles', async (ctx) => {
     const cg        = m.cg || '—';
     const ministry  = m.other_ministries || '—';
     const dob       = m.date_of_birth ? fmtDateShort(m.date_of_birth) : '—';
-    return `${i + 1}. <b>${m.name}</b> — ${service} · CG: ${cg} · Ministries: ${ministry} · 🎂 ${dob}`;
+    const exemptTag = m.duty_exempt ? ' 🚫<i>not on duty</i>' : '';
+    return `${i + 1}. <b>${m.name}</b>${exemptTag} — ${service} · CG: ${cg} · Ministries: ${ministry} · 🎂 ${dob}`;
   }).join('\n');
   await ctx.editMessageText(
     `📇 <b>Member Profiles (${roster.length})</b>\n\n${lines}\n\n` +
@@ -1663,7 +1666,8 @@ bot.on('message:text', async (ctx) => {
       generatedFallback = true;
     }
 
-    const members = await db.getAllRegisteredMembers();
+    const exemptNames = new Set(await db.getDutyExemptNames());
+    const members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
     if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
 
     let sent = 0;
