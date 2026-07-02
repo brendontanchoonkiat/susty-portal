@@ -145,30 +145,49 @@ function currentPhase() {
   if (now >= PHASE_3_DATE) return 3;
   return 1;
 }
-// Recycling Logs (duty logging) is gated on a manual switch, not a date.
-// Two ways to flip it live — either works:
-//   1. Set RECYCLING_LOGS_LIVE=true on Railway (env var, no redeploy).
-//   2. /admin → "🚀 Toggle Recycling Logs Live" in the bot itself — this
-//      writes to the `bot_settings` table in Supabase so it persists across
-//      restarts/redeploys (a plain in-memory flag would reset on every
-//      Railway restart, which is why this isn't just a JS variable).
-// Full launch (phase 3, 11 Jul) supersedes both automatically.
-// Cached for 30s so every menu render doesn't hit Supabase.
-let _recyclingLogsLiveCache = { value: null, fetchedAt: 0 };
-async function recyclingLogsLive() {
-  if (process.env.RECYCLING_LOGS_LIVE === 'true') return true;
+// ─── Generic bot_settings boolean toggles ─────────────────────────────────
+// Backs manual feature switches that need to (a) survive Railway restarts —
+// a plain in-memory flag resets on every redeploy — and (b) be flippable by
+// Brendon from inside the bot itself via /admin, not just Railway env vars.
+// Each setting also accepts an env-var hard override, and phase 3 (11 Jul
+// full launch) always forces everything on regardless of these toggles.
+// Cached 30s per key so menu renders don't hit Supabase every time.
+const _settingsCache = {};
+async function getBoolSetting(key, envOverrideVar) {
+  if (envOverrideVar && process.env[envOverrideVar] === 'true') return true;
   if (currentPhase() >= 3) return true;
 
   const now = Date.now();
-  if (_recyclingLogsLiveCache.value !== null && now - _recyclingLogsLiveCache.fetchedAt < 30000) {
-    return _recyclingLogsLiveCache.value;
-  }
+  const cached = _settingsCache[key];
+  if (cached && now - cached.fetchedAt < 30000) return cached.value;
+
   const supa = db.getClient();
   if (!supa) return false;
-  const { data } = await supa.from('bot_settings').select('value').eq('key', 'recycling_logs_live').maybeSingle();
-  const live = data?.value === 'true';
-  _recyclingLogsLiveCache = { value: live, fetchedAt: now };
-  return live;
+  const { data } = await supa.from('bot_settings').select('value').eq('key', key).maybeSingle();
+  const value = data?.value === 'true';
+  _settingsCache[key] = { value, fetchedAt: now };
+  return value;
+}
+async function setBoolSetting(key, value) {
+  const supa = db.getClient();
+  if (!supa) return { error: new Error('Supabase not configured') };
+  const { error } = await supa.from('bot_settings')
+    .upsert({ key, value: String(value), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (!error) _settingsCache[key] = { value, fetchedAt: Date.now() };
+  return { error };
+}
+
+// Recycling Logs (duty logging) — toggle via RECYCLING_LOGS_LIVE env var or
+// /admin → "🚀 Toggle Recycling Logs Live".
+function recyclingLogsLive() {
+  return getBoolSetting('recycling_logs_live', 'RECYCLING_LOGS_LIVE');
+}
+// Duty-swap requests/browsing — paused 3 Jul 2026 while July's roster gets
+// locked in (pending Kai Jie + Alan confirmations); Brendon will re-enable
+// once Aug/Sep rosters go out. Toggle via SWAP_REQUESTS_LIVE env var or
+// /admin → "🔄 Toggle Swap Requests Live".
+function swapRequestsLive() {
+  return getBoolSetting('swap_requests_live', 'SWAP_REQUESTS_LIVE');
 }
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
@@ -208,6 +227,18 @@ async function blockedByRecyclingGate(ctx) {
   );
   return true;
 }
+// Swap requests/browsing/accepting — paused while the current month's roster
+// gets locked in. TLs bypass (they still manage swaps already in flight).
+async function blockedBySwapGate(ctx) {
+  if (await swapRequestsLive()) return false;
+  if (await isTL(ctx)) return false;
+  await ctx.reply(
+    `🔒 <b>Duty swaps are paused for now</b> while this month's roster gets finalized. ` +
+    `They'll reopen once the next roster goes out — stay tuned 🌿`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  );
+  return true;
+}
 
 function fmtSlot(slot) {
   const team  = (slot.team || []).join(', ') || '—';
@@ -230,6 +261,15 @@ function fmtDateShort(d) {
 }
 
 function today() { return new Date().toISOString().split('T')[0]; }
+
+// Last calendar day of the current month, ISO format. Regular members can
+// only see roster info up to this date; TLs can see beyond it (e.g. next
+// month's roster, while it's still being finalized/unannounced).
+function endOfCurrentMonth() {
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  return end.toISOString().split('T')[0];
+}
 
 // Validates a day/month(/year) combo is a real calendar date — rejects things
 // like "36 July" or "31 June" that a loose regex would otherwise accept.
@@ -364,11 +404,19 @@ async function buildMainMenu(ctx) {
   return kb;
 }
 
-const rosterMenu = new InlineKeyboard()
-  .text('🗓 My Roster',     'action:myroster').text('⏭ Next Duty',    'action:nextduty').row()
-  .text('📋 Full Roster',   'action:roster').row()
-  .text('🔄 Open Swaps',    'action:swaps').text('📨 Request Swap', 'action:swap').row()
-  .text('← Back',           'menu:main');
+// Swap buttons are hidden entirely (not just gated on click) while swaps are
+// paused — see swapRequestsLive(). TLs still see them, to manage any swaps
+// still in flight from before the pause.
+async function buildRosterMenu(ctx) {
+  const kb = new InlineKeyboard()
+    .text('🗓 My Roster',   'action:myroster').text('⏭ Next Duty', 'action:nextduty').row()
+    .text('📋 Full Roster', 'action:roster').row();
+  if ((await swapRequestsLive()) || (await isTL(ctx))) {
+    kb.text('🔄 Open Swaps', 'action:swaps').text('📨 Request Swap', 'action:swap').row();
+  }
+  kb.text('← Back', 'menu:main');
+  return kb;
+}
 
 const dutyMenu = new InlineKeyboard()
   .text('📦 Log Cardboard', 'action:log:cardboard').row()
@@ -388,6 +436,7 @@ const adminMenu = new InlineKeyboard()
   .text('👥 View Registered Members', 'admin:members').row()
   .text('📇 Member Profiles', 'admin:profiles').row()
   .text('🚀 Toggle Recycling Logs Live', 'admin:togglerecycling').row()
+  .text('🔄 Toggle Swap Requests Live', 'admin:toggleswaps').row()
   .text('← Back', 'menu:main');
 
 function backToMain() {
@@ -498,6 +547,7 @@ bot.command('start', async (ctx) => {
 
   // Deep-link: /start acceptswap_123 — jump straight to acceptance flow
   if (payload.startsWith('acceptswap_')) {
+    if (await blockedBySwapGate(ctx)) return;
     const swapId = parseInt(payload.replace('acceptswap_', ''));
     if (existing) {
       if (ctx.session) ctx.session.cachedName = existing.name;
@@ -583,7 +633,7 @@ bot.callbackQuery('menu:roster', async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.editMessageText(
     '📋 <b>Roster</b>\n\nView your duties, the full roster, or manage swaps.',
-    { parse_mode: 'HTML', reply_markup: rosterMenu }
+    { parse_mode: 'HTML', reply_markup: await buildRosterMenu(ctx) }
   );
 });
 
@@ -710,9 +760,18 @@ bot.callbackQuery('action:myroster', async (ctx) => {
     );
   }
 
+  let hiddenLater = false;
+  if (!(await isTL(ctx))) {
+    const cutoff = endOfCurrentMonth();
+    const before = slots.length;
+    slots = slots.filter(s => s.date <= cutoff);
+    hiddenLater = slots.length < before;
+  }
+
+  const hint = hiddenLater ? '\n\n<i>Next month’s roster isn’t published yet.</i>' : '';
   const text = slots.length
-    ? `🗓 <b>${name}'s Upcoming Duties</b>\n\n${slots.slice(0, 8).map(fmtSlot).join('\n\n')}`
-    : `Hi <b>${name}</b>! No upcoming duties scheduled. 🎉`;
+    ? `🗓 <b>${name}'s Upcoming Duties</b>\n\n${slots.slice(0, 8).map(fmtSlot).join('\n\n')}${hint}`
+    : `Hi <b>${name}</b>! No upcoming duties scheduled this month. 🎉${hint}`;
 
   await ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() });
 });
@@ -730,8 +789,13 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
     );
   }
 
+  if (!(await isTL(ctx))) {
+    const cutoff = endOfCurrentMonth();
+    slots = slots.filter(s => s.date <= cutoff);
+  }
+
   if (!slots.length) {
-    return ctx.reply(`Hi <b>${name}</b>! No upcoming duties. 🎉`, {
+    return ctx.reply(`Hi <b>${name}</b>! No upcoming duties this month. 🎉`, {
       parse_mode: 'HTML', reply_markup: backToMain(),
     });
   }
@@ -756,14 +820,24 @@ bot.callbackQuery('action:roster', async (ctx) => {
       s.date >= td && s.date <= limit.toISOString().split('T')[0]
     );
   }
+
+  const admin = await isTL(ctx);
+  let heading = 'Next 4 Weeks';
+  if (!admin) {
+    const cutoff = endOfCurrentMonth();
+    slots   = slots.filter(s => s.date <= cutoff);
+    heading = 'This Month';
+  }
+
   const text = slots.length
-    ? `📋 <b>W2R Roster — Next 4 Weeks</b>\n\n${slots.map(fmtSlot).join('\n\n')}`
-    : 'No roster slots in the next 4 weeks.';
+    ? `📋 <b>W2R Roster — ${heading}</b>\n\n${slots.map(fmtSlot).join('\n\n')}`
+    : `No roster slots for ${admin ? 'the next 4 weeks' : 'the rest of this month'}.`;
   await ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() });
 });
 
 bot.callbackQuery('action:swaps', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedBySwapGate(ctx)) return;
   const supa = db.getClient();
   let swaps  = [];
 
@@ -796,6 +870,7 @@ bot.callbackQuery('action:swaps', async (ctx) => {
 
 bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedBySwapGate(ctx)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
   return handleAcceptSwap(ctx, parseInt(ctx.match[1]), name);
@@ -803,6 +878,7 @@ bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery('action:swap', async (ctx) => {
   await ctx.answerCallbackQuery();
+  if (await blockedBySwapGate(ctx)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -1487,36 +1563,46 @@ bot.callbackQuery('admin:profiles', async (ctx) => {
   );
 });
 
-// ─── Admin: toggle Recycling Logs live for everyone ───────────────────────────
-bot.callbackQuery('admin:togglerecycling', async (ctx) => {
+// ─── Admin: generic feature-toggle handler ─────────────────────────────────
+// Shared by every bot_settings on/off toggle in /admin.
+async function handleAdminToggle(ctx, { key, envVar, label, onLiveMsg, onHiddenMsg }) {
   await ctx.answerCallbackQuery();
   if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
 
-  const supa = db.getClient();
-  if (!supa) return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
-
-  const wasLive  = await recyclingLogsLive();
+  const wasLive   = await getBoolSetting(key, envVar);
   const goingLive = !wasLive;
 
-  const { error } = await supa.from('bot_settings')
-    .upsert({ key: 'recycling_logs_live', value: String(goingLive), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  const { error } = await setBoolSetting(key, goingLive);
   if (error) {
-    console.error('[Bot] admin:togglerecycling upsert failed:', error.message);
+    console.error(`[Bot] toggle ${key} failed:`, error.message);
     return ctx.editMessageText(`⚠️ Couldn't save: ${error.message}`, { reply_markup: backToAdmin() });
   }
-  _recyclingLogsLiveCache = { value: goingLive, fetchedAt: Date.now() }; // bust cache immediately
 
-  const note = process.env.RECYCLING_LOGS_LIVE === 'true'
-    ? '\n\n<i>Note: RECYCLING_LOGS_LIVE=true is also set on Railway, which forces it on regardless of this toggle — remove that env var if you want this button to actually control it.</i>'
+  const note = process.env[envVar] === 'true'
+    ? `\n\n<i>Note: ${envVar}=true is also set on Railway, which forces ${label} on regardless of this toggle — remove that env var if you want this button to actually control it.</i>`
     : '';
 
   await ctx.editMessageText(
-    goingLive
-      ? `✅ <b>Recycling Logs is now LIVE</b> for all members! 🌿${note}`
-      : `🔒 <b>Recycling Logs is now hidden</b> again for regular members.${note}`,
+    (goingLive ? onLiveMsg : onHiddenMsg) + note,
     { parse_mode: 'HTML', reply_markup: backToAdmin() }
   );
-});
+}
+
+bot.callbackQuery('admin:togglerecycling', (ctx) => handleAdminToggle(ctx, {
+  key: 'recycling_logs_live',
+  envVar: 'RECYCLING_LOGS_LIVE',
+  label: 'Recycling Logs',
+  onLiveMsg:   '✅ <b>Recycling Logs is now LIVE</b> for all members! 🌿',
+  onHiddenMsg: '🔒 <b>Recycling Logs is now hidden</b> again for regular members.',
+}));
+
+bot.callbackQuery('admin:toggleswaps', (ctx) => handleAdminToggle(ctx, {
+  key: 'swap_requests_live',
+  envVar: 'SWAP_REQUESTS_LIVE',
+  label: 'Swap Requests',
+  onLiveMsg:   '✅ <b>Swap Requests is now LIVE</b> for all members! 🌿',
+  onHiddenMsg: '🔒 <b>Swap Requests is now paused</b> for regular members (TLs still see it).',
+}));
 
 // ─── Admin: Excuse member from roster ─────────────────────────────────────────
 bot.callbackQuery('admin:excuse', async (ctx) => {
