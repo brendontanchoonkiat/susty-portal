@@ -204,6 +204,17 @@ async function hasEarlyAccess(ctx) {
   if (await isTL(ctx)) return true;
   return name ? EARLY_ACCESS_NAMES.includes(name.toLowerCase()) : false;
 }
+// Use this (not raw isTL) for anything that decides what a TL gets to SEE
+// (extra menu items, unrestricted date ranges, swap visibility, etc) — it
+// respects TEST_AS_REGULAR_NAMES so Brendon's dogfooding override actually
+// hides admin-only UI too. Raw isTL is still correct for gating admin
+// ACTIONS (e.g. the /admin toggles) — he should still be able to operate
+// those while dogfooding the regular-member view.
+async function isTLForGating(ctx) {
+  const name = await resolveName(ctx);
+  if (name && TEST_AS_REGULAR_NAMES.includes(name.toLowerCase())) return false;
+  return isTL(ctx);
+}
 // Replies with a "not live yet" message and returns true if this feature is
 // still gated for this user; call at the top of a gated handler and `return`
 // if it resolves true. TLs and EARLY_ACCESS_NAMES bypass every gate.
@@ -231,7 +242,7 @@ async function blockedByRecyclingGate(ctx) {
 // gets locked in. TLs bypass (they still manage swaps already in flight).
 async function blockedBySwapGate(ctx) {
   if (await swapRequestsLive()) return false;
-  if (await isTL(ctx)) return false;
+  if (await isTLForGating(ctx)) return false;
   await ctx.reply(
     `🔒 <b>Duty swaps are paused for now</b> while this month's roster gets finalized. ` +
     `They'll reopen once the next roster goes out — stay tuned 🌿`,
@@ -411,7 +422,7 @@ async function buildRosterMenu(ctx) {
   const kb = new InlineKeyboard()
     .text('🗓 My Roster',   'action:myroster').text('⏭ Next Duty', 'action:nextduty').row()
     .text('📋 Full Roster', 'action:roster').row();
-  if ((await swapRequestsLive()) || (await isTL(ctx))) {
+  if ((await swapRequestsLive()) || (await isTLForGating(ctx))) {
     kb.text('🔄 Open Swaps', 'action:swaps').text('📨 Request Swap', 'action:swap').row();
   }
   kb.text('← Back', 'menu:main');
@@ -761,7 +772,7 @@ bot.callbackQuery('action:myroster', async (ctx) => {
   }
 
   let hiddenLater = false;
-  if (!(await isTL(ctx))) {
+  if (!(await isTLForGating(ctx))) {
     const cutoff = endOfCurrentMonth();
     const before = slots.length;
     slots = slots.filter(s => s.date <= cutoff);
@@ -789,7 +800,7 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
     );
   }
 
-  if (!(await isTL(ctx))) {
+  if (!(await isTLForGating(ctx))) {
     const cutoff = endOfCurrentMonth();
     slots = slots.filter(s => s.date <= cutoff);
   }
@@ -821,7 +832,7 @@ bot.callbackQuery('action:roster', async (ctx) => {
     );
   }
 
-  const admin = await isTL(ctx);
+  const admin = await isTLForGating(ctx);
   let heading = 'Next 4 Weeks';
   if (!admin) {
     const cutoff = endOfCurrentMonth();
