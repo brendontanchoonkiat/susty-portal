@@ -145,11 +145,30 @@ function currentPhase() {
   if (now >= PHASE_3_DATE) return 3;
   return 1;
 }
-// Recycling Logs (duty logging) is gated on a manual switch, not a date — flip
-// RECYCLING_LOGS_LIVE=true on Railway whenever Brendon is actually ready to
-// launch it. Full launch (phase 3) supersedes it automatically either way.
-function recyclingLogsLive() {
-  return process.env.RECYCLING_LOGS_LIVE === 'true' || currentPhase() >= 3;
+// Recycling Logs (duty logging) is gated on a manual switch, not a date.
+// Two ways to flip it live — either works:
+//   1. Set RECYCLING_LOGS_LIVE=true on Railway (env var, no redeploy).
+//   2. /admin → "🚀 Toggle Recycling Logs Live" in the bot itself — this
+//      writes to the `bot_settings` table in Supabase so it persists across
+//      restarts/redeploys (a plain in-memory flag would reset on every
+//      Railway restart, which is why this isn't just a JS variable).
+// Full launch (phase 3, 11 Jul) supersedes both automatically.
+// Cached for 30s so every menu render doesn't hit Supabase.
+let _recyclingLogsLiveCache = { value: null, fetchedAt: 0 };
+async function recyclingLogsLive() {
+  if (process.env.RECYCLING_LOGS_LIVE === 'true') return true;
+  if (currentPhase() >= 3) return true;
+
+  const now = Date.now();
+  if (_recyclingLogsLiveCache.value !== null && now - _recyclingLogsLiveCache.fetchedAt < 30000) {
+    return _recyclingLogsLiveCache.value;
+  }
+  const supa = db.getClient();
+  if (!supa) return false;
+  const { data } = await supa.from('bot_settings').select('value').eq('key', 'recycling_logs_live').maybeSingle();
+  const live = data?.value === 'true';
+  _recyclingLogsLiveCache = { value: live, fetchedAt: now };
+  return live;
 }
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
@@ -181,7 +200,7 @@ async function blockedByPhase(ctx, minPhase) {
 // Same idea as blockedByPhase, but for Recycling Logs specifically — gated on
 // the manual RECYCLING_LOGS_LIVE switch rather than a fixed date.
 async function blockedByRecyclingGate(ctx) {
-  if (recyclingLogsLive()) return false;
+  if (await recyclingLogsLive()) return false;
   if (await hasEarlyAccess(ctx)) return false;
   await ctx.reply(
     `🚧 <b>Coming soon!</b> Recycling Logs isn't live yet. Stay tuned 🌿`,
@@ -332,7 +351,7 @@ async function buildMainMenu(ctx) {
     // duplicate those two at the top level too.
     const kb = new InlineKeyboard()
       .text('📋 Roster', 'menu:roster');
-    if (recyclingLogsLive()) kb.row().text('🪣 Recycling Logs', 'menu:duty');
+    if (await recyclingLogsLive()) kb.row().text('🪣 Recycling Logs', 'menu:duty');
     return kb;
   }
 
@@ -368,6 +387,7 @@ const adminMenu = new InlineKeyboard()
   .text('🤰 Excuse Member from Roster', 'admin:excuse').row()
   .text('👥 View Registered Members', 'admin:members').row()
   .text('📇 Member Profiles', 'admin:profiles').row()
+  .text('🚀 Toggle Recycling Logs Live', 'admin:togglerecycling').row()
   .text('← Back', 'menu:main');
 
 function backToMain() {
@@ -1463,6 +1483,37 @@ bot.callbackQuery('admin:profiles', async (ctx) => {
   await ctx.editMessageText(
     `📇 <b>Member Profiles (${roster.length})</b>\n\n${lines}\n\n` +
     `<i>"—" means they haven't filled in their profile yet (bot menu → ✏️ My Profile).</i>`,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
+
+// ─── Admin: toggle Recycling Logs live for everyone ───────────────────────────
+bot.callbackQuery('admin:togglerecycling', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+
+  const supa = db.getClient();
+  if (!supa) return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
+
+  const wasLive  = await recyclingLogsLive();
+  const goingLive = !wasLive;
+
+  const { error } = await supa.from('bot_settings')
+    .upsert({ key: 'recycling_logs_live', value: String(goingLive), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  if (error) {
+    console.error('[Bot] admin:togglerecycling upsert failed:', error.message);
+    return ctx.editMessageText(`⚠️ Couldn't save: ${error.message}`, { reply_markup: backToAdmin() });
+  }
+  _recyclingLogsLiveCache = { value: goingLive, fetchedAt: Date.now() }; // bust cache immediately
+
+  const note = process.env.RECYCLING_LOGS_LIVE === 'true'
+    ? '\n\n<i>Note: RECYCLING_LOGS_LIVE=true is also set on Railway, which forces it on regardless of this toggle — remove that env var if you want this button to actually control it.</i>'
+    : '';
+
+  await ctx.editMessageText(
+    goingLive
+      ? `✅ <b>Recycling Logs is now LIVE</b> for all members! 🌿${note}`
+      : `🔒 <b>Recycling Logs is now hidden</b> again for regular members.${note}`,
     { parse_mode: 'HTML', reply_markup: backToAdmin() }
   );
 });
