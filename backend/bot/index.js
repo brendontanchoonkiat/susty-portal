@@ -147,9 +147,16 @@ function currentPhase() {
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
   .split(',').map(n => n.trim().toLowerCase());
+// Names in this list are forced into the gated regular-member experience even
+// if they're a TL or in EARLY_ACCESS_NAMES — for dogfooding the rollout as a
+// normal user without losing TL status elsewhere. Set on Railway (no redeploy
+// needed) e.g. TEST_AS_REGULAR_NAMES=Brendon, and unset it when done testing.
+const TEST_AS_REGULAR_NAMES = (process.env.TEST_AS_REGULAR_NAMES || '')
+  .split(',').map(n => n.trim().toLowerCase()).filter(Boolean);
 async function hasEarlyAccess(ctx) {
-  if (await isTL(ctx)) return true;
   const name = await resolveName(ctx);
+  if (name && TEST_AS_REGULAR_NAMES.includes(name.toLowerCase())) return false;
+  if (await isTL(ctx)) return true;
   return name ? EARLY_ACCESS_NAMES.includes(name.toLowerCase()) : false;
 }
 // Replies with a "not live yet" message and returns true if this feature is
