@@ -2114,7 +2114,13 @@ bot.on('message:text', async (ctx) => {
     if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
 
     let sent = 0;
+    const failed = []; // { name, reason } — surfaced below instead of only console.warn
+
     for (const m of members) {
+      if (!m.telegram_id) {
+        failed.push({ name: m.name, reason: 'no telegram_id on file (never registered with the bot)' });
+        continue;
+      }
       try {
         await bot.api.sendMessage(
           m.telegram_id,
@@ -2125,14 +2131,18 @@ bot.on('message:text', async (ctx) => {
         sent++;
       } catch (err) {
         console.warn(`[Bot] collect: failed to DM ${m.name}:`, err.message);
+        failed.push({ name: m.name, reason: err.message });
       }
     }
 
     const note = generatedFallback
       ? `\n\n<i>⚠️ No roster created for ${monthArg} yet — used generated Sat/Sun dates.</i>`
       : '';
+    const failNote = failed.length
+      ? `\n\n⚠️ <b>Not sent to:</b>\n${failed.map(f => `  • <b>${f.name}</b> — ${f.reason}`).join('\n')}`
+      : '';
     return ctx.reply(
-      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> members.${note}`,
+      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> members.${note}${failNote}`,
       { parse_mode: 'HTML', reply_markup: backToAdmin() }
     );
   }
