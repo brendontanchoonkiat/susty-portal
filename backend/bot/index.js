@@ -154,6 +154,13 @@ async function resolveTypedName(typedName) {
 // Simple implementation: check if name is in TL_NAMES env var or hardcoded list
 const TL_NAMES = (process.env.TL_NAMES || 'Brendon,Judy,Wee Shing')
   .split(',').map(n => n.trim().toLowerCase());
+// Same list, original casing, for display in member-facing messages (e.g.
+// "message Brendon, Judy or Wee Shing directly").
+const TL_DISPLAY_NAMES = (() => {
+  const names = (process.env.TL_NAMES || 'Brendon,Judy,Wee Shing').split(',').map(n => n.trim());
+  if (names.length <= 1) return names.join('');
+  return names.slice(0, -1).join(', ') + ' or ' + names[names.length - 1];
+})();
 async function isTL(ctx) {
   const name = await resolveName(ctx);
   return name ? TL_NAMES.includes(name.toLowerCase()) : false;
@@ -582,11 +589,25 @@ bot.callbackQuery(/^remind:confirm:(\d+)$/, async (ctx) => {
 bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.editMessageReplyMarkup(undefined).catch(() => {});
-  await ctx.reply(
-    `⚠️ Got it — noted that you can't make it.\n\n` +
-    `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`,
-    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('📋 Go to Roster', 'menu:roster') }
-  ).catch(() => {});
+
+  // Swap requests are currently paused for regular members (see
+  // bot_settings.swap_requests_live, §3/§4a PROJECT_STATE) — sending them to
+  // a Request Swap button that just says "paused" is a dead end. While
+  // that's the case, tell them to message a TL directly instead. TLs
+  // themselves always bypass the swap gate, so they still get routed there.
+  if ((await swapRequestsLive()) || (await isTLForGating(ctx))) {
+    await ctx.reply(
+      `⚠️ Got it — noted that you can't make it.\n\n` +
+      `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`,
+      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('📋 Go to Roster', 'menu:roster') }
+    ).catch(() => {});
+  } else {
+    await ctx.reply(
+      `⚠️ Got it — noted that you can't make it.\n\n` +
+      `Duty swaps are paused for now, so please message <b>${TL_DISPLAY_NAMES}</b> directly to sort out coverage for this slot. 🙏`,
+      { parse_mode: 'HTML' }
+    ).catch(() => {});
+  }
 });
 
 function backToAdmin() {
