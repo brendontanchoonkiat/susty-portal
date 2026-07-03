@@ -282,7 +282,10 @@ function fmtSlot(slot) {
   const team  = (slot.team || []).join(', ') || '—';
   const sess  = slot.session || '';
   const badge = sess === 'GPC' ? '🟣' : sess === 'SAT' ? '🟡' : '🟢';
-  return `${badge} <b>${slot.date}</b> (${sess})\n   👥 ${team}`;
+  // fmtDateShort defined below — formats raw ISO date (e.g. "2026-07-05") as
+  // DD MMM YYYY ("05 Jul 2026"). Previously this printed slot.date as-is,
+  // which is why My Roster/Next Duty/Full Roster showed raw ISO dates.
+  return `${badge} <b>${fmtDateShort(slot.date)}</b> (${sess})\n   👥 ${team}`;
 }
 
 function fmtDate(d) {
@@ -1565,7 +1568,7 @@ bot.callbackQuery('admin:sendcalendar', async (ctx) => {
       const badge = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
       const team  = (s.team || []).join(', ') || '—';
       const note  = s.notes ? `\n   📌 ${s.notes}` : '';
-      return `${badge} <b>${s.date}</b> (${s.session})\n   👥 ${team}${note}`;
+      return `${badge} <b>${fmtDateShort(s.date)}</b> (${s.session})\n   👥 ${team}${note}`;
     }).join('\n\n');
     await bot.api.sendMessage(GROUP_ID, `📋 <b>W2R Roster — ${month}</b>\n\n${lines}`, { parse_mode: 'HTML' })
       .catch(err => console.warn('[sendcalendar] failed:', err.message));

@@ -4,3 +4,4 @@ backend/data/swap-requests.json
 *.log
 .DS_Store
 backend/data/roster.json
+backend/backups/
