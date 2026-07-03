@@ -485,6 +485,13 @@ function backToMain() {
   return new InlineKeyboard().text('← Back to Menu', 'menu:main');
 }
 
+// Used by My Roster / Next Duty / Full Roster results — returns to the
+// Roster submenu (not all the way out to the main menu), matching where the
+// member tapped in from.
+function backToRoster() {
+  return new InlineKeyboard().text('← Back to Roster', 'menu:roster');
+}
+
 function swapPromptKb() {
   return new InlineKeyboard().text('✖️ Cancel', 'swap:cancel');
 }
@@ -848,7 +855,11 @@ bot.callbackQuery('action:myroster', async (ctx) => {
     ? `🗓 <b>${name}'s Upcoming Duties</b>\n\n${slots.slice(0, 8).map(fmtSlot).join('\n\n')}${hint}`
     : `Hi <b>${name}</b>! No upcoming duties scheduled this month. 🎉${hint}`;
 
-  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() });
+  // Edit the roster-menu message in place instead of posting a new bubble —
+  // keeps everything in one chat message, and Back returns to the Roster
+  // submenu (not all the way out to the main menu).
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToRoster() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToRoster() }));
 });
 
 bot.callbackQuery('action:nextduty', async (ctx) => {
@@ -870,19 +881,18 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
   }
 
   if (!slots.length) {
-    return ctx.reply(`Hi <b>${name}</b>! No upcoming duties this month. 🎉`, {
-      parse_mode: 'HTML', reply_markup: backToMain(),
-    });
+    const emptyText = `Hi <b>${name}</b>! No upcoming duties this month. 🎉`;
+    return ctx.editMessageText(emptyText, { parse_mode: 'HTML', reply_markup: backToRoster() })
+      .catch(() => ctx.reply(emptyText, { parse_mode: 'HTML', reply_markup: backToRoster() }));
   }
 
   const next     = slots[0];
   const daysLeft = Math.ceil((new Date(next.date) - new Date()) / 86400000);
   const when     = daysLeft === 0 ? 'Today!' : daysLeft === 1 ? 'Tomorrow!' : `in ${daysLeft} days`;
 
-  await ctx.reply(
-    `⏭ <b>${name}'s Next Duty</b>\n\n${fmtSlot(next)}\n\n⏳ <b>${when}</b>`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+  const text = `⏭ <b>${name}'s Next Duty</b>\n\n${fmtSlot(next)}\n\n⏳ <b>${when}</b>`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToRoster() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToRoster() }));
 });
 
 bot.callbackQuery('action:roster', async (ctx) => {
@@ -907,7 +917,8 @@ bot.callbackQuery('action:roster', async (ctx) => {
   const text = slots.length
     ? `📋 <b>W2R Roster — ${heading}</b>\n\n${slots.map(fmtSlot).join('\n\n')}`
     : `No roster slots for ${admin ? 'the next 4 weeks' : 'the rest of this month'}.`;
-  await ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() });
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToRoster() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToRoster() }));
 });
 
 bot.callbackQuery('action:swaps', async (ctx) => {
