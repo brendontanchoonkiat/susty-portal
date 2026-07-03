@@ -2124,7 +2124,7 @@ bot.on('message:text', async (ctx) => {
       try {
         await bot.api.sendMessage(
           m.telegram_id,
-          `📅 <b>Availability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Please mark the dates you can serve.\nTap a date to select ✅, tap again to deselect.\n\n<i>Press Submit when done.</i>`,
+          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve. You'll be asked for a reason each time.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
           { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
         );
         await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
