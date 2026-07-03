@@ -82,12 +82,15 @@ bot.use(session({
 // ─── Group → PM redirect ──────────────────────────────────────────────────────
 // The bot should never actually interact with members inside the main group —
 // only via PM. This silently swallows EVERY incoming update from a
-// group/supergroup chat (any message type: text, commands, photos, stickers,
-// docs, voice, etc., AND any inline-button tap) before it reaches
-// session/menu logic below — no reply of any kind, so the bot never posts in
-// the group in response to a member. The only exception is /start, which
-// Telegram sometimes routes through a group deep link before the user
-// actually opens PM.
+// group/supergroup chat (any message type: text, commands — including
+// /start — photos, stickers, docs, voice, etc., AND any inline-button tap)
+// before it reaches session/menu logic below — no reply of any kind, so the
+// bot never posts in the group in response to a member.
+// (There used to be a /start exception here on the theory that Telegram
+// deep-links might route through the group — that's wrong: t.me/<bot>?start=
+// links always open a private chat with the bot, never post /start into a
+// group. Removed 3 Jul 2026 after Brendon found the bot still replying to
+// /start in the group.)
 // Note: this only affects updates members SEND to the bot in the group. Bot-
 // initiated broadcasts the team leads rely on (swap request posts, roster
 // calendar posts, swap-matched confirmations — all via GROUP_ID) are a
@@ -109,11 +112,9 @@ bot.use(async (ctx, next) => {
     return;
   }
 
-  const text = ctx.message?.text || '';
-  if (text.startsWith('/start')) return next();
-
-  // Every other update type (commands, photos, stickers, docs, voice, plain
-  // text, etc.) is swallowed — no reply, nothing reaches bot logic.
+  // Every update type — including /start and every other command, photos,
+  // stickers, docs, voice, plain text, etc. — is swallowed here. No reply,
+  // nothing reaches bot logic.
   return;
 });
 
