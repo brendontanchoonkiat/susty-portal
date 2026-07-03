@@ -245,13 +245,16 @@ async function isTLForGating(ctx) {
 // Replies with a "not live yet" message and returns true if this feature is
 // still gated for this user; call at the top of a gated handler and `return`
 // if it resolves true. TLs and EARLY_ACCESS_NAMES bypass every gate.
+// editMessageText throws (synchronously, caught below as a rejected promise)
+// when there's no callback query to attach the edit to — so this is safe to
+// call from both button-driven contexts (edits in place) and non-button ones
+// like the /start deep-link (falls back to a fresh reply).
 async function blockedByPhase(ctx, minPhase) {
   if (currentPhase() >= minPhase) return false;
   if (await hasEarlyAccess(ctx)) return false;
-  await ctx.reply(
-    `🚧 <b>Coming soon!</b> This feature unlocks on <b>11 Jul</b>. Stay tuned 🌿`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+  const text = `🚧 <b>Coming soon!</b> This feature unlocks on <b>11 Jul</b>. Stay tuned 🌿`;
+  const opts = { parse_mode: 'HTML', reply_markup: backToMain() };
+  await ctx.editMessageText(text, opts).catch(() => ctx.reply(text, opts));
   return true;
 }
 // Same idea as blockedByPhase, but for Recycling Logs specifically — gated on
@@ -259,10 +262,9 @@ async function blockedByPhase(ctx, minPhase) {
 async function blockedByRecyclingGate(ctx) {
   if (await recyclingLogsLive()) return false;
   if (await hasEarlyAccess(ctx)) return false;
-  await ctx.reply(
-    `🚧 <b>Coming soon!</b> Recycling Logs isn't live yet. Stay tuned 🌿`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+  const text = `🚧 <b>Coming soon!</b> Recycling Logs isn't live yet. Stay tuned 🌿`;
+  const opts = { parse_mode: 'HTML', reply_markup: backToMain() };
+  await ctx.editMessageText(text, opts).catch(() => ctx.reply(text, opts));
   return true;
 }
 // Swap requests/browsing/accepting — paused while the current month's roster
@@ -270,11 +272,11 @@ async function blockedByRecyclingGate(ctx) {
 async function blockedBySwapGate(ctx) {
   if (await swapRequestsLive()) return false;
   if (await isTLForGating(ctx)) return false;
-  await ctx.reply(
+  const text =
     `🔒 <b>Duty swaps are paused for now</b> while this month's roster gets finalized. ` +
-    `They'll reopen once the next roster goes out — stay tuned 🌿`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+    `They'll reopen once the next roster goes out — stay tuned 🌿`;
+  const opts = { parse_mode: 'HTML', reply_markup: backToMain() };
+  await ctx.editMessageText(text, opts).catch(() => ctx.reply(text, opts));
   return true;
 }
 
@@ -393,25 +395,29 @@ function nextCalendarMonth() {
   return next.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
 }
 
-// Shared logic for accepting a swap — used by deep-link and the accept: callback
+// Shared logic for accepting a swap — used by deep-link, post-registration
+// resume, and the accept: callback. editMessageText falls back to ctx.reply
+// automatically when there's no callback query to edit (the first two cases).
 async function handleAcceptSwap(ctx, swapId, name) {
   const supa = db.getClient();
   if (!supa) return ctx.reply('⚠️ Supabase not configured.');
   const { data: swap } = await supa.from('swap_requests').select('*').eq('id', swapId).single();
   if (!swap || swap.status !== 'open') {
-    return ctx.reply(`⚠️ Swap #${swapId} is no longer available.`, { reply_markup: backToMain() });
+    const t = `⚠️ Swap #${swapId} is no longer available.`;
+    return ctx.editMessageText(t, { reply_markup: backToMain() }).catch(() => ctx.reply(t, { reply_markup: backToMain() }));
   }
   if (swap.requester_name.toLowerCase() === name.toLowerCase()) {
-    return ctx.reply(`⚠️ You can't accept your own swap.`, { reply_markup: backToMain() });
+    const t = `⚠️ You can't accept your own swap.`;
+    return ctx.editMessageText(t, { reply_markup: backToMain() }).catch(() => ctx.reply(t, { reply_markup: backToMain() }));
   }
   ctx.session.awaitingAcceptDate = {
     swapId, requesterName: swap.requester_name, requesterDate: swap.requester_date,
   };
-  return ctx.reply(
+  const t =
     `🔄 Accepting swap for <b>${swap.requester_name}</b>'s duty on <b>${swap.requester_date}</b>.\n\n` +
-    `📅 What date are <b>you</b> offering in return? (e.g. <code>5 Jul</code>)`,
-    { parse_mode: 'HTML', reply_markup: swapPromptKb() }
-  );
+    `📅 What date are <b>you</b> offering in return? (e.g. <code>5 Jul</code>)`;
+  return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: swapPromptKb() })
+    .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: swapPromptKb() }));
 }
 
 // ─── Keyboards ────────────────────────────────────────────────────────────────
@@ -582,13 +588,13 @@ bot.callbackQuery('swap:confirm', async (ctx) => {
 // broadcast — the whole point is the ask-and-response happens in PM only.
 bot.callbackQuery(/^remind:confirm:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery({ text: 'Thanks for confirming! ✅' });
-  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
-  await ctx.reply('✅ <b>Confirmed</b> — see you there! 💪🌿', { parse_mode: 'HTML' }).catch(() => {});
+  const text = '✅ <b>Confirmed</b> — see you there! 💪🌿';
+  await ctx.editMessageText(text, { parse_mode: 'HTML' })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
 });
 
 bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
-  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
 
   // Swap requests are currently paused for regular members (see
   // bot_settings.swap_requests_live, §3/§4a PROJECT_STATE) — sending them to
@@ -596,17 +602,18 @@ bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
   // that's the case, tell them to message a TL directly instead. TLs
   // themselves always bypass the swap gate, so they still get routed there.
   if ((await swapRequestsLive()) || (await isTLForGating(ctx))) {
-    await ctx.reply(
+    const text =
       `⚠️ Got it — noted that you can't make it.\n\n` +
-      `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`,
-      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('📋 Go to Roster', 'menu:roster') }
-    ).catch(() => {});
+      `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`;
+    const kb = new InlineKeyboard().text('📋 Go to Roster', 'menu:roster');
+    await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+      .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
   } else {
-    await ctx.reply(
+    const text =
       `⚠️ Got it — noted that you can't make it.\n\n` +
-      `Duty swaps are paused for now, so please message <b>${TL_DISPLAY_NAMES}</b> directly to sort out coverage for this slot. 🙏`,
-      { parse_mode: 'HTML' }
-    ).catch(() => {});
+      `Duty swaps are paused for now, so please message <b>${TL_DISPLAY_NAMES}</b> directly to sort out coverage for this slot. 🙏`;
+    await ctx.editMessageText(text, { parse_mode: 'HTML' })
+      .catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
   }
 });
 
@@ -935,7 +942,9 @@ bot.callbackQuery('action:swaps', async (ctx) => {
   }
 
   if (!swaps.length) {
-    return ctx.reply('✅ No open swap requests right now!', { reply_markup: backToMain() });
+    const emptyText = '✅ No open swap requests right now!';
+    return ctx.editMessageText(emptyText, { reply_markup: backToRoster() })
+      .catch(() => ctx.reply(emptyText, { reply_markup: backToRoster() }));
   }
 
   const kb = new InlineKeyboard();
@@ -948,10 +957,9 @@ bot.callbackQuery('action:swaps', async (ctx) => {
     `🆔 <b>#${s.id}</b> — <b>${s.requester_name}</b> on <b>${s.requester_date}</b>\n   📝 ${s.reason || 'No reason'}`
   ).join('\n\n');
 
-  await ctx.reply(
-    `🔄 <b>Open Swap Requests</b>\n\n${lines}\n\n<i>Tap a button below to accept.</i>`,
-    { parse_mode: 'HTML', reply_markup: kb }
-  );
+  const text = `🔄 <b>Open Swap Requests</b>\n\n${lines}\n\n<i>Tap a button below to accept.</i>`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
 });
 
 bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
@@ -977,10 +985,9 @@ bot.callbackQuery('action:swap', async (ctx) => {
   }
 
   if (!slots.length) {
-    return ctx.reply(
-      `📨 <b>Request a Swap</b>\n\nYou have no upcoming duties to swap. 🎉`,
-      { parse_mode: 'HTML', reply_markup: backToMain() }
-    );
+    const emptyText = `📨 <b>Request a Swap</b>\n\nYou have no upcoming duties to swap. 🎉`;
+    return ctx.editMessageText(emptyText, { parse_mode: 'HTML', reply_markup: backToRoster() })
+      .catch(() => ctx.reply(emptyText, { parse_mode: 'HTML', reply_markup: backToRoster() }));
   }
 
   const kb = new InlineKeyboard();
@@ -990,10 +997,9 @@ bot.callbackQuery('action:swap', async (ctx) => {
   }
   kb.text('✖️ Cancel', 'swap:cancel');
 
-  await ctx.reply(
-    `📨 <b>Request a Swap</b>\n\n📅 Which of your upcoming duties do you need to swap?`,
-    { parse_mode: 'HTML', reply_markup: kb }
-  );
+  const text = `📨 <b>Request a Swap</b>\n\n📅 Which of your upcoming duties do you need to swap?`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
 });
 
 bot.callbackQuery(/^swapdate:(.+)$/, async (ctx) => {
@@ -1002,10 +1008,9 @@ bot.callbackQuery(/^swapdate:(.+)$/, async (ctx) => {
   if (!name) return promptRegister(ctx);
   ctx.session.pendingSwapDate    = ctx.match[1];
   ctx.session.awaitingSwapReason = true;
-  await ctx.reply(
-    `📅 Date: <b>${fmtDateShort(ctx.session.pendingSwapDate)}</b>\n\n📝 What's the reason for swapping?`,
-    { parse_mode: 'HTML', reply_markup: swapPromptKb() }
-  );
+  const text = `📅 Date: <b>${fmtDateShort(ctx.session.pendingSwapDate)}</b>\n\n📝 What's the reason for swapping?`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: swapPromptKb() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: swapPromptKb() }));
 });
 
 // ─── Callback: duty needs ─────────────────────────────────────────────────────
@@ -1056,20 +1061,18 @@ bot.callbackQuery('action:log:cardboard', async (ctx) => {
   await ctx.answerCallbackQuery();
   if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'cardboard' };
-  await ctx.reply(
-    `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
-    { parse_mode: 'HTML', reply_markup: askLogDate('cardboard') }
-  );
+  const text = `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: askLogDate('cardboard') })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: askLogDate('cardboard') }));
 });
 
 bot.callbackQuery('action:log:plastic', async (ctx) => {
   await ctx.answerCallbackQuery();
   if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'plastic' };
-  await ctx.reply(
-    `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`,
-    { parse_mode: 'HTML', reply_markup: askLogDate('plastic') }
-  );
+  const text = `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: askLogDate('plastic') })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: askLogDate('plastic') }));
 });
 
 bot.callbackQuery(/^logdate:(cardboard|plastic):today$/, async (ctx) => {
@@ -1084,10 +1087,9 @@ bot.callbackQuery('log:more', async (ctx) => {
   ctx.session.awaitingLogPhoto = true;
   ctx.session.awaitingLogKg    = false;
   const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
-  await ctx.reply(
-    `${emoji} Send a photo of measurement #${ls.measurements.length + 1}.`,
-    { parse_mode: 'HTML', reply_markup: logPromptKb() }
-  );
+  const text = `${emoji} Send a photo of measurement #${ls.measurements.length + 1}.`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: logPromptKb() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: logPromptKb() }));
 });
 
 bot.callbackQuery('log:done', async (ctx) => {
@@ -1238,11 +1240,11 @@ bot.callbackQuery('menu:avail', async (ctx) => {
     const { data: existing } = await supa.from('availability')
       .select('id').eq('member_name', name).eq('month', targetMonth).limit(1);
     if (existing?.length) {
-      return ctx.reply(
+      const alreadyText =
         `📅 You've already submitted availability for <b>${targetMonth}</b>.\n\n` +
-        `<i>To make changes, contact your TL.</i>`,
-        { parse_mode: 'HTML', reply_markup: backToMain() }
-      );
+        `<i>To make changes, contact your TL.</i>`;
+      return ctx.editMessageText(alreadyText, { parse_mode: 'HTML', reply_markup: backToMain() })
+        .catch(() => ctx.reply(alreadyText, { parse_mode: 'HTML', reply_markup: backToMain() }));
     }
   }
 
@@ -1259,7 +1261,9 @@ bot.callbackQuery('menu:avail', async (ctx) => {
   if (!monthSlots.length) monthSlots = generateWeekends(targetMonth);
 
   if (!monthSlots.length) {
-    return ctx.reply(`No dates available for ${targetMonth} yet.`, { reply_markup: backToMain() });
+    const noDatesText = `No dates available for ${targetMonth} yet.`;
+    return ctx.editMessageText(noDatesText, { reply_markup: backToMain() })
+      .catch(() => ctx.reply(noDatesText, { reply_markup: backToMain() }));
   }
 
   ctx.session.availMonth    = targetMonth;
@@ -1370,7 +1374,11 @@ bot.callbackQuery('avail:submit', async (ctx) => {
   }
   const avail = allD.filter(d => !unavail.includes(d));
 
-  if (!month) return ctx.reply('⚠️ Session expired. Please try again.', { reply_markup: backToMain() });
+  if (!month) {
+    const expiredText = '⚠️ Session expired. Please try again.';
+    return ctx.editMessageText(expiredText, { reply_markup: backToMain() })
+      .catch(() => ctx.reply(expiredText, { reply_markup: backToMain() }));
+  }
 
   // Stage everything and ask one more general question before actually saving.
   ctx.session.pendingAvailSave   = { month, name, avail, unavail, reasons };
@@ -1711,16 +1719,18 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
   try {
     await reminders.sendDutyReminders(bot);
     await reminders.sendBirthdayReminders(bot);
-    await ctx.reply(
+    const doneMsg =
       `✅ <b>Test run complete.</b>\n\n` +
       `This only sends to members who actually have a slot exactly 5 or 1 day from today, ` +
       `or a birthday today/in 7 days — if nobody qualifies today, no DMs go out and that's expected, ` +
-      `not a failure. Check Railway logs for "[Reminders] Sent…" lines to confirm it ran.`,
-      { parse_mode: 'HTML', reply_markup: backToAdmin() }
-    );
+      `not a failure. Check Railway logs for "[Reminders] Sent…" lines to confirm it ran.`;
+    await ctx.editMessageText(doneMsg, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(doneMsg, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
   } catch (err) {
     console.error('[Bot] admin:testreminders failed:', err.message);
-    await ctx.reply(`⚠️ Reminder test failed: ${err.message}`, { reply_markup: backToAdmin() });
+    const failMsg = `⚠️ Reminder test failed: ${err.message}`;
+    await ctx.editMessageText(failMsg, { reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(failMsg, { reply_markup: backToAdmin() }));
   }
 });
 
@@ -1759,7 +1769,7 @@ bot.callbackQuery('action:stats', async (ctx) => {
   const total = carbon.calcCO2e(cb, pl);
   const y26   = carbon.calcCO2e(cb26, pl26);
 
-  await ctx.reply(
+  const text =
     `♻️ <b>W2R Ministry Impact</b>\n<i>Sep 2025 – present</i>\n\n` +
     `📊 <b>All-Time</b>\n` +
     `📦 Cardboard: <b>${cb.toFixed(1)} kg</b>\n` +
@@ -1769,9 +1779,9 @@ bot.callbackQuery('action:stats', async (ctx) => {
     `🚗 Car km saved: <b>${total.carKmEquiv.toLocaleString()}</b>\n` +
     `🧴 Bottles diverted: <b>${total.bottlesEquiv.toLocaleString()}</b>\n\n` +
     `📅 <b>2026 YTD</b>\n` +
-    `📦 ${cb26.toFixed(1)} kg  |  🍶 ${pl26.toFixed(1)} kg  |  🌍 ${y26.co2eKg} kg CO₂e`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+    `📦 ${cb26.toFixed(1)} kg  |  🍶 ${pl26.toFixed(1)} kg  |  🌍 ${y26.co2eKg} kg CO₂e`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToMain() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() }));
 });
 
 bot.callbackQuery('action:yoy', async (ctx) => {
@@ -1790,9 +1800,9 @@ bot.callbackQuery('action:yoy', async (ctx) => {
     summaries = carbon.summariseByYear(combined);
   }
 
-  await ctx.reply(carbon.formatYoY(summaries), {
-    parse_mode: 'HTML', reply_markup: backToMain(),
-  });
+  const text = carbon.formatYoY(summaries);
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToMain() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() }));
 });
 
 bot.callbackQuery('action:mystats', async (ctx) => {
@@ -1801,7 +1811,11 @@ bot.callbackQuery('action:mystats', async (ctx) => {
   if (!name) return promptRegister(ctx);
 
   const supa = db.getClient();
-  if (!supa) return ctx.reply('📊 Personal stats require Supabase.', { reply_markup: backToMain() });
+  if (!supa) {
+    const noSupaText = '📊 Personal stats require Supabase.';
+    return ctx.editMessageText(noSupaText, { reply_markup: backToMain() })
+      .catch(() => ctx.reply(noSupaText, { reply_markup: backToMain() }));
+  }
 
   const { data: logs }     = await supa.from('data_logs').select('*').eq('logged_by', name);
   const { data: attended } = await supa.from('attendance')
@@ -1812,7 +1826,7 @@ bot.callbackQuery('action:mystats', async (ctx) => {
   const impact  = carbon.calcCO2e(myCb, myPl);
   const sessions = attended?.length || (logs || []).length;
 
-  await ctx.reply(
+  const text =
     `🌿 <b>${name}'s Personal Impact</b>\n\n` +
     `📋 Sessions: <b>${sessions}</b>\n` +
     `📦 Cardboard: <b>${myCb.toFixed(1)} kg</b>\n` +
@@ -1820,9 +1834,9 @@ bot.callbackQuery('action:mystats', async (ctx) => {
     `🌍 CO₂e saved: <b>${impact.co2eKg} kg</b>\n` +
     `🌳 Trees equiv: <b>${impact.treesEquiv}</b>\n` +
     `🧴 Bottles diverted: <b>${impact.bottlesEquiv.toLocaleString()}</b>\n\n` +
-    `<i>Every session counts. Thank you! 💪</i>`,
-    { parse_mode: 'HTML', reply_markup: backToMain() }
-  );
+    `<i>Every session counts. Thank you! 💪</i>`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToMain() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToMain() }));
 });
 
 // ─── Photo handler ────────────────────────────────────────────────────────────
