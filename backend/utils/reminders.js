@@ -32,6 +32,38 @@ function startReminderCron(bot) {
 // TLs who get birthday heads-up DMs (same list the bot uses for admin access)
 const BIRTHDAY_TL_NAMES = (process.env.TL_NAMES || 'Brendon,Judy,Wee Shing').split(',').map(n => n.trim());
 
+// Who gets a CC digest whenever duty reminders actually go out. Defaults to
+// just Brendon; set REMINDER_CC_NAMES on Railway (comma-separated) to add
+// others without a redeploy.
+const REMINDER_CC_NAMES = (process.env.REMINDER_CC_NAMES || 'Brendon').split(',').map(n => n.trim());
+
+// Sends a single digest DM (not a per-member duplicate) to REMINDER_CC_NAMES
+// listing everything sendDutyReminders just sent out. Skipped entirely if
+// nothing was sent that day (expected on most days — only fires when a slot
+// is exactly 5 or 1 day out).
+async function ccDutyReminders(bot, sentLog) {
+  if (!sentLog.length) return;
+  const supa = db.getClient();
+  if (!supa) return;
+
+  const lines = sentLog.map(s =>
+    `  • <b>${s.memberName}</b> — ${s.daysUntil}d reminder for ${s.date} (${s.session})`
+  ).join('\n');
+  const msg = `📋 <b>Duty Reminder Digest</b>\n\n${lines}`;
+
+  for (const ccName of REMINDER_CC_NAMES) {
+    const { data: cc } = await supa.from('members').select('telegram_id').ilike('name', ccName).single();
+    if (!cc?.telegram_id) continue;
+    try {
+      await bot.api.sendMessage(cc.telegram_id, msg, { parse_mode: 'HTML' });
+      console.log(`[Reminders] Sent CC digest to ${ccName}`);
+    } catch (err) {
+      console.warn(`[Reminders] CC digest to ${ccName} failed:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
 /**
  * DMs the TLs when a member's birthday is today, or exactly 7 days away —
  * mirrors the 5-day/1-day pattern used for duty reminders. Runs as part of
@@ -105,6 +137,8 @@ async function sendDutyReminders(bot) {
 
   if (!slots?.length) return;
 
+  const sentLog = []; // { memberName, daysUntil, date, session } — for the CC digest below
+
   for (const slot of slots) {
     const daysUntil = slot.date === fmt(in1Day) ? 1 : 5;
 
@@ -125,6 +159,7 @@ async function sendDutyReminders(bot) {
       try {
         await bot.api.sendMessage(member.telegram_id, msg, { parse_mode: 'HTML', reply_markup: kb });
         console.log(`[Reminders] Sent ${daysUntil}d reminder to ${memberName}`);
+        sentLog.push({ memberName, daysUntil, date: slot.date, session: slot.session });
       } catch (err) {
         console.warn(`[Reminders] Failed to DM ${memberName}:`, err.message);
       }
@@ -133,6 +168,8 @@ async function sendDutyReminders(bot) {
       await new Promise(r => setTimeout(r, 200));
     }
   }
+
+  await ccDutyReminders(bot, sentLog);
 }
 
 function fiveDayMsg(slot, name) {
