@@ -81,40 +81,31 @@ bot.use(session({
 
 // ─── Group → PM redirect ──────────────────────────────────────────────────────
 // The bot should never actually interact with members inside the main group —
-// only via PM. This blocks EVERY incoming update from a group/supergroup chat
-// (any message type: text, commands, photos, stickers, docs, voice, etc., AND
-// any inline-button tap) before it reaches session/menu logic below. The only
-// exception is /start, which Telegram sometimes routes through a group deep
-// link before the user actually opens PM.
+// only via PM. This silently swallows EVERY incoming update from a
+// group/supergroup chat (any message type: text, commands, photos, stickers,
+// docs, voice, etc., AND any inline-button tap) before it reaches
+// session/menu logic below — no reply of any kind, so the bot never posts in
+// the group in response to a member. The only exception is /start, which
+// Telegram sometimes routes through a group deep link before the user
+// actually opens PM.
 // Note: this only affects updates members SEND to the bot in the group. Bot-
 // initiated broadcasts the team leads rely on (swap request posts, roster
 // calendar posts, swap-matched confirmations — all via GROUP_ID) are a
 // separate, one-way outbound path and are unaffected by this guard.
+// (Previously sent a rate-limited "message me in PM" nudge — removed 3 Jul
+// 2026 per Brendon: no bot activity in the group at all, full stop.)
 const GROUP_TYPES = ['group', 'supergroup'];
+// Still needed elsewhere (swap "Accept swap" deep-link button uses the
+// bot's own username to build a t.me/<username>?start=... URL).
 const BOT_USERNAME_PROMISE = bot.api.getMe().then(me => me.username).catch(() => null);
-
-let _lastGroupNudge = 0;
-async function nudgeToPM(ctx) {
-  // Rate-limit the nudge reply itself so a chatty group doesn't get spammed —
-  // one nudge per 30s across the whole group is enough to make the point.
-  const now = Date.now();
-  if (now - _lastGroupNudge < 30000) return;
-  _lastGroupNudge = now;
-  const username = await BOT_USERNAME_PROMISE;
-  const link = username ? `https://t.me/${username}` : 'the bot directly';
-  await ctx.reply(
-    `👋 To keep the group tidy, please message me directly!\n\n📲 <a href="${link}">Open PM</a>`,
-    { parse_mode: 'HTML', reply_to_message_id: ctx.message?.message_id }
-  ).catch(() => {});
-}
 
 bot.use(async (ctx, next) => {
   if (!GROUP_TYPES.includes(ctx.chat?.type)) return next();
 
   // Inline button taps on any bot message posted in the group — answer
-  // silently (so the user doesn't see a spinning loader) and nudge to PM.
+  // silently (no popup, no reply) so nothing visibly happens.
   if (ctx.callbackQuery) {
-    await ctx.answerCallbackQuery({ text: 'Please use the bot in PM 🙏', show_alert: true }).catch(() => {});
+    await ctx.answerCallbackQuery().catch(() => {});
     return;
   }
 
@@ -122,8 +113,7 @@ bot.use(async (ctx, next) => {
   if (text.startsWith('/start')) return next();
 
   // Every other update type (commands, photos, stickers, docs, voice, plain
-  // text, etc.) gets redirected — nothing from the group reaches bot logic.
-  await nudgeToPM(ctx);
+  // text, etc.) is swallowed — no reply, nothing reaches bot logic.
   return;
 });
 
