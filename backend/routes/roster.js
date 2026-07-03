@@ -5,7 +5,7 @@ const fs      = require('fs');
 const path    = require('path');
 const { sanitise } = require('../middleware/validate');
 const { notifyTelegram } = require('../utils/telegram');
-const { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg } = require('../data/messages');
+const { rosterChangeMsg } = require('../data/messages');
 const { getClient } = require('../utils/supabase');
 
 const ROSTER_FILE = path.join(__dirname, '../data/roster.json');
@@ -349,30 +349,22 @@ router.delete('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res,
   res.json({ ok: true });
 });
 
-// ─── POST /remind ─────────────────────────────────────────────────────────────
+// ─── POST /remind — DEPRECATED (removed 3 Jul 2026) ──────────────────────────
+// This used to broadcast 5-day/1-day reminders to the whole group chat, using
+// a template with placeholder [LOCATION]/[TIME] and "bring gloves" text that
+// was never actually filled in. Duty reminders now happen per-member via DM,
+// handled entirely inside the bot process (utils/reminders.js → 09:00 SGT
+// cron, sendDutyReminders/sendBirthdayReminders — started from server.js).
+// The external Cowork scheduled task that used to call this endpoint has been
+// disabled. This route is kept only so old callers get a clear error instead
+// of a silent group post.
 router.post('/remind', (req, res, next) => req.app.get('requireApiKey')(req, res, next), async (_req, res) => {
-  const { data: roster } = await getRoster();
-  const now   = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const results = [];
-
-  for (const slot of roster) {
-    const slotDate = new Date(slot.date);
-    if (isNaN(slotDate)) continue;
-    const slotDay  = new Date(slotDate.getFullYear(), slotDate.getMonth(), slotDate.getDate());
-    const daysAway = Math.round((slotDay - today) / 86400000);
-
-    let msg = null;
-    if (daysAway === 5) msg = fiveDayReminderMsg(slot);
-    if (daysAway === 1) msg = oneDayReminderMsg(slot);
-
-    if (msg) {
-      const result = await notifyTelegram(msg);
-      results.push({ slotId: slot.id, date: slot.date, session: slot.session, daysAway, telegram: result });
-    }
-  }
-
-  res.json({ ok: true, reminders_sent: results.length, results });
+  res.status(410).json({
+    ok: false,
+    error: 'This endpoint is deprecated and no longer sends anything. ' +
+      'Duty reminders are now sent per-member via Telegram DM by the bot\'s ' +
+      'internal cron (utils/reminders.js), not broadcast to the group.',
+  });
 });
 
 // ─── POST /notify-change ──────────────────────────────────────────────────────

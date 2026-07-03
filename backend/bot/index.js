@@ -80,24 +80,51 @@ bot.use(session({
 }));
 
 // ─── Group → PM redirect ──────────────────────────────────────────────────────
+// The bot should never actually interact with members inside the main group —
+// only via PM. This blocks EVERY incoming update from a group/supergroup chat
+// (any message type: text, commands, photos, stickers, docs, voice, etc., AND
+// any inline-button tap) before it reaches session/menu logic below. The only
+// exception is /start, which Telegram sometimes routes through a group deep
+// link before the user actually opens PM.
+// Note: this only affects updates members SEND to the bot in the group. Bot-
+// initiated broadcasts the team leads rely on (swap request posts, roster
+// calendar posts, swap-matched confirmations — all via GROUP_ID) are a
+// separate, one-way outbound path and are unaffected by this guard.
 const GROUP_TYPES = ['group', 'supergroup'];
 const BOT_USERNAME_PROMISE = bot.api.getMe().then(me => me.username).catch(() => null);
 
+let _lastGroupNudge = 0;
+async function nudgeToPM(ctx) {
+  // Rate-limit the nudge reply itself so a chatty group doesn't get spammed —
+  // one nudge per 30s across the whole group is enough to make the point.
+  const now = Date.now();
+  if (now - _lastGroupNudge < 30000) return;
+  _lastGroupNudge = now;
+  const username = await BOT_USERNAME_PROMISE;
+  const link = username ? `https://t.me/${username}` : 'the bot directly';
+  await ctx.reply(
+    `👋 To keep the group tidy, please message me directly!\n\n📲 <a href="${link}">Open PM</a>`,
+    { parse_mode: 'HTML', reply_to_message_id: ctx.message?.message_id }
+  ).catch(() => {});
+}
+
 bot.use(async (ctx, next) => {
   if (!GROUP_TYPES.includes(ctx.chat?.type)) return next();
-  const text    = ctx.message?.text || '';
-  const isPhoto = !!ctx.message?.photo;
-  if (text.startsWith('/start')) return next();
-  if (text.startsWith('/') || isPhoto) {
-    const username = await BOT_USERNAME_PROMISE;
-    const link = username ? `https://t.me/${username}` : 'the bot directly';
-    await ctx.reply(
-      `👋 To keep the group tidy, please message me directly!\n\n📲 <a href="${link}">Open PM</a>`,
-      { parse_mode: 'HTML', reply_to_message_id: ctx.message?.message_id }
-    ).catch(() => {});
+
+  // Inline button taps on any bot message posted in the group — answer
+  // silently (so the user doesn't see a spinning loader) and nudge to PM.
+  if (ctx.callbackQuery) {
+    await ctx.answerCallbackQuery({ text: 'Please use the bot in PM 🙏', show_alert: true }).catch(() => {});
     return;
   }
-  return next();
+
+  const text = ctx.message?.text || '';
+  if (text.startsWith('/start')) return next();
+
+  // Every other update type (commands, photos, stickers, docs, voice, plain
+  // text, etc.) gets redirected — nothing from the group reaches bot logic.
+  await nudgeToPM(ctx);
+  return;
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -541,6 +568,25 @@ bot.callbackQuery('swap:confirm', async (ctx) => {
     `Team members will see it in the group and can accept via the bot.`;
   return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: backToMain() })
     .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() }));
+});
+
+// Confirm / can't-make-it buttons attached to the 5-day and 1-day DM duty
+// reminders (utils/reminders.js → confirmKb). These replace the old group
+// broadcast — the whole point is the ask-and-response happens in PM only.
+bot.callbackQuery(/^remind:confirm:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery({ text: 'Thanks for confirming! ✅' });
+  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  await ctx.reply('✅ <b>Confirmed</b> — see you there! 💪🌿', { parse_mode: 'HTML' }).catch(() => {});
+});
+
+bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.editMessageReplyMarkup(undefined).catch(() => {});
+  await ctx.reply(
+    `⚠️ Got it — noted that you can't make it.\n\n` +
+    `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('📋 Go to Roster', 'menu:roster') }
+  ).catch(() => {});
 });
 
 function backToAdmin() {

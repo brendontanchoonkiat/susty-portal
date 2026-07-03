@@ -9,6 +9,7 @@ let cron;
 try { cron = require('node-cron'); }
 catch { console.warn('[Reminders] node-cron not installed — run npm install node-cron. Reminders disabled.'); }
 
+const { InlineKeyboard } = require('grammy');
 const db = require('./supabase');
 
 /**
@@ -119,9 +120,10 @@ async function sendDutyReminders(bot) {
       const msg = daysUntil === 1
         ? oneDayMsg(slot, memberName)
         : fiveDayMsg(slot, memberName);
+      const kb = confirmKb(slot.id);
 
       try {
-        await bot.api.sendMessage(member.telegram_id, msg, { parse_mode: 'HTML' });
+        await bot.api.sendMessage(member.telegram_id, msg, { parse_mode: 'HTML', reply_markup: kb });
         console.log(`[Reminders] Sent ${daysUntil}d reminder to ${memberName}`);
       } catch (err) {
         console.warn(`[Reminders] Failed to DM ${memberName}:`, err.message);
@@ -141,7 +143,7 @@ function fiveDayMsg(slot, name) {
     `You're rostered to serve W2R on:\n` +
     `📅 <b>${slot.date}</b> (${slot.session})\n` +
     `👥 Serving with: ${partners}\n\n` +
-    `Can't make it? Open the bot and tap Roster → Request Swap.\n\n` +
+    `Can you still make it? Tap below to confirm, or use Roster → Request Swap if not.\n\n` +
     `— Sustainability Ministry 🌿`
   );
 }
@@ -154,9 +156,18 @@ function oneDayMsg(slot, name) {
     `You're on duty <b>tomorrow</b>:\n` +
     `📅 <b>${slot.date}</b> (${slot.session})\n` +
     `👥 With: ${partners}\n\n` +
-    `See you there! 💪\n\n` +
+    `Please confirm you're all set below!\n\n` +
     `— Sustainability Ministry 🌿`
   );
+}
+
+// Inline confirm / can't-make-it buttons attached to each DM reminder.
+// slotId lets the bot's callback handler (bot/index.js, remind:confirm /
+// remind:cantmake) know which duty this was about.
+function confirmKb(slotId) {
+  return new InlineKeyboard()
+    .text('✅ I\'ll be there', `remind:confirm:${slotId}`)
+    .text('⚠️ Can\'t make it', `remind:cantmake:${slotId}`);
 }
 
 // Post a session summary to the group after a duty day

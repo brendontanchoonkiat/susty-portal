@@ -22,30 +22,9 @@ function rosterChangeMsg(name, newSlot, oldSlot) {
   );
 }
 
-function fiveDayReminderMsg(slot) {
-  const names = slot.team.join(' & ');
-  return (
-    `⏰ <b>W2R Reminder — Serving in 5 Days!</b>\n\n` +
-    `Hi <b>${names}</b> 👋\n\n` +
-    `You're rostered to serve W2R this coming <b>${dayName(slot.date)}, ${slot.date}</b>.\n\n` +
-    `📅 Session: ${slot.session}\n👥 Team: ${names}\n` +
-    `📦 Remember to bring: Gloves &amp; comfortable clothes\n` +
-    `📍 Meet at: <b>[LOCATION — edit this]</b>\n🕐 Report by: <b>[TIME — edit this]</b>\n\n` +
-    `See you there! 💪🌿`
-  );
-}
-
-function oneDayReminderMsg(slot) {
-  const names = slot.team.join(' & ');
-  return (
-    `🌿 <b>W2R Reminder — Serving Tomorrow!</b>\n\n` +
-    `Hi <b>${names}</b> 👋\n\n` +
-    `Just a reminder that you're serving W2R <b>tomorrow, ${dayName(slot.date)} ${slot.date}</b> (${slot.session})!\n\n` +
-    `📍 Meet at: <b>[LOCATION — edit this]</b>\n🕐 Report by: <b>[TIME — edit this]</b>\n` +
-    `📦 Bring: Gloves &amp; comfortable clothes\n\n` +
-    `Please reply <b>✅</b> to confirm you're all set!\n\n— Sustainability Ministry 🌿`
-  );
-}
+// fiveDayReminderMsg / oneDayReminderMsg (group-broadcast templates with
+// placeholder [LOCATION]/[TIME] + "bring gloves" text) removed 3 Jul 2026 —
+// duty reminders are now sent per-member via DM, see utils/reminders.js.
 
 function weeklySnapshotMsg(data) {
   const { cardboard, plastic, electricity, water, energySource, weekLabel } = data;
@@ -65,4 +44,4 @@ function weeklySnapshotMsg(data) {
   );
 }
 
-module.exports = { rosterChangeMsg, fiveDayReminderMsg, oneDayReminderMsg, weeklySnapshotMsg };
+module.exports = { rosterChangeMsg, weeklySnapshotMsg };
