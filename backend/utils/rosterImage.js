@@ -14,6 +14,40 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const sharp = require('sharp');
+const fs   = require('fs');
+const path = require('path');
+
+// ─── Embedded fonts ───────────────────────────────────────────────────────
+// Root cause of the 4 Jul 2026 "all tofu boxes" incident: sharp rasterizes
+// SVG via librsvg, which needs actual font files present on the host to
+// render <text> — and "Arial"/"Georgia" don't exist on Linux at all, so on
+// Railway's bare Nixpacks container (no fonts installed) every glyph came
+// back as a missing-glyph box. It rendered "successfully" (no exception),
+// so the image-failure fail-safe never caught it — this is why.
+//
+// Fix: bundle DejaVu Sans/Serif TTF files in-repo (backend/assets/fonts/)
+// and embed them directly in the SVG as base64 @font-face data URIs. This
+// makes rendering independent of whatever fonts (if any) happen to be
+// installed on the host — works the same on Railway, locally, anywhere.
+const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+let FONT_CSS = null;
+function getFontCss() {
+  if (FONT_CSS !== null) return FONT_CSS; // cache after first render
+  try {
+    const sans     = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSans.ttf')).toString('base64');
+    const sansBold = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSans-Bold.ttf')).toString('base64');
+    const serifBold = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSerif-Bold.ttf')).toString('base64');
+    FONT_CSS = `<style>
+      @font-face { font-family: 'RosterSans'; src: url(data:font/ttf;base64,${sans}) format('truetype'); font-weight: normal; }
+      @font-face { font-family: 'RosterSans'; src: url(data:font/ttf;base64,${sansBold}) format('truetype'); font-weight: bold; }
+      @font-face { font-family: 'RosterSerif'; src: url(data:font/ttf;base64,${serifBold}) format('truetype'); font-weight: bold; }
+    </style>`;
+  } catch (err) {
+    console.warn('[rosterImage] could not load bundled fonts, falling back to system fonts:', err.message);
+    FONT_CSS = ''; // fall back to whatever system fonts exist (old behavior)
+  }
+  return FONT_CSS;
+}
 
 const COLORS = {
   SAT:     { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
@@ -77,6 +111,10 @@ async function generateRosterImage(monthLabel, slots) {
     throw new Error(`generateRosterImage: could not parse month label "${monthLabel}"`);
   }
 
+  const fontCss = getFontCss();
+  const SANS  = fontCss ? 'RosterSans, sans-serif' : 'Arial, sans-serif';
+  const SERIF = fontCss ? 'RosterSerif, serif' : 'Georgia, serif';
+
   const firstOfMonth = new Date(year, monthIndex, 1);
   const daysInMonth  = new Date(year, monthIndex + 1, 0).getDate();
   // getDay(): 0=Sun..6=Sat → convert to Monday-first column: 0=Mon..6=Sun
@@ -98,12 +136,13 @@ async function generateRosterImage(monthLabel, slots) {
   }
 
   let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += fontCss;
   svg += `<rect width="${width}" height="${height}" fill="#ffffff"/>`;
-  svg += `<text x="${width / 2}" y="${PAD + 48}" font-family="Georgia, 'Times New Roman', serif" font-size="36" font-weight="bold" fill="#1f2937" text-anchor="middle">${escapeXml(monthLabel)}</text>`;
+  svg += `<text x="${width / 2}" y="${PAD + 48}" font-family="${SERIF}" font-size="36" font-weight="bold" fill="#1f2937" text-anchor="middle">${escapeXml(monthLabel)}</text>`;
 
   for (let col = 0; col < 7; col++) {
     const x = PAD + col * CELL_W + CELL_W / 2;
-    svg += `<text x="${x}" y="${PAD + HEADER_H + 26}" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#6b7280" text-anchor="middle" letter-spacing="1">${DAY_HEADERS[col]}</text>`;
+    svg += `<text x="${x}" y="${PAD + HEADER_H + 26}" font-family="${SANS}" font-size="16" font-weight="bold" fill="#6b7280" text-anchor="middle" letter-spacing="1">${DAY_HEADERS[col]}</text>`;
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
@@ -114,7 +153,7 @@ async function generateRosterImage(monthLabel, slots) {
     const y = PAD + HEADER_H + DAYHEAD_H + row * CELL_H;
 
     svg += `<rect x="${x}" y="${y}" width="${CELL_W}" height="${CELL_H}" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5" rx="6"/>`;
-    svg += `<text x="${x + 12}" y="${y + 26}" font-family="Arial, sans-serif" font-size="16" fill="#374151">${day}</text>`;
+    svg += `<text x="${x + 12}" y="${y + 26}" font-family="${SANS}" font-size="16" fill="#374151">${day}</text>`;
 
     const entries   = byDay[day] || [];
     const shown     = entries.slice(0, MAX_ENTRIES_PER_DAY);
@@ -132,13 +171,13 @@ async function generateRosterImage(monthLabel, slots) {
 
       svg += `<rect x="${x + 8}" y="${entryY}" width="${CELL_W - 16}" height="${boxH}" fill="${c.bg}" stroke="${c.border}" stroke-width="1" rx="4"/>`;
       lines.forEach((line, i) => {
-        svg += `<text x="${x + 14}" y="${entryY + 16 + i * 16}" font-family="Arial, sans-serif" font-size="12.5" font-weight="${i === 0 ? 'bold' : 'normal'}" fill="${c.text}">${escapeXml(line)}</text>`;
+        svg += `<text x="${x + 14}" y="${entryY + 16 + i * 16}" font-family="${SANS}" font-size="12.5" font-weight="${i === 0 ? 'bold' : 'normal'}" fill="${c.text}">${escapeXml(line)}</text>`;
       });
       entryY += boxH + 6;
     }
 
     if (remaining > 0) {
-      svg += `<text x="${x + 14}" y="${entryY + 12}" font-family="Arial, sans-serif" font-size="11" font-style="italic" fill="#9ca3af">+${remaining} more</text>`;
+      svg += `<text x="${x + 14}" y="${entryY + 12}" font-family="${SANS}" font-size="11" font-style="italic" fill="#9ca3af">+${remaining} more</text>`;
     }
   }
 

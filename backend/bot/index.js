@@ -76,6 +76,10 @@ function getFallbackRoster() {
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GROUP_ID  = process.env.TELEGRAM_CHAT_ID;
+// Private test channel/group for trying out roster broadcasts (calendar
+// image, etc.) before they go out to the real group. Set TELEGRAM_TEST_CHAT_ID
+// on Railway to the test channel's chat ID (same -100... format as GROUP_ID).
+const TEST_GROUP_ID = process.env.TELEGRAM_TEST_CHAT_ID;
 
 if (!BOT_TOKEN) {
   console.warn('[Bot] TELEGRAM_BOT_TOKEN not set — bot will not start');
@@ -271,6 +275,20 @@ function recyclingLogsLive() {
 // /admin → "🔄 Toggle Swap Requests Live".
 function swapRequestsLive() {
   return getBoolSetting('swap_requests_live', 'SWAP_REQUESTS_LIVE');
+}
+// Roster broadcast test mode — when ON, "Send Roster to Group" posts to
+// TELEGRAM_TEST_CHAT_ID instead of the real group. Deliberately does NOT use
+// getBoolSetting() (that helper force-returns true once currentPhase() >= 3,
+// which would wrongly force test mode ON after the 11 Jul full launch — this
+// is a manual routing switch, unrelated to feature-rollout phases). Toggle
+// via /admin → "🧪 Toggle Roster Test Mode".
+async function rosterBroadcastTestMode() {
+  if (process.env.ROSTER_TEST_MODE === 'true') return true;
+  if (process.env.ROSTER_TEST_MODE === 'false') return false;
+  const supa = db.getClient();
+  if (!supa) return false;
+  const { data } = await supa.from('bot_settings').select('value').eq('key', 'roster_broadcast_test_mode').maybeSingle();
+  return data?.value === 'true';
 }
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
@@ -584,6 +602,7 @@ const adminMenu = new InlineKeyboard()
   .text('📇 Member Profiles', 'admin:profiles').row()
   .text('🚀 Toggle Recycling Logs Live', 'admin:togglerecycling').row()
   .text('🔄 Toggle Swap Requests Live', 'admin:toggleswaps').row()
+  .text('🧪 Toggle Roster Test Mode', 'admin:togglerostertest').row()
   .text('🔔 Test Reminders Now', 'admin:testreminders').row()
   .text('← Back', 'menu:main');
 
@@ -1686,12 +1705,17 @@ bot.callbackQuery('admin:sendcalendar', async (ctx) => {
   if (!GROUP_ID) {
     return ctx.editMessageText('⚠️ TELEGRAM_CHAT_ID not set.', { reply_markup: backToAdmin() });
   }
+  const testMode = await rosterBroadcastTestMode();
   const kb = new InlineKeyboard()
     .text('📅 Upcoming (next 2 months)', 'admin:sendcalendar:upcoming').row()
     .text('🗓 Specific Month', 'admin:sendcalendar:specific').row()
     .text('← Cancel', 'admin:menu');
   await ctx.editMessageText(
-    `📋 <b>Send Roster to Group</b>\n\nSend everything upcoming, or just one specific month?`,
+    `📋 <b>Send Roster to Group</b>\n\n` +
+    (testMode
+      ? `🧪 <b>Test mode is ON</b> — this will post to the test channel, not the real group.\n\n`
+      : '') +
+    `Send everything upcoming, or just one specific month?`,
     { parse_mode: 'HTML', reply_markup: kb }
   );
 });
@@ -1719,6 +1743,17 @@ bot.callbackQuery('admin:sendcalendar:specific', async (ctx) => {
 async function sendRosterToGroup(ctx, monthLabel) {
   const supa = db.getClient();
   const byMonth = {};
+
+  // Resolve destination chat — test mode routes to TELEGRAM_TEST_CHAT_ID
+  // instead of the real group. If test mode is on but the test chat ID isn't
+  // configured, fail loudly rather than silently posting to the real group.
+  const testMode = await rosterBroadcastTestMode();
+  const targetChatId = testMode ? TEST_GROUP_ID : GROUP_ID;
+  if (testMode && !TEST_GROUP_ID) {
+    const t = '⚠️ Roster Test Mode is ON but TELEGRAM_TEST_CHAT_ID isn\'t set on Railway. Set it, or turn test mode off, then try again.';
+    return ctx.editMessageText(t, { reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+  }
 
   if (monthLabel) {
     // Normalize typed input ("Jul 2026" → "July 2026") — roster_slots dates
@@ -1801,10 +1836,17 @@ async function sendRosterToGroup(ctx, monthLabel) {
       skipped.push({ month, reason: 'rosterImage module unavailable' });
       continue;
     }
+    // Image is now the ONLY post per month — per Brendon, the separate
+    // detailed text listing that used to follow it was redundant clutter
+    // (4 Jul 2026: "the listed roster got sent together with the image
+    // which I don't want"). Any per-slot notes (e.g. "Alan: confirmed")
+    // get folded into the photo caption instead, so that detail isn't lost.
     try {
       const png = await rosterImage.generateRosterImage(month, mSlots);
-      await bot.api.sendPhoto(GROUP_ID, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
-        caption: `📋 W2R Roster — ${month}`,
+      const noteLines = mSlots.filter(s => s.notes).map(s => `📌 ${fmtDateShort(s.date)}: ${s.notes}`);
+      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '') + (noteLines.length ? `\n\n${noteLines.join('\n')}` : '');
+      await bot.api.sendPhoto(targetChatId, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
+        caption: caption.slice(0, 1024), // Telegram caption limit
       });
     } catch (err) {
       console.warn('[sendcalendar] image generation/send failed:', err.message);
@@ -1815,23 +1857,16 @@ async function sendRosterToGroup(ctx, monthLabel) {
       continue;
     }
 
-    const lines = mSlots.map(s => {
-      const badge = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
-      const team  = (s.team || []).join(', ') || '—';
-      const note  = s.notes ? `\n   📌 ${s.notes}` : '';
-      return `${badge} <b>${fmtDateShort(s.date)}</b> (${s.session})\n   👥 ${team}${note}`;
-    }).join('\n\n');
-    await bot.api.sendMessage(GROUP_ID, `📋 <b>W2R Roster — ${month}</b>\n\n${lines}`, { parse_mode: 'HTML' })
-      .catch(err => console.warn('[sendcalendar] failed:', err.message));
     posted.push(month);
     await new Promise(r => setTimeout(r, 600));
   }
 
+  const dest = testMode ? 'the 🧪 test channel' : 'the group';
   let doneText;
   if (posted.length && !skipped.length) {
-    doneText = `✅ Roster for <b>${posted.join(' & ')}</b> posted to group.`;
+    doneText = `✅ Roster for <b>${posted.join(' & ')}</b> posted to ${dest}.`;
   } else if (posted.length && skipped.length) {
-    doneText = `⚠️ Posted: <b>${posted.join(' & ')}</b>.\nSkipped: <b>${skipped.map(s => `${s.month} (${s.reason})`).join(', ')}</b> — alert DM'd to ${ROSTER_ALERT_NAMES.join(', ')}.`;
+    doneText = `⚠️ Posted to ${dest}: <b>${posted.join(' & ')}</b>.\nSkipped: <b>${skipped.map(s => `${s.month} (${s.reason})`).join(', ')}</b> — alert DM'd to ${ROSTER_ALERT_NAMES.join(', ')}.`;
   } else {
     doneText = `❌ Nothing posted. Skipped: <b>${skipped.map(s => `${s.month} (${s.reason})`).join(', ')}</b> — alert DM'd to ${ROSTER_ALERT_NAMES.join(', ')}.`;
   }
@@ -1936,6 +1971,41 @@ bot.callbackQuery('admin:toggleswaps', (ctx) => handleAdminToggle(ctx, {
   onLiveMsg:   '✅ <b>Swap Requests is now LIVE</b> for all members! 🌿',
   onHiddenMsg: '🔒 <b>Swap Requests is now paused</b> for regular members (TLs still see it).',
 }));
+
+// Roster broadcast test mode — NOT handleAdminToggle/getBoolSetting, since
+// that helper force-returns true once currentPhase() >= 3 (11 Jul full
+// launch), which would wrongly force every future roster broadcast into the
+// test channel. This is a manual routing switch, independent of feature
+// rollout phases.
+bot.callbackQuery('admin:togglerostertest', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+
+  if (!TEST_GROUP_ID) {
+    return ctx.editMessageText(
+      '⚠️ <b>TELEGRAM_TEST_CHAT_ID</b> is not set on Railway — add your test channel\'s chat ID first, then this toggle will work.',
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
+  }
+
+  const wasOn   = await rosterBroadcastTestMode();
+  const goingOn = !wasOn;
+  const { error } = await setBoolSetting('roster_broadcast_test_mode', goingOn);
+  if (error) {
+    console.error('[Bot] toggle roster_broadcast_test_mode failed:', error.message);
+    return ctx.editMessageText(`⚠️ Couldn't save: ${error.message}`, { reply_markup: backToAdmin() });
+  }
+
+  const note = process.env.ROSTER_TEST_MODE === 'true'
+    ? `\n\n<i>Note: ROSTER_TEST_MODE=true is also set on Railway, which forces this on regardless of this toggle.</i>`
+    : '';
+  await ctx.editMessageText(
+    (goingOn
+      ? '🧪 <b>Roster Test Mode is now ON.</b> "Send Roster to Group" will post to the test channel instead of the real group.'
+      : '✅ <b>Roster Test Mode is now OFF.</b> "Send Roster to Group" will post to the real group again.') + note,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
 
 // ─── Admin: fire the daily reminder cron on demand ─────────────────────────────
 // Runs the exact same functions the 09:00 SGT cron calls (sendDutyReminders +
