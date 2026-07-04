@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const {
-  Bot, InlineKeyboard, webhookCallback, session,
+  Bot, InlineKeyboard, webhookCallback, session, InputFile,
 } = (() => {
   try { return require('grammy'); }
   catch { throw new Error('grammy not installed — run: npm install grammy'); }
@@ -17,6 +17,57 @@ const db     = require('../utils/supabase');
 const carbon = require('../utils/carbon');
 function getReminders() {
   try { return require('../utils/reminders'); } catch { return null; }
+}
+function getRosterImage() {
+  try { return require('../utils/rosterImage'); } catch (err) {
+    console.warn('[rosterImage] not available:', err.message);
+    return null;
+  }
+}
+
+// Who gets pinged when a roster broadcast hits a problem (image render/send
+// failure, or a team-name mismatch) — defaults to Brendon. Comma-separated
+// names, set ROSTER_ALERT_NAMES on Railway to add more.
+const ROSTER_ALERT_NAMES = (process.env.ROSTER_ALERT_NAMES || 'Brendon').split(',').map(n => n.trim());
+
+// DMs each name in ROSTER_ALERT_NAMES (looked up in `members` by telegram_id,
+// same pattern as reminders.js's ccDutyReminders/TL digest). Best-effort —
+// a missing/un-registered alert name is skipped silently, but any send
+// failure is logged so it shows up in Railway logs at least.
+async function notifyRosterAlert(message) {
+  const supa = db.getClient();
+  if (!supa) return;
+  for (const alertName of ROSTER_ALERT_NAMES) {
+    const { data: person } = await supa.from('members').select('telegram_id').ilike('name', alertName).single();
+    if (!person?.telegram_id) continue;
+    await bot.api.sendMessage(person.telegram_id, message, { parse_mode: 'HTML' })
+      .catch(err => console.warn('[rosterAlert] failed to DM', alertName, ':', err.message));
+  }
+}
+
+// Cross-checks every team member name in a batch of roster_slots against the
+// current active member_roster (name or alias, case-insensitive) — catches
+// typos, stale names, or anyone who's left/been deactivated (e.g. Boone)
+// still sitting in roster_slots.team before it goes out to the whole group.
+// Returns [] if everything matches.
+async function findRosterNameMismatches(mSlots) {
+  const supa = db.getClient();
+  if (!supa) return [];
+  const roster = await db.getMemberRoster(); // is_active = true only
+  const validNames = new Set();
+  for (const m of roster) {
+    validNames.add(m.name.toLowerCase());
+    for (const a of (m.aliases || [])) validNames.add(a.toLowerCase());
+  }
+  const mismatches = [];
+  for (const s of mSlots) {
+    for (const name of (s.team || [])) {
+      if (!validNames.has(String(name).toLowerCase())) {
+        mismatches.push({ date: s.date, session: s.session, name });
+      }
+    }
+  }
+  return mismatches;
 }
 
 function getFallbackRoster() {
@@ -76,6 +127,7 @@ bot.use(session({
     awaitingProfileDob:        false,
     // Admin flows
     awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
+    awaitingSendCalendarMonth: false, // TL: waiting for month input for Send Roster to Group
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
@@ -282,6 +334,10 @@ async function blockedBySwapGate(ctx) {
   const opts = { parse_mode: 'HTML', reply_markup: backToMain() };
   await ctx.editMessageText(text, opts).catch(() => ctx.reply(text, opts));
   return true;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 }
 
 function fmtSlot(slot) {
@@ -1603,37 +1659,130 @@ bot.callbackQuery('admin:collect', async (ctx) => {
   );
 });
 
-// Admin: Send Roster to Group
+// Admin: Send Roster to Group — choose "upcoming" (old default: next 2
+// months, auto-grouped) or a specific month (added 4 Jul 2026 per Brendon).
 bot.callbackQuery('admin:sendcalendar', async (ctx) => {
   await ctx.answerCallbackQuery();
   if (!GROUP_ID) {
     return ctx.editMessageText('⚠️ TELEGRAM_CHAT_ID not set.', { reply_markup: backToAdmin() });
   }
+  const kb = new InlineKeyboard()
+    .text('📅 Upcoming (next 2 months)', 'admin:sendcalendar:upcoming').row()
+    .text('🗓 Specific Month', 'admin:sendcalendar:specific').row()
+    .text('← Cancel', 'admin:menu');
+  await ctx.editMessageText(
+    `📋 <b>Send Roster to Group</b>\n\nSend everything upcoming, or just one specific month?`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
 
+bot.callbackQuery('admin:sendcalendar:upcoming', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return sendRosterToGroup(ctx, null);
+});
+
+bot.callbackQuery('admin:sendcalendar:specific', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  ctx.session.awaitingSendCalendarMonth = true;
+  await ctx.editMessageText(
+    `🗓 <b>Send Roster to Group — Specific Month</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
+// Fetches + posts the roster to GROUP_ID. monthLabel === null → old default
+// behavior (everything in the next 2 months from today, auto-grouped and
+// posted one message per month found). monthLabel = a specific month string
+// (e.g. "Aug 2026") → only that month, straight from roster_slots — no
+// generated Sat/Sun placeholder fallback here, since posting placeholder
+// dates with no real team assignments into the group would be misleading.
+async function sendRosterToGroup(ctx, monthLabel) {
   const supa = db.getClient();
-  let slots  = [];
-  if (supa) {
-    const td    = today();
-    const limit = new Date(); limit.setMonth(limit.getMonth() + 2);
-    const { data } = await supa.from('roster_slots')
-      .select('*').gte('date', td)
-      .lte('date', limit.toISOString().split('T')[0])
-      .order('date');
-    slots = data || [];
-  }
-  if (!slots.length) slots = getFallbackRoster().filter(s => s.date >= today());
-  if (!slots.length) {
-    return ctx.editMessageText('No upcoming roster slots found.', { reply_markup: backToAdmin() });
+  const byMonth = {};
+
+  if (monthLabel) {
+    let slots = [];
+    if (supa) {
+      const { data: allSlots } = await supa.from('roster_slots').select('*').order('date');
+      slots = (allSlots || []).filter(s => {
+        const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+        return label.toLowerCase() === monthLabel.toLowerCase();
+      });
+    }
+    if (!slots.length) {
+      const t = `No roster created for <b>${monthLabel}</b> yet.`;
+      return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+        .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+    }
+    byMonth[monthLabel] = slots;
+  } else {
+    let slots = [];
+    if (supa) {
+      const td    = today();
+      const limit = new Date(); limit.setMonth(limit.getMonth() + 2);
+      const { data } = await supa.from('roster_slots')
+        .select('*').gte('date', td)
+        .lte('date', limit.toISOString().split('T')[0])
+        .order('date');
+      slots = data || [];
+    }
+    if (!slots.length) slots = getFallbackRoster().filter(s => s.date >= today());
+    if (!slots.length) {
+      return ctx.editMessageText('No upcoming roster slots found.', { reply_markup: backToAdmin() });
+    }
+    for (const s of slots) {
+      const m = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+      if (!byMonth[m]) byMonth[m] = [];
+      byMonth[m].push(s);
+    }
   }
 
-  const byMonth = {};
-  for (const s of slots) {
-    const m = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
-    if (!byMonth[m]) byMonth[m] = [];
-    byMonth[m].push(s);
-  }
+  const rosterImage = getRosterImage();
+  const posted  = [];
+  const skipped = [];
 
   for (const [month, mSlots] of Object.entries(byMonth)) {
+    // Safety check 1: team names must match the current active member_roster
+    // (name or alias) — catches typos and stale names (e.g. someone who's
+    // left, like Boone) before they go out to the whole group. If anything
+    // doesn't match, skip this month entirely and alert the TL to fix the
+    // data rather than posting something wrong.
+    const mismatches = await findRosterNameMismatches(mSlots);
+    if (mismatches.length) {
+      const detail = mismatches.map(m => `• ${fmtDateShort(m.date)} (${m.session}): "${m.name}"`).join('\n');
+      await notifyRosterAlert(
+        `⚠️ <b>Roster broadcast skipped — ${month}</b>\n\n` +
+        `These team names in <code>roster_slots</code> don't match any active member_roster name/alias:\n${detail}\n\n` +
+        `Fix the name(s) (typo, or the person needs re-adding/re-activating) and re-run Send Roster to Group.`
+      );
+      skipped.push({ month, reason: 'name mismatch' });
+      continue;
+    }
+
+    // Calendar image next. If the sharp/rosterImage module is missing, or
+    // rendering/sending it fails for any reason, do NOT fall back to
+    // text-only — silently posting a degraded version could look like it
+    // worked when it didn't. Instead skip this month, alert Brendon with the
+    // exact error so it can be pasted back here to debug, and move on.
+    if (!rosterImage) {
+      await notifyRosterAlert(`⚠️ <b>Roster broadcast skipped — ${month}</b>\n\nrosterImage module isn't available (sharp not installed?). Nothing was posted to the group.`);
+      skipped.push({ month, reason: 'rosterImage module unavailable' });
+      continue;
+    }
+    try {
+      const png = await rosterImage.generateRosterImage(month, mSlots);
+      await bot.api.sendPhoto(GROUP_ID, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
+        caption: `📋 W2R Roster — ${month}`,
+      });
+    } catch (err) {
+      console.warn('[sendcalendar] image generation/send failed:', err.message);
+      await notifyRosterAlert(
+        `⚠️ <b>Roster broadcast skipped — ${month}</b>\n\nImage generation/send failed, nothing was posted to the group. Error:\n<code>${escapeHtml(err.message)}</code>`
+      );
+      skipped.push({ month, reason: 'image failed' });
+      continue;
+    }
+
     const lines = mSlots.map(s => {
       const badge = s.session === 'GPC' ? '🟣' : s.session === 'SAT' ? '🟡' : '🟢';
       const team  = (s.team || []).join(', ') || '—';
@@ -1642,14 +1791,21 @@ bot.callbackQuery('admin:sendcalendar', async (ctx) => {
     }).join('\n\n');
     await bot.api.sendMessage(GROUP_ID, `📋 <b>W2R Roster — ${month}</b>\n\n${lines}`, { parse_mode: 'HTML' })
       .catch(err => console.warn('[sendcalendar] failed:', err.message));
+    posted.push(month);
     await new Promise(r => setTimeout(r, 600));
   }
 
-  await ctx.editMessageText(
-    `✅ Roster for <b>${Object.keys(byMonth).join(' & ')}</b> posted to group.`,
-    { parse_mode: 'HTML', reply_markup: backToAdmin() }
-  );
-});
+  let doneText;
+  if (posted.length && !skipped.length) {
+    doneText = `✅ Roster for <b>${posted.join(' & ')}</b> posted to group.`;
+  } else if (posted.length && skipped.length) {
+    doneText = `⚠️ Posted: <b>${posted.join(' & ')}</b>.\nSkipped: <b>${skipped.map(s => `${s.month} (${s.reason})`).join(', ')}</b> — alert DM'd to ${ROSTER_ALERT_NAMES.join(', ')}.`;
+  } else {
+    doneText = `❌ Nothing posted. Skipped: <b>${skipped.map(s => `${s.month} (${s.reason})`).join(', ')}</b> — alert DM'd to ${ROSTER_ALERT_NAMES.join(', ')}.`;
+  }
+  await ctx.editMessageText(doneText, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+    .catch(() => ctx.reply(doneText, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+}
 
 // Admin: Edit Member Availability — ask for name
 bot.callbackQuery('admin:editavail', async (ctx) => {
@@ -2128,6 +2284,12 @@ bot.on('message:text', async (ctx) => {
   // Monthly "anything happening this month?" note — final step after Submit
   if (ctx.session.awaitingMonthlyNote) {
     return finalizeAvailability(ctx, text);
+  }
+
+  // Admin: send roster to group — specific month
+  if (ctx.session.awaitingSendCalendarMonth) {
+    ctx.session.awaitingSendCalendarMonth = false;
+    return sendRosterToGroup(ctx, text.trim());
   }
 
   // Admin: collect availability month
