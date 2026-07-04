@@ -807,7 +807,7 @@ bot.callbackQuery(/^profile:service:(SAT|SUN|BOTH)$/, async (ctx) => {
   ctx.session.pendingProfile.service  = code;
   ctx.session.awaitingProfileService  = false;
   ctx.session.awaitingProfileCG       = true;
-  const text = `✅ Service: <b>${serviceLabel(code)}</b>\n\n👥 Which CG (cell group) are you part of?`;
+  const text = `✅ Service: <b>${serviceLabel(code)}</b>\n\n👥 Which CG are you part of?`;
   await ctx.editMessageText(text, { parse_mode: 'HTML' }).catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
 });
 
@@ -2030,7 +2030,7 @@ bot.on('message:text', async (ctx) => {
   // Profile: CG — required, every member has one
   if (ctx.session.awaitingProfileCG && ctx.session.pendingProfile) {
     if (!text || text.length < 2 || /^(none|skip|-|n\/a)$/i.test(text)) {
-      return ctx.reply(`👥 Which CG (cell group) are you part of?`, { parse_mode: 'HTML' });
+      return ctx.reply(`👥 Which CG are you part of?`, { parse_mode: 'HTML' });
     }
     ctx.session.pendingProfile.cg         = text;
     ctx.session.awaitingProfileCG         = false;
