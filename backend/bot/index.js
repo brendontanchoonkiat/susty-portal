@@ -97,6 +97,7 @@ bot.use(session({
     logSession:         null,   // { type, sessionDate, measurements: [{kg, fileId, imageUrl}] } — active multi-measurement log flow
     awaitingLogPhoto:   false,  // waiting for a photo for the current measurement in logSession
     awaitingLogKg:      false,  // waiting for a weight for the current measurement (after its photo)
+    editingIndex:       null,   // measurements[] index being edited (weight or photo) from the review/edit screen — null when just adding a new one
     awaitingAnomalyReason: false, // waiting for a reason after an unusually high total was confirmed
     pendingAnomaly:        null,  // { ls, name, total } — staged until the anomaly reason step finishes
     pendingSwapDate:    null,   // ISO date the member picked from their upcoming-duties list
@@ -1146,6 +1147,7 @@ async function cancelLogFlow(ctx, { viaButton = false } = {}) {
   ctx.session.awaitingLogPhoto = false;
   ctx.session.awaitingLogKg    = false;
   ctx.session.awaitingLogDate  = null;
+  ctx.session.editingIndex     = null;
 
   const kb = new InlineKeyboard();
   if (type) kb.text(`🔄 Start Over — ${type === 'cardboard' ? 'Cardboard' : 'Plastic'}`, `action:log:${type}`).row();
@@ -1211,10 +1213,14 @@ bot.callbackQuery('log:more', async (ctx) => {
     .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: logPromptKb() }));
 });
 
-bot.callbackQuery('log:done', async (ctx) => {
-  await ctx.answerCallbackQuery();
+// Shared review/confirmation screen — used after "That's all" and whenever an
+// edit (weight change, photo replace, delete) finishes and hands back control.
+// Always clears editingIndex so a stray in-progress edit can't leak into a
+// later step.
+async function renderLogReview(ctx) {
   const ls = ctx.session.logSession;
   if (!ls || !ls.measurements.length) return;
+  ctx.session.editingIndex = null;
 
   const total = Math.round(ls.measurements.reduce((s, m) => s + m.kg, 0) * 100) / 100;
   const lines = ls.measurements.map((m, i) => `  ${i + 1}. ${m.kg} kg`).join('\n');
@@ -1222,15 +1228,112 @@ bot.callbackQuery('log:done', async (ctx) => {
   const text  =
     `${emoji} <b>Confirm ${ls.type} log — ${fmtDate(ls.sessionDate)}</b>\n\n${lines}\n\n` +
     `<b>Total: ${total} kg</b>\n\nSave this?`;
-  const kb = new InlineKeyboard().text('✅ Confirm', 'log:confirm').text('✖️ Cancel', 'log:cancel');
+  const kb = new InlineKeyboard()
+    .text('✅ Confirm', 'log:confirm').text('✏️ Edit', 'log:edit').row()
+    .text('✖️ Cancel', 'log:cancel');
 
   await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
     .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+}
+
+bot.callbackQuery('log:done', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return renderLogReview(ctx);
 });
 
 bot.callbackQuery('log:cancel', async (ctx) => {
   await ctx.answerCallbackQuery();
   return cancelLogFlow(ctx, { viaButton: true });
+});
+
+// ─── Edit flow (from the review screen) ───────────────────────────────────────
+// Lets a member fix a mistake at final review instead of cancelling and
+// restarting the whole session: change a measurement's weight, re-send its
+// photo, or delete it outright. Nothing is saved to the DB until Confirm is
+// tapped on the review screen, so all of this is safe to poke at freely.
+function editListKb(ls) {
+  const kb = new InlineKeyboard();
+  ls.measurements.forEach((m, i) => {
+    kb.text(`✏️ #${i + 1} — ${m.kg} kg`, `log:edititem:${i}`).row();
+  });
+  kb.text('➕ Add another measurement', 'log:more').row();
+  kb.text('← Back to review', 'log:backreview');
+  return kb;
+}
+
+bot.callbackQuery('log:edit', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const ls = ctx.session.logSession;
+  if (!ls || !ls.measurements.length) return renderLogReview(ctx);
+  const text = `✏️ <b>Edit entries</b>\n\nTap a measurement to change its weight, replace its photo, or delete it.`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: editListKb(ls) })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: editListKb(ls) }));
+});
+
+bot.callbackQuery('log:backreview', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  return renderLogReview(ctx);
+});
+
+bot.callbackQuery(/^log:edititem:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const idx = parseInt(ctx.match[1], 10);
+  const ls  = ctx.session.logSession;
+  if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
+  const m  = ls.measurements[idx];
+  const kb = new InlineKeyboard()
+    .text('⚖️ Change weight', `log:editkg:${idx}`).row()
+    .text('📷 Re-send photo', `log:editphoto:${idx}`).row()
+    .text('🗑️ Delete this entry', `log:delitem:${idx}`).row()
+    .text('← Back', 'log:edit');
+  const text = `Measurement #${idx + 1} — currently <b>${m.kg} kg</b>.\n\nWhat would you like to do?`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+});
+
+bot.callbackQuery(/^log:editkg:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const idx = parseInt(ctx.match[1], 10);
+  const ls  = ctx.session.logSession;
+  if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
+  ctx.session.editingIndex  = idx;
+  ctx.session.awaitingLogKg = true;
+  const text = `⚖️ Enter the new weight for measurement #${idx + 1} (currently ${ls.measurements[idx].kg} kg):`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: logPromptKb() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: logPromptKb() }));
+});
+
+bot.callbackQuery(/^log:editphoto:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const idx = parseInt(ctx.match[1], 10);
+  const ls  = ctx.session.logSession;
+  if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
+  ctx.session.editingIndex     = idx;
+  ctx.session.awaitingLogPhoto = true;
+  const text = `📷 Send the new photo for measurement #${idx + 1}.`;
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: logPromptKb() })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: logPromptKb() }));
+});
+
+bot.callbackQuery(/^log:delitem:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const idx = parseInt(ctx.match[1], 10);
+  const ls  = ctx.session.logSession;
+  if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
+  ls.measurements.splice(idx, 1);
+
+  if (!ls.measurements.length) {
+    // Nothing left — don't dead-end; go straight back to "send a photo"
+    // rather than forcing a full cancel/restart.
+    ctx.session.awaitingLogPhoto = true;
+    ctx.session.awaitingLogKg    = false;
+    ctx.session.editingIndex     = null;
+    const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
+    const text  = `🗑️ Deleted. No measurements left.\n\n${emoji} Send a photo of measurement #1.`;
+    return ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: logPromptKb() })
+      .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: logPromptKb() }));
+  }
+  return renderLogReview(ctx);
 });
 
 // Compares a just-logged total against the trailing average for that type
@@ -2170,6 +2273,17 @@ bot.on('message:photo', async (ctx) => {
       console.warn('[Bot] Image upload failed:', err.message);
     }
 
+    // Re-sending a photo for an existing measurement from the edit screen —
+    // replace in place, weight is untouched, straight back to review.
+    if (ctx.session.editingIndex != null && ls.measurements[ctx.session.editingIndex]) {
+      const idx = ctx.session.editingIndex;
+      ls.measurements[idx].fileId   = photo.file_id;
+      ls.measurements[idx].imageUrl = imageUrl;
+      ctx.session.editingIndex = null;
+      await ctx.reply(`📷 Photo for measurement #${idx + 1} updated.`, { parse_mode: 'HTML' });
+      return renderLogReview(ctx);
+    }
+
     ls.measurements.push({ kg: null, fileId: photo.file_id, imageUrl });
     ctx.session.awaitingLogKg = true;
     const emoji = ls.type === 'cardboard' ? '📦' : '🍶';
@@ -2358,6 +2472,17 @@ bot.on('message:text', async (ctx) => {
     }
     ctx.session.awaitingLogKg = false;
     const ls   = ctx.session.logSession;
+
+    // Changing the weight of an existing measurement from the edit screen —
+    // update in place, straight back to review (not the "add another" prompt).
+    if (ctx.session.editingIndex != null && ls.measurements[ctx.session.editingIndex]) {
+      const idx = ctx.session.editingIndex;
+      ls.measurements[idx].kg  = kg;
+      ctx.session.editingIndex = null;
+      await ctx.reply(`⚖️ Measurement #${idx + 1} updated to <b>${kg} kg</b>.`, { parse_mode: 'HTML' });
+      return renderLogReview(ctx);
+    }
+
     const last = ls.measurements[ls.measurements.length - 1];
     last.kg    = kg;
 
