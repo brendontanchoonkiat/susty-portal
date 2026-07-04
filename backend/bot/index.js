@@ -59,9 +59,12 @@ bot.use(session({
     availDates:            [],     // roster dates for that month
     availSlots:            [],     // full slot objects { date, session } for keyboard rebuild
     availSelected:         [],     // dates member marked unavailable
-    // Unavailability reasons
-    unavailReasons:        {},     // { date: reason }
-    awaitingUnavailReason: null,   // date string currently waiting for reason text
+    // Sequential per-date unavailability reason collection (after Submit,
+    // one date at a time — reasons live in pendingAvailSave.reasons as
+    // they're collected, not here)
+    awaitingSeqUnavailReason: null, // date currently awaiting a typed reason
+    availReasonQueue:      [],     // remaining unavail dates still needing a reason
+    availReasonTotal:      0,      // for the "Reason X of N" progress line
     // Monthly "anything happening?" note (asked once per availability submission)
     pendingAvailSave:      null,   // { month, name, avail, unavail, reasons } — staged until the note step finishes
     awaitingMonthlyNote:   false,
@@ -407,22 +410,6 @@ async function getMonthSlots(monthLabel) {
     generatedFallback = slots.length > 0;
   }
   return { slots, generatedFallback };
-}
-
-// Splits roster slots into { shown, excluded } based on a member's
-// registered service_preference (SAT/SUN/BOTH, from profile collection).
-// Members registered for only one day never even see the other day's dates
-// on their availability list — those are auto-treated as unavailable since
-// they never signed up to serve that day. GPC and any non-SAT/SUN session
-// stay visible to everyone regardless of preference.
-function splitSlotsByServicePreference(slots, servicePref) {
-  if (servicePref === 'SAT') {
-    return { shown: slots.filter(s => s.session !== 'SUN'), excluded: slots.filter(s => s.session === 'SUN') };
-  }
-  if (servicePref === 'SUN') {
-    return { shown: slots.filter(s => s.session !== 'SAT'), excluded: slots.filter(s => s.session === 'SAT') };
-  }
-  return { shown: slots, excluded: [] }; // BOTH, or not set — show everything
 }
 
 // Returns "August 2026" for the month after today
@@ -1294,24 +1281,18 @@ bot.callbackQuery('menu:avail', async (ctx) => {
       .catch(() => ctx.reply(noDatesText, { reply_markup: backToMain() }));
   }
 
-  // Members registered for only Sat or only Sun never see the other day's
-  // dates at all — those are auto-marked unavailable at submit time
-  // regardless of what's in session (see avail:submit).
-  const servicePref = await db.getServicePreference(name);
-  const { shown: shownSlots } = splitSlotsByServicePreference(monthSlots, servicePref);
-  const prefNote = servicePref === 'SAT' || servicePref === 'SUN'
-    ? `\n\n<i>You're registered for ${servicePref === 'SAT' ? 'Saturdays' : 'Sundays'} only, so only those dates are shown — the other day is automatically marked unavailable for you.</i>`
-    : '';
-
+  // Full month shown regardless of registered service day (reverted 3 Jul
+  // 2026 per Brendon after trial feedback — service_preference is still
+  // captured at registration, it's just no longer used to hide dates here).
   ctx.session.availMonth    = targetMonth;
-  ctx.session.availDates    = shownSlots.map(s => s.date);
-  ctx.session.availSlots    = shownSlots;
+  ctx.session.availDates    = monthSlots.map(s => s.date);
+  ctx.session.availSlots    = monthSlots;
   ctx.session.availSelected = [];
 
   await ctx.editMessageText(
-    `📅 <b>Unavailability — ${targetMonth}</b>\n\nTap any date you <b>cannot</b> serve. You'll be asked for a reason.\nLeave dates untouched if you're available.\n\n` +
-    `<i>❌ = can't serve  ·  no mark = available</i>${prefNote}`,
-    { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(shownSlots, []) }
+    `📅 <b>Unavailability — ${targetMonth}</b>\n\nTap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n` +
+    `<i>❌ = can't serve  ·  no mark = available</i>`,
+    { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
   );
 });
 
@@ -1340,7 +1321,6 @@ bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
     ctx.session.availSelected = [...unavail, date];
   } else {
     ctx.session.availSelected = unavail.filter(d => d !== date);
-    if (ctx.session.unavailReasons) delete ctx.session.unavailReasons[date];
   }
 
   // Recover slots from session, or fall back to reading dates from the keyboard buttons
@@ -1355,39 +1335,19 @@ bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
     ctx.session.availDates = dates;
   }
 
+  // Per-date reason prompts removed 3 Jul 2026 per Brendon's trial feedback —
+  // they cluttered the chat and buried the one question that actually
+  // matters (the end-of-flow "anything happening this month?" note). Toggling
+  // now just updates the keyboard in place; no follow-up message.
   await ctx.editMessageReplyMarkup({
     reply_markup: buildAvailKeyboard(slots, ctx.session.availSelected),
   }).catch(() => {});
-
-  // If just marked unavailable, ask for reason
-  if (isNowUnavail) {
-    ctx.session.awaitingUnavailReason = date;
-    await ctx.reply(
-      `📝 Why can't you make it on <b>${fmtDate(date)}</b>?\n\n<i>Type your reason below, or tap Skip.</i>`,
-      { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('Skip', 'avail:skipreason') }
-    );
-  }
-});
-
-bot.callbackQuery('avail:skipreason', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  const date = ctx.session.awaitingUnavailReason;
-  if (date) {
-    if (!ctx.session.unavailReasons) ctx.session.unavailReasons = {};
-    ctx.session.unavailReasons[date] = '';
-    ctx.session.awaitingUnavailReason = null;
-  }
-  await ctx.editMessageText(
-    `❌ <b>${fmtDate(date)}</b> marked as unavailable.\n\n<i>Tap more dates above, or Submit when done.</i>`,
-    { parse_mode: 'HTML' }
-  ).catch(() => {});
 });
 
 bot.callbackQuery('avail:submit', async (ctx) => {
   await ctx.answerCallbackQuery();
   const name    = await resolveName(ctx);
   const unavail = ctx.session.availSelected || [];
-  const reasons = ctx.session.unavailReasons || {};
 
   // Recover month from session or parse from the message header text
   let month = ctx.session.availMonth;
@@ -1417,37 +1377,70 @@ bot.callbackQuery('avail:submit', async (ctx) => {
       .catch(() => ctx.reply(expiredText, { reply_markup: backToMain() }));
   }
 
-  // Independently re-derive dates outside this member's registered service
-  // day and fold them into unavail — regardless of whether this flow started
-  // via self-service (session already filtered) or a TL broadcast (session
-  // may be empty here, reconstructed only from the shown keyboard above, so
-  // it never even contains the hidden dates to filter out in the first
-  // place). Always re-checking against the DB here means it's correct either way.
-  let finalUnavail = unavail;
-  if (name) {
-    const servicePref = await db.getServicePreference(name);
-    if (servicePref === 'SAT' || servicePref === 'SUN') {
-      const { slots: fullMonthSlots } = await getMonthSlots(month);
-      const { excluded } = splitSlotsByServicePreference(fullMonthSlots, servicePref);
-      for (const s of excluded) {
-        if (!finalUnavail.includes(s.date)) finalUnavail = [...finalUnavail, s.date];
-        if (!reasons[s.date]) reasons[s.date] = `Not their registered service day (${servicePref === 'SAT' ? 'Sat' : 'Sun'} only)`;
-      }
-    }
+  // Stage everything. Reasons are collected one date at a time below — a
+  // tester found a single combined free-text ask confusing — then a clearly
+  // signposted final "anything else this month?" question closes the flow,
+  // so nobody mistakes finishing the reasons for finishing the whole thing
+  // (3 Jul 2026 trial feedback: she didn't realize she still had to come
+  // back for the monthly-happenings question).
+  ctx.session.pendingAvailSave = { month, name, avail, unavail, reasons: {} };
+
+  if (unavail.length) {
+    ctx.session.availReasonQueue = [...unavail];
+    ctx.session.availReasonTotal = unavail.length;
+    return askNextUnavailReason(ctx);
   }
+  return askMonthlyNote(ctx);
+});
 
-  // Stage everything and ask one more general question before actually saving.
-  ctx.session.pendingAvailSave   = { month, name, avail, unavail: finalUnavail, reasons };
-  ctx.session.awaitingMonthlyNote = true;
+// Asks for a reason for the next unavailable date in the queue, one at a
+// time, with a "X of N" progress indicator so it's clear how many are left
+// and that more steps are coming. Skip is per-date, not all-or-nothing.
+async function askNextUnavailReason(ctx) {
+  const queue = ctx.session.availReasonQueue || [];
+  const date  = queue.shift();
+  ctx.session.availReasonQueue         = queue;
+  ctx.session.awaitingSeqUnavailReason = date;
 
+  const total = ctx.session.availReasonTotal || 1;
+  const idx   = total - queue.length;
   const text =
-    `📝 Last thing — is anything happening this month we should know about?\n\n` +
-    `<i>e.g. celebrating a wedding or birthday, an unusually busy work stretch, travel, exams — anything that might affect your availability or energy for duty.</i>\n\n` +
-    `Type your answer, or tap Skip.`;
-  const kb = new InlineKeyboard().text('Skip', 'avail:skipmonthlynote');
-
+    `📝 <b>Reason ${idx} of ${total}</b>\n\nWhy can't you make it on <b>${fmtDateShort(date)}</b>?\n\n` +
+    `<i>Type a reason, or tap Skip.</i>`;
+  const kb = new InlineKeyboard().text('Skip', 'avail:seqreason:skip');
   await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
     .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+}
+
+// Called after a reason is typed or skipped for the current date — moves to
+// the next queued date, or (once every date is done) clearly hands off to
+// the one final "anything else this month?" question, explicitly flagged as
+// the last step so it isn't missed.
+async function continueUnavailReasonFlow(ctx) {
+  if ((ctx.session.availReasonQueue || []).length) {
+    return askNextUnavailReason(ctx);
+  }
+  return askMonthlyNote(ctx, { justFinishedReasons: true });
+}
+
+async function askMonthlyNote(ctx, { justFinishedReasons = false } = {}) {
+  ctx.session.awaitingMonthlyNote = true;
+  const text = justFinishedReasons
+    ? `✅ Got all your reasons!\n\n📝 <b>One last question</b> — anything else happening this month we should know about? <i>(celebrations, a busy work period, travel, exams, etc.)</i>\n\nType your answer, or tap Skip.`
+    : `📝 Last thing — is anything happening this month we should know about?\n\n` +
+      `<i>e.g. celebrating a wedding or birthday, an unusually busy work stretch, travel, exams — anything that might affect your availability or energy for duty.</i>\n\n` +
+      `Type your answer, or tap Skip.`;
+  const kb = new InlineKeyboard().text('Skip', 'avail:skipmonthlynote');
+  await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }));
+}
+
+bot.callbackQuery('avail:seqreason:skip', async (ctx) => {
+  await ctx.answerCallbackQuery();
+  const date = ctx.session.awaitingSeqUnavailReason;
+  if (date && ctx.session.pendingAvailSave) ctx.session.pendingAvailSave.reasons[date] = '';
+  ctx.session.awaitingSeqUnavailReason = null;
+  return continueUnavailReasonFlow(ctx);
 });
 
 async function finalizeAvailability(ctx, monthlyNote) {
@@ -1464,12 +1457,13 @@ async function finalizeAvailability(ctx, monthlyNote) {
     : '';
   await db.saveAvailability(month, name, avail, unavail, notes);
 
-  ctx.session.availMonth            = null;
-  ctx.session.availDates            = [];
-  ctx.session.availSlots            = [];
-  ctx.session.availSelected         = [];
-  ctx.session.unavailReasons        = {};
-  ctx.session.awaitingUnavailReason = null;
+  ctx.session.availMonth               = null;
+  ctx.session.availDates               = [];
+  ctx.session.availSlots               = [];
+  ctx.session.availSelected            = [];
+  ctx.session.awaitingSeqUnavailReason = null;
+  ctx.session.availReasonQueue         = [];
+  ctx.session.availReasonTotal         = 0;
 
   const lines = unavail.length
     ? unavail.map(d => {
@@ -1494,12 +1488,13 @@ bot.callbackQuery('avail:skipmonthlynote', async (ctx) => {
 
 bot.callbackQuery('avail:cancel', async (ctx) => {
   await ctx.answerCallbackQuery();
-  ctx.session.availMonth            = null;
-  ctx.session.availDates            = [];
-  ctx.session.availSlots            = [];
-  ctx.session.availSelected         = [];
-  ctx.session.unavailReasons        = {};
-  ctx.session.awaitingUnavailReason = null;
+  ctx.session.availMonth               = null;
+  ctx.session.availDates               = [];
+  ctx.session.availSlots               = [];
+  ctx.session.availSelected            = [];
+  ctx.session.awaitingSeqUnavailReason = null;
+  ctx.session.availReasonQueue         = [];
+  ctx.session.availReasonTotal         = 0;
   ctx.session.pendingAvailSave      = null;
   ctx.session.awaitingMonthlyNote   = false;
   const kb = await buildMainMenu(ctx);
@@ -1547,28 +1542,15 @@ bot.command('collect', async (ctx) => {
   const members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
   if (!members.length) return ctx.reply('⚠️ No registered members yet.');
 
-  // Look up everyone's registered service day once, so each member only
-  // sees dates matching Sat/Sun/Both — the other day is simply never shown
-  // and gets auto-marked unavailable when they submit (see avail:submit).
-  const prefByName = new Map((await db.getMemberRoster()).map(r => [r.name.toLowerCase(), r.service_preference]));
-
   let sent = 0;
   for (const m of members) {
     try {
-      const pref = prefByName.get((m.name || '').toLowerCase());
-      const { shown } = splitSlotsByServicePreference(monthSlots, pref);
-      const prefNote = pref === 'SAT' || pref === 'SUN'
-        ? `\n\n<i>You're registered for ${pref === 'SAT' ? 'Saturdays' : 'Sundays'} only, so only those dates are shown — the other day is automatically marked unavailable for you.</i>`
-        : '';
-      const kb = buildAvailKeyboard(shown, []);
+      const kb = buildAvailKeyboard(monthSlots, []);
       await bot.api.sendMessage(
         m.telegram_id,
-        `📅 <b>Unavailability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve. You'll be asked for a reason each time.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>${prefNote}`,
+        `📅 <b>Unavailability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
         { parse_mode: 'HTML', reply_markup: kb }
       );
-      // Placeholder default (everything unavailable until they submit) uses
-      // the FULL month slot list — correctly includes their non-preferred
-      // day too, so nothing needs special-casing here.
       await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date));
       sent++;
     } catch (err) {
@@ -2135,16 +2117,12 @@ bot.on('message:text', async (ctx) => {
     );
   }
 
-  // Unavailability reason
-  if (ctx.session.awaitingUnavailReason) {
-    const date = ctx.session.awaitingUnavailReason;
-    if (!ctx.session.unavailReasons) ctx.session.unavailReasons = {};
-    ctx.session.unavailReasons[date] = text;
-    ctx.session.awaitingUnavailReason = null;
-    return ctx.reply(
-      `❌ <b>${fmtDate(date)}</b> marked as unavailable.\n<i>Reason: ${text}</i>\n\nTap more dates above, or Submit when done.`,
-      { parse_mode: 'HTML' }
-    );
+  // Sequential per-date unavailability reason (one at a time, after Submit)
+  if (ctx.session.awaitingSeqUnavailReason) {
+    const date = ctx.session.awaitingSeqUnavailReason;
+    if (ctx.session.pendingAvailSave) ctx.session.pendingAvailSave.reasons[date] = text;
+    ctx.session.awaitingSeqUnavailReason = null;
+    return continueUnavailReasonFlow(ctx);
   }
 
   // Monthly "anything happening this month?" note — final step after Submit
@@ -2181,11 +2159,6 @@ bot.on('message:text', async (ctx) => {
     const members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
     if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
 
-    // Look up everyone's registered service day once, so each member only
-    // sees dates matching Sat/Sun/Both — the other day is simply never shown
-    // and gets auto-marked unavailable when they submit (see avail:submit).
-    const prefByName = new Map((await db.getMemberRoster()).map(r => [r.name.toLowerCase(), r.service_preference]));
-
     let sent = 0;
     const failed = []; // { name, reason } — surfaced below instead of only console.warn
 
@@ -2195,19 +2168,11 @@ bot.on('message:text', async (ctx) => {
         continue;
       }
       try {
-        const pref = prefByName.get((m.name || '').toLowerCase());
-        const { shown } = splitSlotsByServicePreference(monthSlots, pref);
-        const prefNote = pref === 'SAT' || pref === 'SUN'
-          ? `\n\n<i>You're registered for ${pref === 'SAT' ? 'Saturdays' : 'Sundays'} only, so only those dates are shown — the other day is automatically marked unavailable for you.</i>`
-          : '';
         await bot.api.sendMessage(
           m.telegram_id,
-          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve. You'll be asked for a reason each time.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>${prefNote}`,
-          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(shown, []) }
+          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
+          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
         );
-        // Placeholder default (everything unavailable until they submit) uses
-        // the FULL month slot list — correctly includes their non-preferred
-        // day too, so nothing needs special-casing here.
         await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
         sent++;
       } catch (err) {

@@ -155,17 +155,6 @@ async function getDutyExemptNames() {
   return (data || []).map(r => r.name.toLowerCase());
 }
 
-// A member's registered service day ('SAT'|'SUN'|'BOTH'), set during profile
-// collection. Used to hide the opposite day's dates from their availability
-// list entirely — see splitSlotsByServicePreference() in bot/index.js.
-async function getServicePreference(name) {
-  const db = getClient();
-  if (!db) return null;
-  const { data } = await db.from('member_roster')
-    .select('service_preference').ilike('name', name.trim()).single();
-  return data?.service_preference || null;
-}
-
 async function saveAvailability(month, memberName, datesAvail, datesUnavail, notes = '') {
   const db = getClient();
   if (!db) return null;
@@ -310,7 +299,7 @@ module.exports = {
   insertDataLog, getDataLogsForDate,
   getRecyclingStats, upsertMonthlyTotal,
   uploadImage,
-  getAllRegisteredMembers, getDutyExemptNames, getServicePreference,
+  getAllRegisteredMembers, getDutyExemptNames,
   saveAvailability, getAvailabilitySummary,
   getMemberRoster, updateMemberRosterStats,
 };
