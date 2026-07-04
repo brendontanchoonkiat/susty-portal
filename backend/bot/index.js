@@ -1839,14 +1839,13 @@ async function sendRosterToGroup(ctx, monthLabel) {
     // Image is now the ONLY post per month — per Brendon, the separate
     // detailed text listing that used to follow it was redundant clutter
     // (4 Jul 2026: "the listed roster got sent together with the image
-    // which I don't want"). Any per-slot notes (e.g. "Alan: confirmed")
-    // get folded into the photo caption instead, so that detail isn't lost.
+    // which I don't want"). Caption is deliberately just a plain label
+    // (4 Jul 2026: "I dont need captions there at all, just a simple label
+    // that says W2R roster - July 2026") — no notes, no test tag.
     try {
       const png = await rosterImage.generateRosterImage(month, mSlots);
-      const noteLines = mSlots.filter(s => s.notes).map(s => `📌 ${fmtDateShort(s.date)}: ${s.notes}`);
-      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '') + (noteLines.length ? `\n\n${noteLines.join('\n')}` : '');
       await bot.api.sendPhoto(targetChatId, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
-        caption: caption.slice(0, 1024), // Telegram caption limit
+        caption: `W2R Roster - ${month}`,
       });
     } catch (err) {
       console.warn('[sendcalendar] image generation/send failed:', err.message);

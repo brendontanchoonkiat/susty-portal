@@ -14,40 +14,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const sharp = require('sharp');
-const fs   = require('fs');
-const path = require('path');
 
-// ─── Embedded fonts ───────────────────────────────────────────────────────
+// ─── Fonts ────────────────────────────────────────────────────────────────
 // Root cause of the 4 Jul 2026 "all tofu boxes" incident: sharp rasterizes
-// SVG via librsvg, which needs actual font files present on the host to
-// render <text> — and "Arial"/"Georgia" don't exist on Linux at all, so on
-// Railway's bare Nixpacks container (no fonts installed) every glyph came
-// back as a missing-glyph box. It rendered "successfully" (no exception),
-// so the image-failure fail-safe never caught it — this is why.
+// SVG via librsvg, which finds fonts through the system's fontconfig
+// registry by name — "Arial"/"Georgia" don't exist on Linux at all, and
+// Railway's bare Nixpacks container had NO fonts installed at all, so every
+// glyph came back as a missing-glyph box. It rendered "successfully" (no
+// exception thrown), so the image-failure fail-safe never caught it.
 //
-// Fix: bundle DejaVu Sans/Serif TTF files in-repo (backend/assets/fonts/)
-// and embed them directly in the SVG as base64 @font-face data URIs. This
-// makes rendering independent of whatever fonts (if any) happen to be
-// installed on the host — works the same on Railway, locally, anywhere.
-const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
-let FONT_CSS = null;
-function getFontCss() {
-  if (FONT_CSS !== null) return FONT_CSS; // cache after first render
-  try {
-    const sans     = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSans.ttf')).toString('base64');
-    const sansBold = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSans-Bold.ttf')).toString('base64');
-    const serifBold = fs.readFileSync(path.join(FONT_DIR, 'DejaVuSerif-Bold.ttf')).toString('base64');
-    FONT_CSS = `<style>
-      @font-face { font-family: 'RosterSans'; src: url(data:font/ttf;base64,${sans}) format('truetype'); font-weight: normal; }
-      @font-face { font-family: 'RosterSans'; src: url(data:font/ttf;base64,${sansBold}) format('truetype'); font-weight: bold; }
-      @font-face { font-family: 'RosterSerif'; src: url(data:font/ttf;base64,${serifBold}) format('truetype'); font-weight: bold; }
-    </style>`;
-  } catch (err) {
-    console.warn('[rosterImage] could not load bundled fonts, falling back to system fonts:', err.message);
-    FONT_CSS = ''; // fall back to whatever system fonts exist (old behavior)
-  }
-  return FONT_CSS;
-}
+// First attempt (embedding the fonts as base64 @font-face data URIs
+// directly in the SVG) did NOT fix it — confirmed by a second live test
+// still showing tofu boxes. Turns out librsvg doesn't honor @font-face at
+// all; it only resolves fonts via fontconfig lookups by family name. So the
+// actual fix has to happen at the container level: `nixpacks.toml` (repo
+// root, alongside package.json) now installs `fontconfig` + `fonts-dejavu-core`
+// via `aptPkgs` during the Railway build, and the font-family names below
+// ("DejaVu Sans"/"DejaVu Serif") match what that package registers with
+// fontconfig. Falls back to Arial/Georgia (which will render as tofu boxes
+// again if fontconfig ever lacks DejaVu) only if the nixpacks install is
+// ever removed — kept as the fallback chain so this doesn't hard-fail.
+const SANS  = "'DejaVu Sans', Arial, sans-serif";
+const SERIF = "'DejaVu Serif', Georgia, serif";
 
 const COLORS = {
   SAT:     { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
@@ -111,10 +99,6 @@ async function generateRosterImage(monthLabel, slots) {
     throw new Error(`generateRosterImage: could not parse month label "${monthLabel}"`);
   }
 
-  const fontCss = getFontCss();
-  const SANS  = fontCss ? 'RosterSans, sans-serif' : 'Arial, sans-serif';
-  const SERIF = fontCss ? 'RosterSerif, serif' : 'Georgia, serif';
-
   const firstOfMonth = new Date(year, monthIndex, 1);
   const daysInMonth  = new Date(year, monthIndex + 1, 0).getDate();
   // getDay(): 0=Sun..6=Sat → convert to Monday-first column: 0=Mon..6=Sun
@@ -136,7 +120,6 @@ async function generateRosterImage(monthLabel, slots) {
   }
 
   let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`;
-  svg += fontCss;
   svg += `<rect width="${width}" height="${height}" fill="#ffffff"/>`;
   svg += `<text x="${width / 2}" y="${PAD + 48}" font-family="${SERIF}" font-size="36" font-weight="bold" fill="#1f2937" text-anchor="middle">${escapeXml(monthLabel)}</text>`;
 
