@@ -1839,13 +1839,13 @@ async function sendRosterToGroup(ctx, monthLabel) {
     // Image is now the ONLY post per month — per Brendon, the separate
     // detailed text listing that used to follow it was redundant clutter
     // (4 Jul 2026: "the listed roster got sent together with the image
-    // which I don't want"). Caption is deliberately just a plain label
-    // (4 Jul 2026: "I dont need captions there at all, just a simple label
-    // that says W2R roster - July 2026") — no notes, no test tag.
+    // which I don't want"). Caption is a plain label — 🧪 (test) tag only
+    // when it's actually going to the test channel, nothing extra otherwise.
     try {
       const png = await rosterImage.generateRosterImage(month, mSlots);
+      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '');
       await bot.api.sendPhoto(targetChatId, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
-        caption: `W2R Roster - ${month}`,
+        caption,
       });
     } catch (err) {
       console.warn('[sendcalendar] image generation/send failed:', err.message);

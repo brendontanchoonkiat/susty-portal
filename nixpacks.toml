@@ -1,8 +1,14 @@
-# Installs fontconfig + DejaVu fonts during the Railway build so `sharp`
-# (via librsvg) can actually render text in the roster calendar image
-# (backend/utils/rosterImage.js). Without this, Railway's bare Nixpacks
-# container has no fonts at all, and SVG <text> renders as empty
-# missing-glyph boxes ("tofu") — happened on the first two live tests
-# (4 Jul 2026) even though the code itself worked and threw no errors.
+# NOTE (4 Jul 2026): this was an attempted fix for roster calendar image
+# text rendering as tofu boxes on Railway — installing fontconfig + DejaVu
+# so librsvg (which `sharp` uses to rasterize SVG) could resolve fonts by
+# name. It did NOT fix the issue (confirmed by a live test still showing
+# tofu boxes after this was deployed) — Railway's sharp/libvips build
+# doesn't reliably resolve fonts via fontconfig either way. The actual fix
+# was to stop using SVG <text> entirely: backend/utils/rosterImage.js now
+# converts every string to vector <path> glyph outlines at generation time
+# via opentype.js, which doesn't depend on the renderer finding any font at
+# all. This file is harmless to keep (just installs two small apt packages,
+# unused by the current approach) but could be deleted if you want a
+# slightly leaner/faster Railway build.
 [phases.setup]
 aptPkgs = ["fontconfig", "fonts-dejavu-core"]

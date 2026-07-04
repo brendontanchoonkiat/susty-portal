@@ -11,31 +11,98 @@
 // small Railway plan). Instead this builds an SVG string directly from the
 // roster data and rasterizes it with `sharp` (native SVG->PNG support,
 // lightweight, already battle-tested on Railway-style containers).
+//
+// ─── Font rendering history (4 Jul 2026) — READ BEFORE TOUCHING FONTS ────────
+// Two earlier approaches to getting text to render on Railway BOTH failed,
+// confirmed by live tests:
+//   1. Embedding fonts as base64 @font-face data URIs inside the SVG —
+//      still rendered as tofu boxes. librsvg (which sharp uses to rasterize
+//      SVG) does not honor @font-face / embedded fonts at all.
+//   2. Installing fontconfig + fonts-dejavu-core via nixpacks.toml so the
+//      *system* has real fonts, and referencing them by name ("DejaVu
+//      Sans") — STILL rendered as tofu boxes (even worse than before). This
+//      means sharp's bundled libvips/librsvg on Railway isn't reliably
+//      resolving fonts via fontconfig either (likely a self-contained/
+//      statically-linked build that doesn't consult the OS font registry
+//      the way a desktop Linux install would).
+//
+// Given two independent failures of "make the renderer find a font", this
+// version sidesteps SVG <text> entirely: it uses `opentype.js` (pure JS, no
+// native deps, no reliance on librsvg/fontconfig) to read the bundled
+// DejaVu TTF files directly and convert every string into actual vector
+// <path> outlines at generation time. The rasterizer never has to resolve
+// a font by name — the glyph shapes are already baked into the SVG as
+// paths, so this works identically regardless of what fonts (if any) the
+// host container has installed.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const sharp = require('sharp');
+const sharp    = require('sharp');
+const opentype = require('opentype.js');
+const fs       = require('fs');
+const path     = require('path');
 
-// ─── Fonts ────────────────────────────────────────────────────────────────
-// Root cause of the 4 Jul 2026 "all tofu boxes" incident: sharp rasterizes
-// SVG via librsvg, which finds fonts through the system's fontconfig
-// registry by name — "Arial"/"Georgia" don't exist on Linux at all, and
-// Railway's bare Nixpacks container had NO fonts installed at all, so every
-// glyph came back as a missing-glyph box. It rendered "successfully" (no
-// exception thrown), so the image-failure fail-safe never caught it.
-//
-// First attempt (embedding the fonts as base64 @font-face data URIs
-// directly in the SVG) did NOT fix it — confirmed by a second live test
-// still showing tofu boxes. Turns out librsvg doesn't honor @font-face at
-// all; it only resolves fonts via fontconfig lookups by family name. So the
-// actual fix has to happen at the container level: `nixpacks.toml` (repo
-// root, alongside package.json) now installs `fontconfig` + `fonts-dejavu-core`
-// via `aptPkgs` during the Railway build, and the font-family names below
-// ("DejaVu Sans"/"DejaVu Serif") match what that package registers with
-// fontconfig. Falls back to Arial/Georgia (which will render as tofu boxes
-// again if fontconfig ever lacks DejaVu) only if the nixpacks install is
-// ever removed — kept as the fallback chain so this doesn't hard-fail.
-const SANS  = "'DejaVu Sans', Arial, sans-serif";
-const SERIF = "'DejaVu Serif', Georgia, serif";
+const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+let _fonts = null;
+function loadFonts() {
+  if (_fonts) return _fonts;
+  // opentype.loadSync() is broken in the installed opentype.js@2.0.0 (returns
+  // undefined) — use opentype.parse() on the raw buffer directly instead
+  // (this is also what opentype.js's own deprecation warning recommends).
+  const read = (name) => opentype.parse(fs.readFileSync(path.join(FONT_DIR, name)).buffer);
+  _fonts = {
+    sans:      read('DejaVuSans.ttf'),
+    sansBold:  read('DejaVuSans-Bold.ttf'),
+    serifBold: read('DejaVuSerif-Bold.ttf'),
+  };
+  return _fonts;
+}
+
+// Renders `text` as an SVG <path> (real vector glyph outlines, not <text>)
+// at baseline (x, y), one character at a time via font.charToGlyph(). This
+// deliberately avoids font.getPath(string, ...)/getAdvanceWidth(string, ...)
+// — those go through opentype.js's complex-shaping (Bidi/GSUB) pipeline,
+// which throws ("substFormat: 2 is not yet supported") on a contextual
+// substitution feature present in DejaVu Sans. Per-character glyph lookup
+// skips that pipeline entirely; no ligatures/kerning, which doesn't matter
+// for a calendar label. anchor: 'start' (default) | 'middle'.
+function measureWidth(font, text, fontSize) {
+  const scale = fontSize / font.unitsPerEm;
+  let w = 0;
+  for (const ch of text) w += font.charToGlyph(ch).advanceWidth * scale;
+  return w;
+}
+
+function textPath(font, text, x, y, fontSize, fill, anchor = 'start') {
+  if (!text) return '';
+  const scale = fontSize / font.unitsPerEm;
+  let cx = anchor === 'middle' ? x - measureWidth(font, text, fontSize) / 2 : x;
+  let d = '';
+  for (const ch of text) {
+    const glyph = font.charToGlyph(ch);
+    d += glyph.getPath(cx, y, fontSize).toPathData(1);
+    cx += glyph.advanceWidth * scale;
+  }
+  return `<path d="${d}" fill="${fill}"/>`;
+}
+
+// Pixel-accurate word-wrap (uses real glyph widths instead of a character
+// count guess) — wraps `str` into lines no wider than maxWidthPx.
+function wrapText(font, str, fontSize, maxWidthPx) {
+  const words = String(str).split(' ');
+  const lines = [];
+  let current = '';
+  for (const w of words) {
+    const candidate = current ? `${current} ${w}` : w;
+    if (measureWidth(font, candidate, fontSize) > maxWidthPx && current) {
+      lines.push(current);
+      current = w;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
 
 const COLORS = {
   SAT:     { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
@@ -53,31 +120,6 @@ const MAX_ENTRIES_PER_DAY = 2; // stack up to 2 duty entries in one day cell; re
 
 const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
 const DAY_HEADERS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-
-function escapeXml(str) {
-  return String(str).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
-  }[c]));
-}
-
-// Rough word-wrap for SVG (no native text wrapping in SVG) — wraps a string
-// into lines no longer than maxChars, breaking on word boundaries.
-function wrapText(str, maxChars) {
-  const words = String(str).split(' ');
-  const lines = [];
-  let current = '';
-  for (const w of words) {
-    const candidate = current ? `${current} ${w}` : w;
-    if (candidate.length > maxChars && current) {
-      lines.push(current);
-      current = w;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
-}
 
 // "August 2026" or "Aug 2026" -> { year, monthIndex }
 function parseMonthLabel(monthLabel) {
@@ -98,6 +140,8 @@ async function generateRosterImage(monthLabel, slots) {
   if (isNaN(year) || monthIndex < 0) {
     throw new Error(`generateRosterImage: could not parse month label "${monthLabel}"`);
   }
+
+  const { sans, sansBold, serifBold } = loadFonts();
 
   const firstOfMonth = new Date(year, monthIndex, 1);
   const daysInMonth  = new Date(year, monthIndex + 1, 0).getDate();
@@ -121,11 +165,11 @@ async function generateRosterImage(monthLabel, slots) {
 
   let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`;
   svg += `<rect width="${width}" height="${height}" fill="#ffffff"/>`;
-  svg += `<text x="${width / 2}" y="${PAD + 48}" font-family="${SERIF}" font-size="36" font-weight="bold" fill="#1f2937" text-anchor="middle">${escapeXml(monthLabel)}</text>`;
+  svg += textPath(serifBold, monthLabel, width / 2, PAD + 48, 36, '#1f2937', 'middle');
 
   for (let col = 0; col < 7; col++) {
     const x = PAD + col * CELL_W + CELL_W / 2;
-    svg += `<text x="${x}" y="${PAD + HEADER_H + 26}" font-family="${SANS}" font-size="16" font-weight="bold" fill="#6b7280" text-anchor="middle" letter-spacing="1">${DAY_HEADERS[col]}</text>`;
+    svg += textPath(sansBold, DAY_HEADERS[col], x, PAD + HEADER_H + 26, 16, '#6b7280', 'middle');
   }
 
   for (let day = 1; day <= daysInMonth; day++) {
@@ -136,7 +180,7 @@ async function generateRosterImage(monthLabel, slots) {
     const y = PAD + HEADER_H + DAYHEAD_H + row * CELL_H;
 
     svg += `<rect x="${x}" y="${y}" width="${CELL_W}" height="${CELL_H}" fill="#ffffff" stroke="#e5e7eb" stroke-width="1.5" rx="6"/>`;
-    svg += `<text x="${x + 12}" y="${y + 26}" font-family="${SANS}" font-size="16" fill="#374151">${day}</text>`;
+    svg += textPath(sans, String(day), x + 12, y + 26, 16, '#374151');
 
     const entries   = byDay[day] || [];
     const shown     = entries.slice(0, MAX_ENTRIES_PER_DAY);
@@ -146,7 +190,7 @@ async function generateRosterImage(monthLabel, slots) {
     for (const entry of shown) {
       const c = COLORS[entry.session] || COLORS.DEFAULT;
       const team = (entry.team || []).join(', ') || '—';
-      const teamLines = wrapText(team, 26).slice(0, 2);
+      const teamLines = wrapText(sans, team, 12.5, CELL_W - 28).slice(0, 2);
       const lines = [entry.session || 'Duty', ...teamLines];
       const boxH = 20 + lines.length * 16;
 
@@ -154,13 +198,13 @@ async function generateRosterImage(monthLabel, slots) {
 
       svg += `<rect x="${x + 8}" y="${entryY}" width="${CELL_W - 16}" height="${boxH}" fill="${c.bg}" stroke="${c.border}" stroke-width="1" rx="4"/>`;
       lines.forEach((line, i) => {
-        svg += `<text x="${x + 14}" y="${entryY + 16 + i * 16}" font-family="${SANS}" font-size="12.5" font-weight="${i === 0 ? 'bold' : 'normal'}" fill="${c.text}">${escapeXml(line)}</text>`;
+        svg += textPath(i === 0 ? sansBold : sans, line, x + 14, entryY + 16 + i * 16, 12.5, c.text);
       });
       entryY += boxH + 6;
     }
 
     if (remaining > 0) {
-      svg += `<text x="${x + 14}" y="${entryY + 12}" font-family="${SANS}" font-size="11" font-style="italic" fill="#9ca3af">+${remaining} more</text>`;
+      svg += textPath(sans, `+${remaining} more`, x + 14, entryY + 12, 11, '#9ca3af');
     }
   }
 
