@@ -428,6 +428,25 @@ function promptRegister(ctx) {
   );
 }
 
+// Normalizes any typed month string ("Jul 2026", "july 2026", "JULY  2026")
+// to the canonical "July 2026" form that roster_slots comparisons use
+// (built from `new Date(...).toLocaleDateString('en-SG', {month:'long', ...})`,
+// which always returns the FULL month name). Without this, typing an
+// abbreviated month like "Jul 2026" would never match an existing roster
+// because "july 2026" !== "jul 2026" — this bit Send Roster to Group's
+// specific-month option (4 Jul 2026: reported "no roster created" for a
+// month that clearly had one, because Brendon typed "Jul" not "July").
+// Returns null if unparseable.
+function canonicalizeMonthLabel(input) {
+  const parts = String(input).trim().split(/\s+/);
+  if (parts.length < 2) return null;
+  const mIdx = MONTH_NAMES.findIndex(m => m.startsWith(parts[0].toLowerCase()));
+  const year = parseInt(parts[1], 10);
+  if (mIdx < 0 || isNaN(year)) return null;
+  const name = MONTH_NAMES[mIdx];
+  return `${name.charAt(0).toUpperCase()}${name.slice(1)} ${year}`;
+}
+
 // Generate Sat/Sun dates for a month string like "Aug 2026"
 function generateWeekends(monthStr) {
   const months = ['january','february','march','april','may','june','july','august','september','october','november','december'];
@@ -453,6 +472,7 @@ function generateWeekends(monthStr) {
 // month's roster hasn't been created yet. Shared by every availability
 // collection path (self-service My Availability, admin:collect, /collect).
 async function getMonthSlots(monthLabel) {
+  monthLabel = canonicalizeMonthLabel(monthLabel) || monthLabel;
   const supa = db.getClient();
   if (!supa) return { slots: [], generatedFallback: false };
   const { data: allSlots } = await supa.from('roster_slots').select('date, session').order('date');
@@ -1701,6 +1721,18 @@ async function sendRosterToGroup(ctx, monthLabel) {
   const byMonth = {};
 
   if (monthLabel) {
+    // Normalize typed input ("Jul 2026" → "July 2026") — roster_slots dates
+    // are always compared against the FULL month name, so an abbreviated
+    // month here would never match and would wrongly report "no roster
+    // created yet" even when one exists (fixed 4 Jul 2026).
+    const canonical = canonicalizeMonthLabel(monthLabel);
+    if (!canonical) {
+      const t = `⚠️ Couldn't parse "<b>${escapeHtml(monthLabel)}</b>". Try: <code>Aug 2026</code>`;
+      return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+        .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+    }
+    monthLabel = canonical;
+
     let slots = [];
     if (supa) {
       const { data: allSlots } = await supa.from('roster_slots').select('*').order('date');
@@ -2295,7 +2327,7 @@ bot.on('message:text', async (ctx) => {
   // Admin: collect availability month
   if (ctx.session.awaitingCollectMonth) {
     ctx.session.awaitingCollectMonth = false;
-    const monthArg = text.trim();
+    const monthArg = canonicalizeMonthLabel(text.trim()) || text.trim();
 
     const supa = db.getClient();
     if (!supa) return ctx.reply('⚠️ Supabase not configured.');
