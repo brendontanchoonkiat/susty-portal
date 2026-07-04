@@ -8,6 +8,29 @@ const path       = require('path');
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+// Railway sits behind a reverse proxy (1 hop) — without this, express-rate-limit
+// throws ERR_ERL_UNEXPECTED_X_FORWARDED_FOR on every request (X-Forwarded-For is
+// always set by Railway's proxy but Express's default 'trust proxy' is false).
+// That validation error was one of the recurring causes of the crash loop found
+// 4 Jul 2026 (see process-level safety net below for the other).
+app.set('trust proxy', 1);
+
+// Last-resort safety net: log and stay up instead of letting Node kill the
+// whole process. Root cause found 4 Jul 2026 — grammY's webhookCallback can
+// detach a slow update from its HTTP request after its internal timeout; if
+// that detached continuation throws (e.g. answerCallbackQuery on an expired
+// callback query), the rejection never reaches bot.catch() and surfaces here
+// instead, crashing the entire server (not just that one bot update) and
+// triggering a Railway restart loop. All 58 answerCallbackQuery() call sites
+// in bot/index.js were also hardened with .catch(() => {}) as the real fix —
+// this handler is just the backstop for anything else that slips through.
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process] Unhandled rejection (kept alive):', reason?.stack || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught exception (kept alive):', err?.stack || err);
+});
+
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {

@@ -645,12 +645,12 @@ async function cancelSwapFlow(ctx, { viaButton = false } = {}) {
 }
 
 bot.callbackQuery('swap:cancel', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return cancelSwapFlow(ctx, { viaButton: true });
 });
 
 bot.callbackQuery('swap:confirm', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name     = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
   const swapDate = ctx.session.pendingSwapDate;
@@ -707,14 +707,14 @@ bot.callbackQuery('swap:confirm', async (ctx) => {
 // reminders (utils/reminders.js → confirmKb). These replace the old group
 // broadcast — the whole point is the ask-and-response happens in PM only.
 bot.callbackQuery(/^remind:confirm:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery({ text: 'Thanks for confirming! ✅' });
+  await ctx.answerCallbackQuery({ text: 'Thanks for confirming! ✅' }).catch(() => {});
   const text = '✅ <b>Confirmed</b> — see you there! 💪🌿';
   await ctx.editMessageText(text, { parse_mode: 'HTML' })
     .catch(() => ctx.reply(text, { parse_mode: 'HTML' }));
 });
 
 bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
 
   // Swap requests are currently paused for regular members (see
   // bot_settings.swap_requests_live, §3/§4a PROJECT_STATE) — sending them to
@@ -807,7 +807,7 @@ bot.command('start', async (ctx) => {
 
 // ─── Callback: name confirmation (fuzzy match) ────────────────────────────────
 bot.callbackQuery(/^nameconfirm:(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const val         = ctx.match[1];
   const candidates  = ctx.session.pendingNameCandidates || [];
   const typedName   = ctx.session.pendingTypedName || '';
@@ -831,7 +831,7 @@ bot.callbackQuery(/^nameconfirm:(.+)$/, async (ctx) => {
 
 // ─── Callback: main menus ─────────────────────────────────────────────────────
 bot.callbackQuery('menu:main', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const kb = await buildMainMenu(ctx);
   await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
     parse_mode: 'HTML', reply_markup: kb,
@@ -839,7 +839,7 @@ bot.callbackQuery('menu:main', async (ctx) => {
 });
 
 bot.callbackQuery('menu:roster', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   await ctx.editMessageText(
     '📋 <b>Roster</b>\n\nView your duties, the full roster, or manage swaps.',
     { parse_mode: 'HTML', reply_markup: await buildRosterMenu(ctx) }
@@ -847,7 +847,7 @@ bot.callbackQuery('menu:roster', async (ctx) => {
 });
 
 bot.callbackQuery('menu:duty', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByRecyclingGate(ctx)) return;
   await ctx.editMessageText(
     '🪣 <b>Recycling Logs</b>\n\nLog your recycling — photo + weight for each measurement.\n\n' +
@@ -857,7 +857,7 @@ bot.callbackQuery('menu:duty', async (ctx) => {
 });
 
 bot.callbackQuery('menu:stats', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByPhase(ctx, 3)) return;
   await ctx.editMessageText(
     '📊 <b>Stats & Impact</b>\n\nSee how much W2R has recycled and the impact made.',
@@ -889,7 +889,7 @@ async function startProfileCollection(ctx, name, isNew) {
 }
 
 bot.callbackQuery('menu:profile', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
@@ -897,7 +897,7 @@ bot.callbackQuery('menu:profile', async (ctx) => {
 });
 
 bot.callbackQuery(/^profile:service:(SAT|SUN|BOTH)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (!ctx.session.pendingProfile) return;
   const code = ctx.match[1];
   ctx.session.pendingProfile.service  = code;
@@ -957,7 +957,7 @@ async function finalizeProfile(ctx) {
 
 // ─── Callback: roster ─────────────────────────────────────────────────────────
 bot.callbackQuery('action:myroster', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -990,7 +990,7 @@ bot.callbackQuery('action:myroster', async (ctx) => {
 });
 
 bot.callbackQuery('action:nextduty', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
@@ -1023,7 +1023,7 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
 });
 
 bot.callbackQuery('action:roster', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   let slots = await db.getUpcomingRoster(4);
   if (slots === null) {
     const td    = today();
@@ -1049,7 +1049,7 @@ bot.callbackQuery('action:roster', async (ctx) => {
 });
 
 bot.callbackQuery('action:swaps', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedBySwapGate(ctx)) return;
   const supa = db.getClient();
   let swaps  = [];
@@ -1083,7 +1083,7 @@ bot.callbackQuery('action:swaps', async (ctx) => {
 });
 
 bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedBySwapGate(ctx)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
@@ -1091,7 +1091,7 @@ bot.callbackQuery(/^accept:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery('action:swap', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedBySwapGate(ctx)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
@@ -1123,7 +1123,7 @@ bot.callbackQuery('action:swap', async (ctx) => {
 });
 
 bot.callbackQuery(/^swapdate:(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
   ctx.session.pendingSwapDate    = ctx.match[1];
@@ -1179,7 +1179,7 @@ function askLogDate(type) {
 }
 
 bot.callbackQuery('action:log:cardboard', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'cardboard' };
   const text = `📦 <b>Log Cardboard</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`;
@@ -1188,7 +1188,7 @@ bot.callbackQuery('action:log:cardboard', async (ctx) => {
 });
 
 bot.callbackQuery('action:log:plastic', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByRecyclingGate(ctx)) return;
   ctx.session.awaitingLogDate = { type: 'plastic' };
   const text = `🍶 <b>Log Plastic</b>\n\nWhen was this collected? Tap Today, or type a past date to back-add a missed log (e.g. <code>20 Jun</code>).`;
@@ -1197,12 +1197,12 @@ bot.callbackQuery('action:log:plastic', async (ctx) => {
 });
 
 bot.callbackQuery(/^logdate:(cardboard|plastic):today$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   await startLogSession(ctx, ctx.match[1], today());
 });
 
 bot.callbackQuery('log:more', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const ls = ctx.session.logSession;
   if (!ls) return;
   ctx.session.awaitingLogPhoto = true;
@@ -1237,12 +1237,12 @@ async function renderLogReview(ctx) {
 }
 
 bot.callbackQuery('log:done', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return renderLogReview(ctx);
 });
 
 bot.callbackQuery('log:cancel', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return cancelLogFlow(ctx, { viaButton: true });
 });
 
@@ -1262,7 +1262,7 @@ function editListKb(ls) {
 }
 
 bot.callbackQuery('log:edit', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const ls = ctx.session.logSession;
   if (!ls || !ls.measurements.length) return renderLogReview(ctx);
   const text = `✏️ <b>Edit entries</b>\n\nTap a measurement to change its weight, replace its photo, or delete it.`;
@@ -1271,12 +1271,12 @@ bot.callbackQuery('log:edit', async (ctx) => {
 });
 
 bot.callbackQuery('log:backreview', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return renderLogReview(ctx);
 });
 
 bot.callbackQuery(/^log:edititem:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const idx = parseInt(ctx.match[1], 10);
   const ls  = ctx.session.logSession;
   if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
@@ -1292,7 +1292,7 @@ bot.callbackQuery(/^log:edititem:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^log:editkg:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const idx = parseInt(ctx.match[1], 10);
   const ls  = ctx.session.logSession;
   if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
@@ -1304,7 +1304,7 @@ bot.callbackQuery(/^log:editkg:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^log:editphoto:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const idx = parseInt(ctx.match[1], 10);
   const ls  = ctx.session.logSession;
   if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
@@ -1316,7 +1316,7 @@ bot.callbackQuery(/^log:editphoto:(\d+)$/, async (ctx) => {
 });
 
 bot.callbackQuery(/^log:delitem:(\d+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const idx = parseInt(ctx.match[1], 10);
   const ls  = ctx.session.logSession;
   if (!ls || !ls.measurements[idx]) return renderLogReview(ctx);
@@ -1415,7 +1415,7 @@ async function finalizeLogSave(ctx, ls, name, total, anomalyNote) {
 }
 
 bot.callbackQuery('log:confirm', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const ls = ctx.session.logSession;
   if (!ls) return;
   const name = await resolveName(ctx);
@@ -1440,7 +1440,7 @@ bot.callbackQuery('log:confirm', async (ctx) => {
 });
 
 bot.callbackQuery('log:anomalyskip', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const pending = ctx.session.pendingAnomaly;
   if (!pending) return;
   return finalizeLogSave(ctx, pending.ls, pending.name, pending.total, '');
@@ -1448,7 +1448,7 @@ bot.callbackQuery('log:anomalyskip', async (ctx) => {
 
 // ─── Callback: availability ───────────────────────────────────────────────────
 bot.callbackQuery('menu:avail', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (await blockedByPhase(ctx, 3)) return;
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
@@ -1510,7 +1510,7 @@ function buildAvailKeyboard(slots, unavailDates) {
 }
 
 bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const date    = ctx.match[1];
   const unavail = ctx.session.availSelected || [];
 
@@ -1543,7 +1543,7 @@ bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
 });
 
 bot.callbackQuery('avail:submit', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name    = await resolveName(ctx);
   const unavail = ctx.session.availSelected || [];
 
@@ -1634,7 +1634,7 @@ async function askMonthlyNote(ctx, { justFinishedReasons = false } = {}) {
 }
 
 bot.callbackQuery('avail:seqreason:skip', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const date = ctx.session.awaitingSeqUnavailReason;
   if (date && ctx.session.pendingAvailSave) ctx.session.pendingAvailSave.reasons[date] = '';
   ctx.session.awaitingSeqUnavailReason = null;
@@ -1680,12 +1680,12 @@ async function finalizeAvailability(ctx, monthlyNote) {
 }
 
 bot.callbackQuery('avail:skipmonthlynote', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return finalizeAvailability(ctx, '');
 });
 
 bot.callbackQuery('avail:cancel', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.availMonth               = null;
   ctx.session.availDates               = [];
   ctx.session.availSlots               = [];
@@ -1779,8 +1779,8 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.callbackQuery('admin:menu', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
   await ctx.editMessageText(
     `🔧 <b>Admin Panel</b>\n\nTL-only actions. What do you need?`,
     { parse_mode: 'HTML', reply_markup: adminMenu }
@@ -1792,7 +1792,7 @@ bot.callbackQuery('admin:menu', async (ctx) => {
 
 // Admin: Collect Availability — ask for month
 bot.callbackQuery('admin:collect', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.awaitingCollectMonth = true;
   await ctx.editMessageText(
     `📅 <b>Collect Availability</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)\n\n` +
@@ -1804,7 +1804,7 @@ bot.callbackQuery('admin:collect', async (ctx) => {
 // Admin: Send Roster to Group — choose "upcoming" (old default: next 2
 // months, auto-grouped) or a specific month (added 4 Jul 2026 per Brendon).
 bot.callbackQuery('admin:sendcalendar', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   if (!GROUP_ID) {
     return ctx.editMessageText('⚠️ TELEGRAM_CHAT_ID not set.', { reply_markup: backToAdmin() });
   }
@@ -1824,12 +1824,12 @@ bot.callbackQuery('admin:sendcalendar', async (ctx) => {
 });
 
 bot.callbackQuery('admin:sendcalendar:upcoming', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   return sendRosterToGroup(ctx, null);
 });
 
 bot.callbackQuery('admin:sendcalendar:specific', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.awaitingSendCalendarMonth = true;
   await ctx.editMessageText(
     `🗓 <b>Send Roster to Group — Specific Month</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)`,
@@ -1978,7 +1978,7 @@ async function sendRosterToGroup(ctx, monthLabel) {
 
 // Admin: Edit Member Availability — ask for name
 bot.callbackQuery('admin:editavail', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.awaitingEditAvailName = true;
   await ctx.editMessageText(
     `✏️ <b>Edit Member Availability</b>\n\nEnter the member's name to clear their submission for <b>${nextCalendarMonth()}</b>:\n\n` +
@@ -1989,7 +1989,7 @@ bot.callbackQuery('admin:editavail', async (ctx) => {
 
 // Admin: View registered members
 bot.callbackQuery('admin:members', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const supa = db.getClient();
   if (!supa) {
     return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
@@ -2009,7 +2009,7 @@ bot.callbackQuery('admin:members', async (ctx) => {
 // everyone, in one place for manual roster planning (combine with
 // "Edit Member Availability" / the availability table for unavailabilities).
 bot.callbackQuery('admin:profiles', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const supa = db.getClient();
   if (!supa) {
     return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
@@ -2036,8 +2036,8 @@ bot.callbackQuery('admin:profiles', async (ctx) => {
 // ─── Admin: generic feature-toggle handler ─────────────────────────────────
 // Shared by every bot_settings on/off toggle in /admin.
 async function handleAdminToggle(ctx, { key, envVar, label, onLiveMsg, onHiddenMsg }) {
-  await ctx.answerCallbackQuery();
-  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
 
   const wasLive   = await getBoolSetting(key, envVar);
   const goingLive = !wasLive;
@@ -2080,8 +2080,8 @@ bot.callbackQuery('admin:toggleswaps', (ctx) => handleAdminToggle(ctx, {
 // test channel. This is a manual routing switch, independent of feature
 // rollout phases.
 bot.callbackQuery('admin:togglerostertest', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
 
   if (!TEST_GROUP_ID) {
     return ctx.editMessageText(
@@ -2115,8 +2115,8 @@ bot.callbackQuery('admin:togglerostertest', async (ctx) => {
 // Supabase queries, message formatting, Telegram delivery — without waiting
 // for a real duty 5 days out or a birthday to line up.
 bot.callbackQuery('admin:testreminders', async (ctx) => {
-  await ctx.answerCallbackQuery();
-  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.');
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
 
   const reminders = getReminders();
   if (!reminders) {
@@ -2147,7 +2147,7 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
 
 // ─── Admin: Excuse member from roster ─────────────────────────────────────────
 bot.callbackQuery('admin:excuse', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.awaitingExcuseName = true;
   await ctx.editMessageText(
     `🤰 <b>Excuse Member from Roster</b>\n\n` +
@@ -2161,7 +2161,7 @@ bot.callbackQuery('admin:excuse', async (ctx) => {
 
 // ─── Callback: stats ──────────────────────────────────────────────────────────
 bot.callbackQuery('action:stats', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const rows = await db.getRecyclingStats();
   let cb = 0, pl = 0, cb26 = 0, pl26 = 0;
 
@@ -2196,7 +2196,7 @@ bot.callbackQuery('action:stats', async (ctx) => {
 });
 
 bot.callbackQuery('action:yoy', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const rows = await db.getRecyclingStats();
   let summaries;
 
@@ -2217,7 +2217,7 @@ bot.callbackQuery('action:yoy', async (ctx) => {
 });
 
 bot.callbackQuery('action:mystats', async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await ctx.answerCallbackQuery().catch(() => {});
   const name = await resolveName(ctx);
   if (!name) return promptRegister(ctx);
 
