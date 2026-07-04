@@ -1,6 +1,6 @@
 {
   "name": "susty-portal-backend",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Sustainability Ministry Portal — lightweight Express backend",
   "main": "backend/server.js",
   "scripts": {
@@ -23,6 +23,6 @@
     "nodemon": "^3.0.3"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   }
 }

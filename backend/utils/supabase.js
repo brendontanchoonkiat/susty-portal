@@ -23,7 +23,13 @@ function getClient() {
     });
     console.log('[Supabase] Client initialised');
   } catch (err) {
-    console.warn('[Supabase] @supabase/supabase-js not installed — run npm install @supabase/supabase-js');
+    // Was previously a hardcoded "not installed" message regardless of what
+    // actually failed — misleading during the 4 Jul 2026 TL-access incident,
+    // where require() succeeded but createClient() itself threw for an
+    // unrelated reason. Log the real error and stack so this doesn't happen
+    // again.
+    console.error('[Supabase] getClient() failed:', err.message);
+    console.error(err.stack);
     return null;
   }
 
