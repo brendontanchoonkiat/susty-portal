@@ -198,6 +198,20 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   .cal-item{grid-template-columns:64px 1fr}
   .cal-item .status-tag{display:none}
   nav{padding:0 12px}
+  /* Mobile pass (Step 4, redesign follow-up) — additive, no existing rules removed */
+  .page{padding:18px 14px 44px}
+  .card{padding:14px}
+  .card-grid{gap:12px}
+  .hero::before{font-size:3.2rem;right:14px;top:14px}
+  .hero-stats{grid-template-columns:repeat(2,1fr)}
+  .section-title{font-size:.92rem}
+  .editor-panel{padding:14px}
+  .roster-table{font-size:.76rem}
+  .roster-table th,.roster-table td{padding:7px 8px}
+  #nav-admin-bar input{width:90px}
+  .swap-card{padding:12px 14px}
+  .attn-grid{grid-template-columns:1fr}
+  .test-panel{font-size:.74rem;max-height:280px}
 }
 
 /* ── Redesign polish (Steps 3–4) — additive, no existing rules removed ── */
@@ -220,6 +234,13 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 /* Lucide icon sizing inline in nav */
 .nav-tab [data-lucide]{ width:16px; height:16px; vertical-align:-3px; }
 .nav-logo [data-lucide]{ width:18px; height:18px; vertical-align:-3px; }
+
+/* Overview hero stat trend + hover (consistent this-month framing) */
+.hero-stat{ cursor:help; }
+.hero-stat .trend{ font-weight:700; }
+.hero-stat .trend.up{ color:#F4C88A; }
+.hero-stat .trend.down{ color:#B7D9B0; }
+.hero-stat .trend.flat{ color:var(--gp); }
 
 /* Needs-your-attention cards (Step 5) */
 .attn-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-bottom:24px; }
@@ -261,6 +282,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <button class="nav-tab" data-page="comms"><i data-lucide="megaphone"></i> Comms</button>
     <button class="nav-tab" data-page="roster"><i data-lucide="calendar-days"></i> Roster</button>
     <button class="nav-tab admin-only" data-page="members" style="display:none"><i data-lucide="users"></i> Members</button>
+    <button class="nav-tab" data-page="faq"><i data-lucide="book-open"></i> FAQ</button>
     <button class="nav-tab" data-page="test"><i data-lucide="flask-conical"></i> Test</button>
   </div>
   <div id="nav-admin-bar" style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
@@ -278,10 +300,10 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <h1>Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
-      <div class="hero-stat"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard recycled (kg, all time)</div></div>
-      <div class="hero-stat"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastics recycled (kg)</div></div>
-      <div class="hero-stat"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Energy status</div></div>
-      <div class="hero-stat"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts scheduled</div></div>
+      <div class="hero-stat" id="ov-cardboard-wrap"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard — this month <span class="trend" id="ov-cardboard-trend"></span></div></div>
+      <div class="hero-stat" id="ov-plastic-wrap"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastic — this month <span class="trend" id="ov-plastic-trend"></span></div></div>
+      <div class="hero-stat" id="ov-energy-wrap"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Electricity — this month <span class="trend" id="ov-energy-trend"></span></div></div>
+      <div class="hero-stat" id="ov-posts-wrap"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts planned (upcoming)</div></div>
     </div>
   </div>
 
@@ -640,6 +662,54 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   </div>
 </div>
 
+<!-- ═══ FAQ / RESOURCE LIBRARY ══════════════════════════════════════════════════ -->
+<div class="page" id="page-faq">
+  <div class="section-title" style="font-size:1.2rem;margin-bottom:4px"><i data-lucide="book-open"></i> FAQ &amp; Resource Library</div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:20px">Quick reference for duty members. Items marked ⚠️ are still being finalised — check with your Team Lead if in doubt.</p>
+
+  <details class="card" open>
+    <summary style="cursor:pointer;font-weight:700;color:var(--gd);list-style:none;display:flex;align-items:center;gap:8px">📦 W2R Process — Cardboard &amp; Plastic Collection</summary>
+    <div style="margin-top:12px;font-size:.85rem;line-height:1.7;color:var(--tx)">
+      <p><strong>When:</strong> Weekend services (Saturday &amp; Sunday) and special events like GPC (5 consecutive days in July).</p>
+      <p><strong>What:</strong> Flatten cardboard boxes and collect plastic water bottles from designated collection points.</p>
+      <p><strong>How to log it:</strong> Open the Telegram bot → "🪣 Recycling Logs" → choose Cardboard or Plastic → pick a date (Today, or type a past date to back-add) → send a photo, enter the weight, repeat for each measurement if the load was weighed in parts → review the breakdown → Confirm. Everything syncs to the portal automatically.</p>
+      <p>⚠️ Exact bin/collection point locations and weighing scale procedure — pending write-up.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary style="cursor:pointer;font-weight:700;color:var(--gd);list-style:none;display:flex;align-items:center;gap:8px">⚡ Energy Tracking — What the numbers mean</summary>
+    <div style="margin-top:12px;font-size:.85rem;line-height:1.7;color:var(--tx)">
+      <p>The Energy tab tracks monthly electricity (kWh) and water (m³) usage. Selecting a "Big Event" pill (e.g. GPC, Youth Camp) shows how that period compared to the average monthly baseline, with the exact % difference on hover.</p>
+      <p>⚠️ The High/Medium/Low impact labels shown on event pills are a working classification — formal kWh/m³ thresholds for what counts as high vs. medium vs. low are still being defined.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary style="cursor:pointer;font-weight:700;color:var(--gd);list-style:none;display:flex;align-items:center;gap:8px">🔄 Roster, Priority &amp; Swaps</summary>
+    <div style="margin-top:12px;font-size:.85rem;line-height:1.7;color:var(--tx)">
+      <p><strong>Priority tags</strong> in Member Profiles: <span class="badge" style="background:var(--gp);color:var(--gd)">✅ Serve Next</span> = prioritise for the next roster, <span class="badge" style="background:#F3E3CA;color:#8B5A22">⚠️ Soon</span> = include if slots are available, <strong>— Rest</strong> = served recently, give others a turn.</p>
+      <p><strong>Requesting a swap:</strong> In the bot, tap Roster → Request Swap → choose your rostered duty from the list → give a reason → confirm. The ministry group is notified automatically.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary style="cursor:pointer;font-weight:700;color:var(--gd);list-style:none;display:flex;align-items:center;gap:8px">📢 Comms Workflow</summary>
+    <div style="margin-top:12px;font-size:.85rem;line-height:1.7;color:var(--tx)">
+      <p>Posts move through four stages: <strong>Idea → Draft → Planned → Posted</strong>. Drafts are shared in the group chat for team comments before Judy posts the final version.</p>
+      <p>Once something goes live, mark it "✅ Mark posted" on the Comms tab to archive it — this can be reverted from the archive list if it was marked by mistake.</p>
+    </div>
+  </details>
+
+  <details class="card">
+    <summary style="cursor:pointer;font-weight:700;color:var(--gd);list-style:none;display:flex;align-items:center;gap:8px">🤖 Using the Telegram Bot</summary>
+    <div style="margin-top:12px;font-size:.85rem;line-height:1.7;color:var(--tx)">
+      <p>Tap <code>/start</code> on the bot to register — you'll be asked a few quick profile questions the first time (service day, CG, other ministries, birthday). After that, the main menu gives you Roster, Recycling Logs, and (as features roll out) Stats, Profile, and Availability.</p>
+      <p>Questions or something not working? Message a Team Lead directly.</p>
+    </div>
+  </details>
+</div>
+
 <!-- ═══ TEST ══════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-test">
   <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">🧪 Feature Test Suite</div>
@@ -686,6 +756,52 @@ function esc(s) {
   return String(s ?? '')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ═══ OVERVIEW HERO STAT HELPERS ═══════════════════════════════════════════════
+// All three overview metrics (cardboard, plastic, energy) now use the SAME
+// time-frame framing — "this month" — instead of cardboard/plastic showing
+// cumulative all-time totals while energy showed only the latest month
+// (flagged by Jonathan in the 27 Jun 2026 review). Raw all-time totals are
+// still available on hover (native title tooltip) rather than shown as the
+// headline number, per Jonathan/Brendon's "trend over raw totals" preference.
+function currentMonthLabel(offset = 0) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  return d.toLocaleDateString('en-SG', { month: 'short', year: 'numeric' });
+}
+function findMonthRow(arr, label, key) {
+  const row = arr.find(r => r.month === label);
+  return row ? row[key] : null;
+}
+// Renders a hero stat value + trend arrow (vs last month) + hover tooltip with raw figures
+function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
+  const valEl   = document.getElementById(id);
+  const trendEl = document.getElementById(id + '-trend');
+  const wrapEl  = document.getElementById(id + '-wrap');
+  if (!valEl) return;
+
+  const shown = curVal !== null && curVal !== undefined ? curVal : 0;
+  valEl.textContent = `${shown}${unit === 'kg' ? ' kg' : ''}`;
+
+  if (trendEl) {
+    if (prevVal === null || prevVal === undefined || prevVal === 0) {
+      trendEl.textContent = '';
+    } else {
+      const pct = ((shown - prevVal) / prevVal) * 100;
+      const dir = pct > 1 ? 'up' : pct < -1 ? 'down' : 'flat';
+      const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '≈';
+      trendEl.className = `trend ${dir}`;
+      trendEl.textContent = `${arrow}${Math.abs(pct).toFixed(0)}%`;
+    }
+  }
+
+  if (wrapEl) {
+    const parts = [];
+    if (allTimeTotal !== null && allTimeTotal !== undefined) parts.push(`All-time: ${allTimeTotal}${unit === 'kg' ? ' kg' : ''}`);
+    if (prevVal !== null && prevVal !== undefined) parts.push(`Last month: ${prevVal}${unit === 'kg' ? ' kg' : ''}`);
+    wrapEl.title = parts.join(' · ') || 'No prior data yet';
+  }
 }
 
 let rosterData = [];
@@ -802,7 +918,7 @@ document.querySelectorAll('.nav-tab').forEach(t => {
 // Restore tab from URL hash on load/refresh
 (function restoreTab() {
   const hash = location.hash.replace('#', '');
-  const valid = ['overview','energy','recycling','comms','roster','members','test'];
+  const valid = ['overview','energy','recycling','comms','roster','members','faq','test'];
   if (hash && valid.includes(hash)) navigateTo(hash);
 })();
 
@@ -862,8 +978,9 @@ async function loadRecycling() {
     plData = await plRes.json();
     const sum = await sumRes.json();
 
-    document.getElementById('ov-cardboard').textContent = sum.cardboard.total + ' kg';
-    document.getElementById('ov-plastic').textContent   = sum.plastic.total + ' kg';
+    const curM = currentMonthLabel(0), prevM = currentMonthLabel(-1);
+    renderHeroStat('ov-cardboard', findMonthRow(cbData, curM, 'kg') || 0, findMonthRow(cbData, prevM, 'kg'), sum.cardboard.total, 'kg');
+    renderHeroStat('ov-plastic',   findMonthRow(plData, curM, 'kg') || 0, findMonthRow(plData, prevM, 'kg'), sum.plastic.total, 'kg');
     document.getElementById('cb-total').textContent     = `Total: ${sum.cardboard.total} kg`;
     document.getElementById('pl-total').textContent     = `Total: ${sum.plastic.total} kg`;
 
@@ -1062,10 +1179,22 @@ async function loadEnergy() {
     eData = await eRes.json();
     wData = await wRes.json();
 
-    const latestE = eData.filter(r => r.kwh !== null).slice(-1)[0];
-    document.getElementById('ov-energy').textContent = latestE
-      ? `${(latestE.kwh / 1000).toFixed(1)}k kWh (${latestE.month})`
-      : 'Pending';
+    // Consistent "this month" framing with cardboard/plastic hero stats above —
+    // falls back to the latest available month if this month hasn't been entered yet.
+    const curM = currentMonthLabel(0), prevM = currentMonthLabel(-1);
+    const validE = eData.filter(r => r.kwh !== null);
+    const curRow  = validE.find(r => r.month === curM) || validE.slice(-1)[0] || null;
+    const prevRow = curRow ? validE.find(r => r.month === (curRow.month === curM ? prevM : null)) : null;
+    const allTimeAvg = validE.length ? Math.round(validE.reduce((s,r)=>s+r.kwh,0) / validE.length) : null;
+
+    if (curRow) {
+      renderHeroStat('ov-energy', Math.round(curRow.kwh), prevRow ? Math.round(prevRow.kwh) : null, allTimeAvg, 'num');
+      document.getElementById('ov-energy').textContent = `${(curRow.kwh/1000).toFixed(1)}k kWh`;
+      const wrapEl = document.getElementById('ov-energy-wrap');
+      if (wrapEl) wrapEl.title = `${curRow.month}` + (allTimeAvg ? ` · Avg baseline: ${allTimeAvg.toLocaleString()} kWh` : '') + (prevRow ? ` · Last month: ${Math.round(prevRow.kwh).toLocaleString()} kWh` : '');
+    } else {
+      document.getElementById('ov-energy').textContent = 'Pending';
+    }
 
     renderEnergyEventPills();
     buildEnergyCharts();
@@ -1215,7 +1344,12 @@ async function loadComms() {
   try {
     const res = await fetch(`${API}/comms`);
     calData = await res.json();
-    document.getElementById('ov-posts').textContent = calData.filter(e=>e.status==='planned').length;
+    const plannedCount = calData.filter(e=>e.status==='planned').length;
+    const draftCount    = calData.filter(e=>e.status==='draft').length;
+    const ideaCount     = calData.filter(e=>e.status==='idea').length;
+    document.getElementById('ov-posts').textContent = plannedCount;
+    const postsWrap = document.getElementById('ov-posts-wrap');
+    if (postsWrap) postsWrap.title = `Planned: ${plannedCount} · Draft: ${draftCount} · Idea: ${ideaCount}`;
 
     // Comms page: full active list with post actions
     renderCommsCalendar('all', 'comms-cal', { showActions: true });
@@ -1277,9 +1411,31 @@ function renderPostedComms() {
     return `<div class="cal-item" style="opacity:.65;border-left-color:#95D5A0">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
       <div><div class="cal-theme" style="text-decoration:line-through;color:var(--tm)">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)}</div></div>
-      <span class="status-tag badge-posted">✅ posted</span>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
+        <span class="status-tag badge-posted">✅ posted</span>
+        <button class="action-btn" onclick="revertPosted(${e.id})" style="font-size:.7rem;white-space:nowrap">↩️ Revert</button>
+      </div>
     </div>`;
   }).join('');
+}
+
+async function revertPosted(id) {
+  if (!confirm('Revert this post back to Planned? It will reappear in the active list.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'planned' }),
+    });
+    if (res.ok) {
+      toast('↩️ Reverted to Planned');
+      await loadComms();
+    } else {
+      toast('Failed to revert', true);
+    }
+  } catch(e) {
+    toast('❌ Connection error', true);
+  }
 }
 
 async function markAsPosted(id) {
