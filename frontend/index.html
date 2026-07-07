@@ -5,17 +5,35 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Sustainability Ministry Portal</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --gd:#1B4332;--gm:#2D6A4F;--gs:#52B788;--gp:#D8F3DC;
-  --am:#E9C46A;--cl:#F4A261;--bg:#F7F9F7;--sf:#FFF;
-  --tx:#1A2E1A;--tm:#5C6E5C;--br:#D0E8D4;
-  --r:12px;--rl:20px;--sh:0 2px 12px rgba(27,67,50,.09);
-  --sh2:0 8px 32px rgba(27,67,50,.13);--nh:60px;
+  /* ── Earthy palette: green · clay · sand ── */
+  --gd:#1E3A2E; /* deep forest (was #1B4332) */
+  --gm:#3A6B50; /* green (was #2D6A4F) */
+  --gs:#7FA57B; /* sage accent (was #52B788) */
+  --gp:#DEE8D4; /* soft moss (was #D8F3DC) */
+  --am:#C79A55; /* gold / draft (was #E9C46A) */
+  --cl:#BE6A44; /* clay CTA (was #F4A261) */
+  --bg:#ECE3D3; /* warm sand bg (was #F7F9F7) */
+  --sf:#FCFAF4; /* cream surface (was #FFF) */
+  --tx:#233028; /* ink text */
+  --tm:#787E71; /* muted */
+  --br:#E3D8C4; /* sand border (was #D0E8D4) */
+  --r:14px;--rl:22px;
+  --sh:0 2px 10px rgba(30,58,46,.06);
+  --sh2:0 10px 30px rgba(30,58,46,.14);
+  --nh:60px;
 }
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}
+body{font-family:'Hanken Grotesk',system-ui,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}
+/* Headings & big numbers → Space Grotesk (was Georgia serif) */
+.nav-logo, .section-title, .hero h1,
+.cal-month-title, .hero-stat .val{ font-family:'Space Grotesk',sans-serif !important; }
+.hero-stat .val{ color:#EAF3E6; } /* lift contrast on dark hero */
 
 /* NAV */
 nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);display:flex;align-items:center;padding:0 24px;gap:8px;box-shadow:0 2px 12px rgba(0,0,0,.2)}
@@ -181,21 +199,69 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   .cal-item .status-tag{display:none}
   nav{padding:0 12px}
 }
+
+/* ── Redesign polish (Steps 3–4) — additive, no existing rules removed ── */
+/* Softer, warmer cards + smoother hover */
+.card, .swap-card, .cal-item{ transition:transform .18s, box-shadow .18s; }
+.card:hover, .cal-item:hover{ transform:translateY(-2px); box-shadow:var(--sh2); }
+
+/* Nav: pill-style active tab reads clearer */
+.nav-tab.active{ background:#FCFAF4; color:var(--gd); }
+
+/* Primary button → keep forest; add a clay accent for key CTAs */
+.btn-accent{ background:var(--cl); color:#fff; }
+.btn-accent:hover{ background:#a5572f; }
+
+/* Session badges → earthier tones */
+.badge-sat,.cal-slot.sat{ background:#F3E3CA; color:#8B5A22; border-color:#E8C79A; }
+.badge-sun,.cal-slot.sun{ background:#DDE8D4; color:#356540; border-color:#B5CDA6; }
+.badge-gpc,.cal-slot.gpc{ background:#EBD9E6; color:#7C3B73; border-color:#D6B4CF; }
+
+/* Lucide icon sizing inline in nav */
+.nav-tab [data-lucide]{ width:16px; height:16px; vertical-align:-3px; }
+.nav-logo [data-lucide]{ width:18px; height:18px; vertical-align:-3px; }
+
+/* Needs-your-attention cards (Step 5) */
+.attn-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:14px; margin-bottom:24px; }
+.attn{ background:var(--sf); border:1px solid var(--br); border-left:4px solid var(--cl);
+  border-radius:16px; padding:17px; display:flex; flex-direction:column; gap:10px; }
+.attn .cta{ align-self:flex-start; border:none; cursor:pointer; font-weight:700;
+  padding:7px 14px; border-radius:9px; background:var(--gp); color:var(--gd); font-family:inherit; }
+
+/* Step 6 — sidebar layout. Buttons keep data-page + navigateTo(), no JS changes. */
+body{ display:flex; }
+nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
+  position:sticky; top:0; background:linear-gradient(180deg,#213f31,#1a3328); padding:22px 16px; gap:4px; }
+.nav-logo{ margin-right:0; margin-bottom:18px; }
+.nav-tabs{ flex-direction:column; overflow:visible; flex:1; }
+.nav-tab{ justify-content:flex-start; width:100%; border-radius:11px; }
+#nav-admin-bar{ margin-left:0 !important; margin-top:auto; flex-wrap:wrap; }
+.page-wrap{ flex:1; min-width:0; height:100vh; overflow-y:auto; }
+
+@media(max-width:768px){
+  body{ display:block; }
+  nav{ position:sticky; flex-direction:row; align-items:center; width:auto; height:var(--nh); padding:0 12px; }
+  .nav-logo{ margin-bottom:0; }
+  .nav-tabs{ flex-direction:row; overflow-x:auto; flex:1; }
+  .nav-tab{ width:auto; border-radius:20px; }
+  #nav-admin-bar{ margin-top:0; }
+  .page-wrap{ height:auto; overflow-y:visible; }
+}
 </style>
 </head>
 <body>
 
 <!-- NAV -->
 <nav>
-  <div class="nav-logo">🌱 <span>Susty</span> Ministry</div>
+  <div class="nav-logo"><i data-lucide="sprout"></i> <span>Susty</span> Ministry</div>
   <div class="nav-tabs">
     <button class="nav-tab active" data-page="overview">Overview</button>
-    <button class="nav-tab" data-page="energy">⚡ Energy</button>
-    <button class="nav-tab" data-page="recycling">♻️ W2R</button>
-    <button class="nav-tab" data-page="comms">📢 Comms</button>
-    <button class="nav-tab" data-page="roster">📋 Roster</button>
-    <button class="nav-tab admin-only" data-page="members" style="display:none">👥 Members</button>
-    <button class="nav-tab" data-page="test">🧪 Test</button>
+    <button class="nav-tab" data-page="energy"><i data-lucide="zap"></i> Energy</button>
+    <button class="nav-tab" data-page="recycling"><i data-lucide="recycle"></i> W2R</button>
+    <button class="nav-tab" data-page="comms"><i data-lucide="megaphone"></i> Comms</button>
+    <button class="nav-tab" data-page="roster"><i data-lucide="calendar-days"></i> Roster</button>
+    <button class="nav-tab admin-only" data-page="members" style="display:none"><i data-lucide="users"></i> Members</button>
+    <button class="nav-tab" data-page="test"><i data-lucide="flask-conical"></i> Test</button>
   </div>
   <div id="nav-admin-bar" style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
     <input type="password" id="nav-admin-key" placeholder="Admin key" style="padding:5px 10px;border-radius:6px;border:none;font-size:.78rem;width:120px;background:rgba(255,255,255,.15);color:#fff;outline:none" onkeydown="if(event.key==='Enter')unlockAdminNav()">
@@ -203,6 +269,8 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
     <span id="nav-admin-status" style="font-size:.72rem;color:var(--gs);display:none">✅ Admin</span>
   </div>
 </nav>
+
+<div class="page-wrap">
 
 <!-- ═══ OVERVIEW ════════════════════════════════════════════════════════════ -->
 <div class="page active" id="page-overview">
@@ -216,6 +284,10 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
       <div class="hero-stat"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts scheduled</div></div>
     </div>
   </div>
+
+  <div class="section-title"><i data-lucide="bell-ring"></i> Needs your attention</div>
+  <div class="attn-grid" id="attn-cards"><div class="loading">Loading…</div></div>
+
   <div class="card-grid">
     <div class="card">
       <div class="section-title">♻️ Recycling Trend <span class="live-badge fallback" id="ov-source-badge">checking…</span></div>
@@ -597,8 +669,11 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
   </div>
 </div>
 
+</div><!-- /.page-wrap -->
+
 <div id="toast"></div>
 
+<script src="https://unpkg.com/lucide@latest"></script>
 <script>
 // ═══ CONFIG ══════════════════════════════════════════════════════════════════
 const API = 'https://susty-portal-production.up.railway.app/api';
@@ -692,6 +767,10 @@ const ENERGY_MONTHLY_EVENTS = {
   'Jul 2026': ['GPC – GenerationS Pastors\' Conference (23–27 Jul)'],
 };
 
+// ═══ ICONS ═══════════════════════════════════════════════════════════════════
+function refreshIcons(){ if (window.lucide) lucide.createIcons(); }
+document.addEventListener('DOMContentLoaded', refreshIcons);
+
 // ═══ NAV ═════════════════════════════════════════════════════════════════════
 function navigateTo(pageId) {
   document.querySelectorAll('.nav-tab').forEach(x => x.classList.remove('active'));
@@ -701,6 +780,7 @@ function navigateTo(pageId) {
   if (tab)  tab.classList.add('active');
   if (page) page.classList.add('active');
   location.hash = pageId;
+  refreshIcons();
   // Reveal editor panels if admin mode is already unlocked
   if (isAdmin) {
     if (pageId === 'energy') {
@@ -935,6 +1015,41 @@ function renderEventPills() {
 function buildOverviewChart() {
   const recent = sortByMonth(cbData).slice(-6);
   buildBar('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
+}
+
+// ═══ NEEDS YOUR ATTENTION ════════════════════════════════════════════════════
+// Built from data already fetched by loadRoster()/loadSwaps()/loadComms() — no new API calls.
+function renderAttention() {
+  const container = document.getElementById('attn-cards');
+  if (!container) return;
+
+  const today = new Date();
+  const myNextSlot = rosterData
+    .filter(s => new Date(s.date) >= today)
+    .sort((a,b) => new Date(a.date) - new Date(b.date))[0] || null;
+  const openSwaps = openSwapsCount;
+  const unscheduledPosts = calData.filter(e => e.status === 'draft' || e.status === 'idea').length;
+
+  const cards = [];
+  if (myNextSlot) cards.push({ tag:'Next duty', icon:'calendar-check',
+    title:'Next up: '+esc(myNextSlot.date), body:esc(myNextSlot.session)+' · '+myNextSlot.team.map(esc).join(', '), cta:'View roster', go:'roster' });
+  if (openSwaps > 0) cards.push({ tag:'Needs cover', icon:'repeat',
+    title:openSwaps+' swap request'+(openSwaps>1?'s':'')+' open', body:'Someone needs their duty covered.', cta:'View swaps', go:'roster' });
+  if (unscheduledPosts > 0) cards.push({ tag:'Comms', icon:'pencil-line',
+    title:unscheduledPosts+' post'+(unscheduledPosts>1?'s':'')+' to schedule', body:'Drafts/ideas waiting on the comms calendar.', cta:'Schedule', go:'comms' });
+
+  container.innerHTML = cards.length ? cards.map(c => `
+    <div class="attn">
+      <div style="display:flex;align-items:center;gap:10px">
+        <i data-lucide="${c.icon}"></i>
+        <span style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--cl)">${esc(c.tag)}</span>
+      </div>
+      <div><div style="font-weight:700">${esc(c.title)}</div>
+        <div style="font-size:.8rem;color:var(--tm)">${esc(c.body)}</div></div>
+      <button class="cta" onclick="navigateTo('${c.go}')">${esc(c.cta)} →</button>
+    </div>`).join('') : '<div class="loading">All clear — nothing needs you right now 🌿</div>';
+
+  refreshIcons();
 }
 
 // ═══ ENERGY ══════════════════════════════════════════════════════════════════
@@ -1378,10 +1493,13 @@ async function quickLogWeight(id) {
 }
 
 // ═══ SWAP ════════════════════════════════════════════════════════════════════
+let openSwapsCount = 0;
+
 async function loadSwaps() {
   try {
     const res = await fetch(`${API}/swap`);
     const data = await res.json();
+    openSwapsCount = data.length;
     const el = document.getElementById('swap-list');
     if (!data.length) { el.innerHTML = '<div class="loading">No open swap requests 🎉</div>'; return; }
     el.innerHTML = data.map(s=>`
@@ -1394,6 +1512,7 @@ async function loadSwaps() {
       </div>`).join('');
   } catch(e) {
     document.getElementById('swap-list').innerHTML = '<div class="loading">Backend not connected.</div>';
+    openSwapsCount = 0;
   }
 }
 
@@ -1679,6 +1798,8 @@ async function testTelegram() {
   renderManualChecklist();
   renderEventPills();
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
+  renderAttention();
+  refreshIcons();
 })();
 
 // ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════
