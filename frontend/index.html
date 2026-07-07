@@ -236,7 +236,6 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .nav-logo [data-lucide]{ width:18px; height:18px; vertical-align:-3px; }
 
 /* Overview hero stat trend + hover (consistent this-month framing) */
-.hero-stat{ cursor:help; }
 .hero-stat .trend{ font-weight:700; }
 .hero-stat .trend.up{ color:#F4C88A; }
 .hero-stat .trend.down{ color:#B7D9B0; }
@@ -300,9 +299,9 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <h1>Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
-      <div class="hero-stat" id="ov-cardboard-wrap"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard — this month <span class="trend" id="ov-cardboard-trend"></span></div></div>
-      <div class="hero-stat" id="ov-plastic-wrap"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastic — this month <span class="trend" id="ov-plastic-trend"></span></div></div>
-      <div class="hero-stat" id="ov-energy-wrap"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Electricity — this month <span class="trend" id="ov-energy-trend"></span></div></div>
+      <div class="hero-stat" id="ov-cardboard-wrap"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard — <span id="ov-cardboard-month">this month</span> <span class="trend" id="ov-cardboard-trend"></span></div></div>
+      <div class="hero-stat" id="ov-plastic-wrap"><div class="val" id="ov-plastic">—</div><div class="lbl">🍶 Plastic — <span id="ov-plastic-month">this month</span> <span class="trend" id="ov-plastic-trend"></span></div></div>
+      <div class="hero-stat" id="ov-energy-wrap"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Electricity — <span id="ov-energy-month">this month</span> <span class="trend" id="ov-energy-trend"></span></div></div>
       <div class="hero-stat" id="ov-posts-wrap"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts planned (upcoming)</div></div>
     </div>
   </div>
@@ -316,11 +315,8 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
       <div class="chart-wrap"><canvas id="ov-chart"></canvas></div>
     </div>
     <div class="card">
-      <div class="section-title">📋 Next Roster Slots</div>
-      <table class="roster-table" id="ov-roster">
-        <thead><tr><th>Date</th><th>Session</th><th>Team</th></tr></thead>
-        <tbody><tr><td colspan="3" class="loading">Loading…</td></tr></tbody>
-      </table>
+      <div class="section-title">⚡ Energy Consumption <span style="font-size:.7rem;font-weight:400;color:var(--tm)">— kWh, last 6 months</span></div>
+      <div class="chart-wrap"><canvas id="ov-energy-chart"></canvas></div>
     </div>
   </div>
   <div class="section-title">📢 Upcoming Posts</div>
@@ -758,6 +754,17 @@ function esc(s) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// Matches the Telegram bot's fmtDateShort() (bot/index.js) so roster/swap
+// dates read the same on the portal as they do in the bot — "05 Jul 2026".
+// Supabase returns roster_slots.date as raw ISO ("2026-07-05"); without this,
+// the portal showed that raw ISO string instead of a human date.
+function fmtDateLikeBot(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return String(s); // not a parseable date — show as typed (e.g. free-text swap dates)
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
 // ═══ OVERVIEW HERO STAT HELPERS ═══════════════════════════════════════════════
 // All three overview metrics (cardboard, plastic, energy) now use the SAME
 // time-frame framing — "this month" — instead of cardboard/plastic showing
@@ -1149,7 +1156,7 @@ function renderAttention() {
 
   const cards = [];
   if (myNextSlot) cards.push({ tag:'Next duty', icon:'calendar-check',
-    title:'Next up: '+esc(myNextSlot.date), body:esc(myNextSlot.session)+' · '+myNextSlot.team.map(esc).join(', '), cta:'View roster', go:'roster' });
+    title:'Next up: '+esc(fmtDateLikeBot(myNextSlot.date)), body:esc(myNextSlot.session)+' · '+myNextSlot.team.map(esc).join(', '), cta:'View roster', go:'roster' });
   if (openSwaps > 0) cards.push({ tag:'Needs cover', icon:'repeat',
     title:openSwaps+' swap request'+(openSwaps>1?'s':'')+' open', body:'Someone needs their duty covered.', cta:'View swaps', go:'roster' });
   if (unscheduledPosts > 0) cards.push({ tag:'Comms', icon:'pencil-line',
@@ -1181,24 +1188,43 @@ async function loadEnergy() {
 
     // Consistent "this month" framing with cardboard/plastic hero stats above —
     // falls back to the latest available month if this month hasn't been entered yet.
-    const curM = currentMonthLabel(0), prevM = currentMonthLabel(-1);
+    const curM = currentMonthLabel(0);
     const validE = eData.filter(r => r.kwh !== null);
     const curRow  = validE.find(r => r.month === curM) || validE.slice(-1)[0] || null;
-    const prevRow = curRow ? validE.find(r => r.month === (curRow.month === curM ? prevM : null)) : null;
+    // "Previous month" relative to whatever month curRow actually is (not
+    // necessarily the real calendar's last month) — meaningful even when the
+    // sheet lags and curRow is a fallback to the latest available month.
+    const prevRowLabel = curRow ? (() => { const d = new Date(curRow.month + ' 1'); d.setMonth(d.getMonth() - 1); return d.toLocaleDateString('en-SG', { month: 'short', year: 'numeric' }); })() : null;
+    const prevRow = prevRowLabel ? validE.find(r => r.month === prevRowLabel) : null;
     const allTimeAvg = validE.length ? Math.round(validE.reduce((s,r)=>s+r.kwh,0) / validE.length) : null;
 
+    const monthEl = document.getElementById('ov-energy-month');
     if (curRow) {
       renderHeroStat('ov-energy', Math.round(curRow.kwh), prevRow ? Math.round(prevRow.kwh) : null, allTimeAvg, 'num');
       document.getElementById('ov-energy').textContent = `${(curRow.kwh/1000).toFixed(1)}k kWh`;
+      // Electricity data lags behind W2R (it's manually entered from a monthly
+      // utility sheet, not logged live) — label honestly instead of claiming
+      // "this month" when we're actually showing the latest month that HAS data.
+      if (monthEl) monthEl.textContent = curRow.month === curM ? 'this month' : `latest — ${curRow.month}`;
       const wrapEl = document.getElementById('ov-energy-wrap');
-      if (wrapEl) wrapEl.title = `${curRow.month}` + (allTimeAvg ? ` · Avg baseline: ${allTimeAvg.toLocaleString()} kWh` : '') + (prevRow ? ` · Last month: ${Math.round(prevRow.kwh).toLocaleString()} kWh` : '');
+      if (wrapEl) wrapEl.title = `${curRow.month}` + (allTimeAvg ? ` · Avg baseline: ${allTimeAvg.toLocaleString()} kWh` : '') + (prevRow ? ` · Prior month: ${Math.round(prevRow.kwh).toLocaleString()} kWh` : '');
     } else {
       document.getElementById('ov-energy').textContent = 'Pending';
+      if (monthEl) monthEl.textContent = 'no data yet';
     }
 
     renderEnergyEventPills();
     buildEnergyCharts();
+    buildEnergyOverviewChart();
   } catch(e) {}
+}
+
+// Overview card (replaces the old "Next Roster Slots" table, 8 Jul 2026 — roster
+// isn't a great overview metric since it's already covered by the Roster tab and
+// the "Needs your attention" row; energy is a metric with no other home on Overview).
+function buildEnergyOverviewChart() {
+  const recent = sortByMonth(eData.filter(r => r.kwh !== null)).slice(-6);
+  buildBar('ov-energy-chart', recent.map(r=>r.month), recent.map(r=>r.kwh), 'kWh', '#C79A55');
 }
 
 function applyEnergyYearFilter(arr, key) {
@@ -1466,24 +1492,10 @@ async function loadRoster() {
     const res = await fetch(`${API}/roster`);
     rosterData = await res.json();
     renderRoster('all');
-    renderOverviewRoster();
     renderCalendarView();
   } catch(e) {
     document.querySelector('#full-roster tbody').innerHTML = '<tr><td colspan="6" class="loading">Could not load roster.</td></tr>';
   }
-}
-
-function renderOverviewRoster() {
-  const today = new Date();
-  const upcoming = rosterData.filter(s => new Date(s.date) >= today).slice(0,4);
-  const tbody = document.querySelector('#ov-roster tbody');
-  if (!upcoming.length) { tbody.innerHTML = '<tr><td colspan="3" class="loading">No upcoming slots</td></tr>'; return; }
-  tbody.innerHTML = upcoming.map(s=>`
-    <tr>
-      <td>${esc(s.date)}</td>
-      <td><span class="badge badge-${esc(s.session.toLowerCase())}">${esc(s.session)}</span></td>
-      <td>${s.team.map(esc).join(', ')}</td>
-    </tr>`).join('');
 }
 
 function renderRoster(filter) {
@@ -1507,7 +1519,7 @@ function renderRoster(filter) {
 
     return `<tr>
       <td>${esc(s.week)}</td>
-      <td>${esc(s.date)}</td>
+      <td>${esc(fmtDateLikeBot(s.date))}</td>
       <td><span class="badge badge-${esc(s.session.toLowerCase())}">${esc(s.session)}</span></td>
       <td>${s.team.map(esc).join(', ')}</td>
       <td>${kgCell}</td>
@@ -1570,7 +1582,7 @@ function openEditSlot(id) {
   document.getElementById('editor-title').textContent = '✏️ Edit Slot';
   document.getElementById('edit-slot-id').value = id;
   document.getElementById('ed-week').value = slot.week;
-  document.getElementById('ed-date').value = slot.date;
+  document.getElementById('ed-date').value = fmtDateLikeBot(slot.date);
   document.getElementById('ed-session').value = slot.session;
   document.getElementById('ed-kg').value = slot.kg !== null ? slot.kg : '';
   document.getElementById('ed-notes').value = slot.notes || '';
@@ -1662,7 +1674,7 @@ async function loadSwaps() {
       <div class="swap-card">
         <div class="swap-info">
           <div class="name">${s.requesterName}</div>
-          <div class="meta">📅 ${s.requesterDate}${s.reason ? ' · '+s.reason : ''}</div>
+          <div class="meta">📅 ${esc(fmtDateLikeBot(s.requesterDate))}${s.reason ? ' · '+esc(s.reason) : ''}</div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="volunteerSwap(${s.id},'${s.requesterDate}')">🤝 Volunteer</button>
       </div>`).join('');
@@ -1843,7 +1855,7 @@ const MANUAL_CHECKS = [
   { section:'Recycling', items:['Charts show cardboard and plastic data','Source badge shows "Live from Sheets" or "Cached data"','Totals match Google Drive figures'] },
   { section:'Roster', items:['All weekend slots display correctly','Admin unlock works with your API key','Can add a new slot with team members','Can edit an existing slot','Can log a weight for a slot','Can delete a slot','SAT/SUN filter works'] },
   { section:'Swap', items:['Can submit a swap request','Telegram message received in ministry group','Open swap request appears in the list','Can volunteer for a swap','Match notification received on Telegram'] },
-  { section:'Overview', items:['Hero stats show totals','Recycling trend chart visible','Next 4 roster slots appear','Upcoming comms posts appear'] },
+  { section:'Overview', items:['Hero stats show totals','Recycling trend chart visible','Energy consumption chart appears','Upcoming comms posts appear'] },
   { section:'Security', items:['Editing roster without admin key fails','Submitting empty swap form shows error','XSS attempt in name field is sanitised'] },
 ];
 

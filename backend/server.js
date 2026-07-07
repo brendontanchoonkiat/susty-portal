@@ -72,9 +72,27 @@ const apiLimiter   = rateLimit({ windowMs: 15*60*1000, max: 100,  standardHeader
 const writeLimiter  = rateLimit({ windowMs: 60*60*1000, max: 10,   message: { error: 'Submission limit reached.' } });
 const adminLimiter  = rateLimit({ windowMs: 15*60*1000, max: 20,   message: { error: 'Admin rate limit exceeded.' } });
 
+// writeLimiter is meant to throttle SUBMISSIONS (spam swap requests, spam
+// comms posts) — but app.use('/api/comms', writeLimiter) applied it to every
+// method on that path, including plain GET /api/comms. The frontend re-fetches
+// the whole comms list via GET after every single mark-as-posted/revert action,
+// so those reads were silently eating the same 10-requests-per-hour budget as
+// actual writes — after ~5 mark-as-posted clicks (each = 1 PATCH + 1 GET reload,
+// plus page-load GETs), the 11th request of any kind got 429'd, which looked
+// like "marking one post blocks marking any more." Fixed by only applying
+// writeLimiter to mutating methods; GETs still fall under the more generous
+// apiLimiter (100 / 15 min) applied above. Same latent issue existed on
+// /api/swap (loadSwaps() GET) — fixed there too since it's the identical bug.
+function writeMethodsOnly(limiter) {
+  return (req, res, next) => {
+    if (['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) return limiter(req, res, next);
+    next();
+  };
+}
+
 app.use('/api', apiLimiter);
-app.use('/api/swap', writeLimiter);
-app.use('/api/comms', writeLimiter);
+app.use('/api/swap', writeMethodsOnly(writeLimiter));
+app.use('/api/comms', writeMethodsOnly(writeLimiter));
 app.use('/api/roster', adminLimiter);
 app.use('/api/recycling/refresh', adminLimiter);
 app.disable('x-powered-by');
