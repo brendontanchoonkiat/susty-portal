@@ -136,6 +136,10 @@ bot.use(session({
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
+    // GPC W2R Check-in (one-off, added 8 Jul 2026)
+    pendingGpcCheckin:         null,  // { ministry_status, other_ministry?, duration?, arrival_note? } — staged until final save
+    awaitingGpcOtherMinistry:  false, // waiting for free-text ministry name after "Also another ministry" tap
+    awaitingGpcArrivalNote:    false, // waiting for free-text arrival note after "Just a short while" tap
   }),
 }));
 
@@ -605,6 +609,7 @@ const adminMenu = new InlineKeyboard()
   .text('🔄 Toggle Swap Requests Live', 'admin:toggleswaps').row()
   .text('🧪 Toggle Roster Test Mode', 'admin:togglerostertest').row()
   .text('🔔 Test Reminders Now', 'admin:testreminders').row()
+  .text('📋 Send GPC W2R Check-in', 'admin:gpccheckin').row()
   .text('← Back', 'menu:main');
 
 function backToMain() {
@@ -2033,6 +2038,174 @@ bot.callbackQuery('admin:profiles', async (ctx) => {
   );
 });
 
+// ─── GPC W2R Check-in (one-off broadcast, added 8 Jul 2026) ────────────────
+// DMs every member on the Jul 23-27 GPC roster (including TLs on their own
+// duty days) a reminder of their slot(s) + TL, then collects two answers via
+// inline buttons: (1) W2R only vs. also another ministry that day, (2) there
+// the whole day vs. just a short while (+ when). One row per member in
+// `gpc_checkin`, upserted — resending the check-in overwrites, not
+// duplicates. This is deliberately hardcoded to the known GPC date range
+// rather than derived from `week` text, since GPC week's `week` value
+// changed from 'GPC D1'-'D5' to 'W4' (see PROJECT_STATE §7) and isn't a
+// stable filter to key off going forward.
+const GPC_START = '2026-07-23';
+const GPC_END   = '2026-07-27';
+
+// Convention (matches every GPC roster row as of 8 Jul 2026): team[0] is the
+// TL for that day, the rest are servers.
+async function getGpcRosterByMember() {
+  const supa = db.getClient();
+  if (!supa) return {};
+  const { data } = await supa.from('roster_slots')
+    .select('*')
+    .eq('session', 'GPC')
+    .gte('date', GPC_START)
+    .lte('date', GPC_END)
+    .order('date');
+  const byMember = {}; // name -> [{ date, tl }]
+  for (const slot of (data || [])) {
+    const team = slot.team || [];
+    const tl = team[0] || '—';
+    for (const name of team) {
+      if (!byMember[name]) byMember[name] = [];
+      byMember[name].push({ date: slot.date, tl });
+    }
+  }
+  return byMember;
+}
+
+function gpcCheckinMsg(memberName, days) {
+  const lines = days.map(d => {
+    const tlNote = d.tl === memberName ? 'You (TL)' : d.tl;
+    return `• <b>${fmtDateShort(d.date)}</b> — TL: ${tlNote}`;
+  }).join('\n');
+  return (
+    `🌿 <b>GPC W2R Check-in</b>\n\n` +
+    `Hey ${memberName}! Quick reminder of your GPC W2R slot(s):\n\n` +
+    `${lines}\n\n` +
+    `One question as we finalize planning — on your GPC day(s), are you serving <b>only</b> on W2R, or also on another ministry that day?`
+  );
+}
+
+function gpcQ1Kb() {
+  return new InlineKeyboard()
+    .text('✅ W2R only', 'gpc:q1:w2ronly').row()
+    .text('🙏 Also another ministry', 'gpc:q1:other').row()
+    .text('❓ Not sure yet', 'gpc:q1:unsure');
+}
+
+function gpcQ2Kb() {
+  return new InlineKeyboard()
+    .text('🕐 There the whole day', 'gpc:q2:full').row()
+    .text('⏱ Just a short while', 'gpc:q2:short');
+}
+
+bot.callbackQuery('admin:gpccheckin', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return;
+  const byMember = await getGpcRosterByMember();
+  const names = Object.keys(byMember);
+  if (!names.length) {
+    return ctx.editMessageText(`No GPC roster slots found for ${GPC_START} to ${GPC_END}.`, { reply_markup: backToAdmin() });
+  }
+  const kb = new InlineKeyboard()
+    .text(`📤 Send to ${names.length} members`, 'admin:gpccheckin:send').row()
+    .text('📋 View Responses So Far', 'admin:gpccheckin:responses').row()
+    .text('← Cancel', 'admin:menu');
+  await ctx.editMessageText(
+    `📋 <b>GPC W2R Check-in</b>\n\n` +
+    `This will DM <b>${names.length}</b> members (everyone on the Jul 23–27 GPC roster, including TLs) with a reminder of their slot(s) plus two quick questions:\n` +
+    `1️⃣ W2R only, or also another ministry that day?\n` +
+    `2️⃣ There the whole day, or just a short while?\n\n` +
+    `Recipients: ${names.join(', ')}`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
+
+bot.callbackQuery('admin:gpccheckin:send', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return;
+  const byMember = await getGpcRosterByMember();
+  const sent = [];
+  const failed = [];
+  for (const [name, days] of Object.entries(byMember)) {
+    const member = await db.getMemberByName(name);
+    if (!member?.telegram_id) { failed.push(name); continue; }
+    try {
+      await bot.api.sendMessage(member.telegram_id, gpcCheckinMsg(name, days), {
+        parse_mode: 'HTML', reply_markup: gpcQ1Kb(),
+      });
+      sent.push(name);
+    } catch (err) {
+      console.warn('[gpccheckin] failed to DM', name, ':', err.message);
+      failed.push(name);
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  const summary =
+    `✅ Sent to ${sent.length}: ${sent.join(', ') || '—'}` +
+    (failed.length ? `\n⚠️ Couldn't reach (not registered on the bot?): ${failed.join(', ')}` : '');
+  await ctx.editMessageText(summary, { parse_mode: 'HTML', reply_markup: backToAdmin() });
+});
+
+bot.callbackQuery('admin:gpccheckin:responses', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return;
+  const rows = await db.getGpcCheckinResponses();
+  if (!rows.length) {
+    return ctx.editMessageText('No responses yet.', { reply_markup: backToAdmin() });
+  }
+  const statusLabel = { w2r_only: '✅ W2R only', unsure: '❓ Not sure' };
+  const durationLabel = { full_day: '🕐 Whole day', short_while: '⏱ Short while' };
+  const lines = rows.map((r, i) => {
+    const ms = r.ministry_status === 'other_ministry'
+      ? `🙏 Also: ${r.other_ministry || '—'}`
+      : (statusLabel[r.ministry_status] || '❓ No answer');
+    const dur = r.duration ? (durationLabel[r.duration] || r.duration) + (r.arrival_note ? ` (${escapeHtml(r.arrival_note)})` : '') : '—';
+    return `${i + 1}. <b>${r.member_name}</b> — ${ms} · ${dur}`;
+  }).join('\n');
+  await ctx.editMessageText(
+    `📋 <b>GPC Check-in Responses (${rows.length})</b>\n\n${lines}`,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
+
+bot.callbackQuery(/^gpc:q1:(w2ronly|other|unsure)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const status = ctx.match[1];
+  const name = await resolveName(ctx);
+  if (!name) return;
+  if (status === 'other') {
+    ctx.session.pendingGpcCheckin = { ministry_status: 'other_ministry' };
+    ctx.session.awaitingGpcOtherMinistry = true;
+    return ctx.editMessageText(`🙏 Which other ministry are you serving that day?`, { parse_mode: 'HTML' });
+  }
+  ctx.session.pendingGpcCheckin = { ministry_status: status };
+  await ctx.editMessageText(
+    `Got it! One more thing — will you be there for the <b>whole day</b>, or just a <b>short while</b>?`,
+    { parse_mode: 'HTML', reply_markup: gpcQ2Kb() }
+  );
+});
+
+bot.callbackQuery(/^gpc:q2:(full|short)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const duration = ctx.match[1];
+  const name = await resolveName(ctx);
+  if (!name || !ctx.session.pendingGpcCheckin) return;
+  if (duration === 'short') {
+    ctx.session.pendingGpcCheckin.duration = 'short_while';
+    ctx.session.awaitingGpcArrivalNote = true;
+    return ctx.editMessageText(
+      `⏱ Roughly when will you come down / for how long? <i>(e.g. "after 10am service, ~1 hour")</i>`,
+      { parse_mode: 'HTML' }
+    );
+  }
+  ctx.session.pendingGpcCheckin.duration = 'full_day';
+  await db.saveGpcCheckin(name, ctx.session.pendingGpcCheckin);
+  ctx.session.pendingGpcCheckin = null;
+  await ctx.editMessageText(`✅ Thanks, ${name}! Got your answer — see you at GPC 🌿`, { parse_mode: 'HTML' });
+});
+
 // ─── Admin: generic feature-toggle handler ─────────────────────────────────
 // Shared by every bot_settings on/off toggle in /admin.
 async function handleAdminToggle(ctx, { key, envVar, label, onLiveMsg, onHiddenMsg }) {
@@ -2396,6 +2569,26 @@ bot.on('message:text', async (ctx) => {
       `🤔 I couldn't find "<b>${text}</b>" on the roster.\n\nPlease select your name from the list:`,
       { parse_mode: 'HTML', reply_markup: kb }
     );
+  }
+
+  // GPC Check-in: other ministry name
+  if (ctx.session.awaitingGpcOtherMinistry && ctx.session.pendingGpcCheckin) {
+    ctx.session.pendingGpcCheckin.other_ministry = text;
+    ctx.session.awaitingGpcOtherMinistry = false;
+    return ctx.reply(
+      `Got it! One more thing — will you be there for the <b>whole day</b>, or just a <b>short while</b>?`,
+      { parse_mode: 'HTML', reply_markup: gpcQ2Kb() }
+    );
+  }
+
+  // GPC Check-in: arrival note (short while), then save
+  if (ctx.session.awaitingGpcArrivalNote && ctx.session.pendingGpcCheckin) {
+    ctx.session.pendingGpcCheckin.arrival_note = text;
+    ctx.session.awaitingGpcArrivalNote = false;
+    const name = await resolveName(ctx);
+    if (name) await db.saveGpcCheckin(name, ctx.session.pendingGpcCheckin);
+    ctx.session.pendingGpcCheckin = null;
+    return ctx.reply(`✅ Thanks${name ? `, ${name}` : ''}! Got your answer — see you at GPC 🌿`, { parse_mode: 'HTML' });
   }
 
   // Profile: CG — required, every member has one

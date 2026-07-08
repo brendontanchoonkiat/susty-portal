@@ -296,6 +296,33 @@ async function uploadImage(buffer, filename, mimeType = 'image/jpeg') {
   }
 }
 
+// ─── GPC W2R Check-in (one-off, added 8 Jul 2026) ─────────────────────────────
+// One combined response per member covering all their GPC days (Jul 23-27
+// 2026) — upserted on member_name so re-answering just overwrites, and a
+// resend of the check-in doesn't create duplicate rows.
+async function saveGpcCheckin(memberName, fields) {
+  const db = getClient();
+  if (!db) return null;
+  const { data, error } = await db.from('gpc_checkin').upsert(
+    {
+      member_name: memberName,
+      ...fields,
+      responded_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'member_name' }
+  );
+  if (error) { console.error('[Supabase] saveGpcCheckin:', error.message); return null; }
+  return data;
+}
+
+async function getGpcCheckinResponses() {
+  const db = getClient();
+  if (!db) return [];
+  const { data } = await db.from('gpc_checkin').select('*').order('member_name');
+  return data || [];
+}
+
 module.exports = {
   getClient,
   query, insert, update, remove,
@@ -308,4 +335,5 @@ module.exports = {
   getAllRegisteredMembers, getDutyExemptNames,
   saveAvailability, getAvailabilitySummary,
   getMemberRoster, updateMemberRosterStats,
+  saveGpcCheckin, getGpcCheckinResponses,
 };
