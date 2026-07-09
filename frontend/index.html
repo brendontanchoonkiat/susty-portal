@@ -509,7 +509,27 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
   /* Tuck the hero UNDER the frosted sticky nav for a true full-screen first view */
   .hero-stage{margin-top:calc(-1 * var(--nh));height:100vh;height:100dvh}
   .hero-stage .hero{padding-top:calc(var(--nh) + 30px)}
+  /* Sticky nav overlays the sheet when snapped — pad the dashboard's top so
+     the Up Next strip isn't cut off underneath it */
+  .ov-body{padding-top:calc(var(--nh) + 16px)}
 }
+/* Big monitors: let the hero breathe — larger type, wider content column */
+@media(min-width:1600px){
+  .hero-stage .hero > *{max-width:1340px}
+  .hero-stage .hero h1{font-size:4.8rem}
+  .hero-stage .hero p{font-size:1.3rem;margin-bottom:48px}
+  .hero-stage .hero-stats{gap:24px}
+  .hero-stage .hero-stat{padding:32px 34px;border-radius:22px}
+  .hero-stage .hero-stat .val{font-size:3.7rem}
+  .hero-stage .hero-stat .lbl{font-size:.98rem;margin-top:8px}
+  .scroll-cue{font-size:.76rem}
+  .scroll-cue [data-lucide]{width:24px;height:24px}
+}
+/* Dark-mode hero contrast: --gp flips dark in dark mode, so the subtitle and
+   stat labels (which use it on the light theme) need explicit light greens */
+html[data-theme="dark"] .hero p{color:#AFC6B0}
+html[data-theme="dark"] .hero-stat .lbl{color:#A5BBA5}
+html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
 @media(max-width:600px){
   .hero-stage .hero{padding-left:20px;padding-right:20px}
   .ov-body{padding:24px 14px 8px;border-radius:24px 24px 0 0}
@@ -1918,12 +1938,10 @@ function renderAttention() {
     .filter(s => new Date(s.date) >= today)
     .sort((a,b) => new Date(a.date) - new Date(b.date))[0] || null;
   const openSwaps = openSwapsCount;
-  const unscheduledPosts = calData.filter(e => e.status === 'draft' || e.status === 'idea').length;
 
-  // Alert chips (previously their own attention cards)
+  // Alert chips — swaps only (posts-to-schedule chip removed 9 Jul 2026, per Brendon)
   const chips = [];
   if (openSwaps > 0) chips.push(`<button class="upnext-chip" onclick="navigateTo('roster')">🔄 ${openSwaps} swap${openSwaps>1?'s':''} open</button>`);
-  if (unscheduledPosts > 0) chips.push(`<button class="upnext-chip" onclick="navigateTo('comms')">✏️ ${unscheduledPosts} post${unscheduledPosts>1?'s':''} to schedule</button>`);
 
   if (!myNextSlot) {
     el.innerHTML = `
