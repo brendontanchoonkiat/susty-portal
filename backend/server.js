@@ -36,6 +36,7 @@ app.use(helmet({
     directives: {
       defaultSrc:      ["'self'"],
       scriptSrc:       ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://unpkg.com"],
+      scriptSrcAttr:   ["'unsafe-inline'"],
       styleSrc:        ["'self'", "'unsafe-inline'"],
       imgSrc:          ["'self'", "data:", "https://*.supabase.co"],
       connectSrc:      ["'self'", "https://*.supabase.co"],

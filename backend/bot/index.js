@@ -944,8 +944,8 @@ bot.callbackQuery('menu:comms', async (ctx) => {
   }
   const lines = mine.length
     ? mine.map(p =>
-        `• ${fmtDateShort(p.date)} — ${p.theme} <i>(${commsStatusLabel(p.status)})</i>` +
-        (p.rejected_reason && p.status === 'needs_changes' ? `\n   💬 ${p.rejected_reason}` : '')
+        `• ${fmtDateShort(p.date)} — ${commsNotify.escHtml(p.theme)} <i>(${commsStatusLabel(p.status)})</i>` +
+        (p.rejected_reason && p.status === 'needs_changes' ? `\n   💬 ${commsNotify.escHtml(p.rejected_reason)}` : '')
       ).join('\n')
     : 'Nothing pending right now.';
   return ctx.editMessageText(
@@ -966,7 +966,7 @@ bot.callbackQuery('menu:commsapprovals', async (ctx) => {
       .catch(() => ctx.reply('✅ No posts waiting for review.', { reply_markup: backToCommsKb() }));
   }
   const kb = new InlineKeyboard();
-  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${p.theme}`, `comms:view:${p.id}`).row());
+  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${(p.theme || '').slice(0, 40)}`, `comms:view:${p.id}`).row());
   kb.text('← Back', 'menu:comms');
   return ctx.editMessageText('✅ <b>Pending Approvals</b>\n\nTap a post to review.', { parse_mode: 'HTML', reply_markup: kb })
     .catch(() => ctx.reply('✅ Pending Approvals', { reply_markup: kb }));
@@ -984,7 +984,7 @@ bot.callbackQuery('menu:commspost', async (ctx) => {
       .catch(() => ctx.reply('📮 No approved posts waiting to go live.', { reply_markup: backToCommsKb() }));
   }
   const kb = new InlineKeyboard();
-  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${p.theme}`, `comms:view:${p.id}`).row());
+  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${(p.theme || '').slice(0, 40)}`, `comms:view:${p.id}`).row());
   kb.text('← Back', 'menu:comms');
   return ctx.editMessageText('📮 <b>Ready to Post</b>\n\nTap a post to view + mark posted.', { parse_mode: 'HTML', reply_markup: kb })
     .catch(() => ctx.reply('📮 Ready to Post', { reply_markup: kb }));
@@ -995,7 +995,9 @@ bot.callbackQuery('menu:commspost', async (ctx) => {
 // than edited in place) since the list message may be text-only but the
 // preview may need to become a photo message.
 function commsAssigneeLine(p) {
-  const names = Array.isArray(p.assignees) && p.assignees.length ? p.assignees.join(', ') : (p.created_by || p.owner || '—');
+  const names = Array.isArray(p.assignees) && p.assignees.length
+    ? p.assignees.map(commsNotify.escHtml).join(', ')
+    : commsNotify.escHtml(p.created_by || p.owner || '—');
   return `👤 Tagged: ${names}`;
 }
 
@@ -1035,9 +1037,9 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   if (!p) return ctx.reply('⚠️ Post not found — it may have been edited or deleted.');
 
   const caption =
-    `📅 <b>${fmtDateShort(p.date)}</b>\n📝 <b>${p.theme}</b>\n` +
-    (p.caption ? `\n"${p.caption}"\n` : '') +
-    (p.details ? `\n🗒 ${p.details}\n` : '') +
+    `📅 <b>${fmtDateShort(p.date)}</b>\n📝 <b>${commsNotify.escHtml(p.theme)}</b>\n` +
+    (p.caption ? `\n"${commsNotify.escHtml(p.caption)}"\n` : '') +
+    (p.details ? `\n🗒 ${commsNotify.escHtml(p.details)}\n` : '') +
     `\n${commsAssigneeLine(p)}\n📌 Status: ${commsStatusLabel(p.status)}`;
 
   let kb;

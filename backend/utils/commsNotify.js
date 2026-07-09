@@ -76,6 +76,17 @@ function recipientNames(post) {
   return fallback ? [fallback] : [];
 }
 
+// Telegram's HTML parse_mode treats <, >, & as markup — user-supplied fields
+// (theme/caption/details/comment/names) go straight into these messages, so
+// an unescaped value could inject a fake link/tag or (at minimum) break
+// delivery with a 400 from Telegram. Escape before interpolating into any
+// parse_mode: 'HTML' string built in this file. (Portal-side XSS is handled
+// separately by the frontend's own esc() helper — this is the Telegram
+// message side of the same class of bug.)
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function fmtDate(dateStr) {
   try {
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -100,7 +111,7 @@ async function notifyAssigneesTagged(post) {
   if (!Array.isArray(post.assignees) || !post.assignees.length) return;
   const msg =
     `📌 <b>You've been tagged on a comms post</b>\n\n` +
-    `📅 <b>${fmtDate(post.date)}</b>\n📝 <b>${post.theme}</b>\n\n` +
+    `📅 <b>${fmtDate(post.date)}</b>\n📝 <b>${escHtml(post.theme)}</b>\n\n` +
     `Fill in the caption, notes and image, then tap Submit for Review when it's ready.\n👉 ${PORTAL_URL}`;
   await dmNames(post.assignees, msg);
 }
@@ -115,14 +126,14 @@ async function notifyTLsSubmitted(post) {
     .text('✅ Approve', `comms:approve:${post.id}`)
     .text('💬 Request Changes', `comms:requestchanges:${post.id}`);
 
-  const assignees = Array.isArray(post.assignees) && post.assignees.length ? post.assignees.join(', ') : null;
+  const assignees = Array.isArray(post.assignees) && post.assignees.length ? post.assignees.map(escHtml).join(', ') : null;
   const caption =
     `📢 <b>New post ready for review</b>\n\n` +
     `📅 <b>${fmtDate(post.date)}</b>\n` +
-    `📝 <b>${post.theme}</b>\n` +
-    (post.caption ? `\n"${post.caption}"\n` : '') +
-    (post.details ? `\n🗒 ${post.details}\n` : '') +
-    `\n👤 Tagged: ${assignees || post.created_by || post.owner || 'Unknown'}`;
+    `📝 <b>${escHtml(post.theme)}</b>\n` +
+    (post.caption ? `\n"${escHtml(post.caption)}"\n` : '') +
+    (post.details ? `\n🗒 ${escHtml(post.details)}\n` : '') +
+    `\n👤 Tagged: ${assignees || escHtml(post.created_by || post.owner) || 'Unknown'}`;
 
   const tls = await getTLTelegramIds();
   for (const tl of tls) {
@@ -140,7 +151,7 @@ async function notifyTLsSubmitted(post) {
 }
 
 async function notifyAssigneesApproved(post) {
-  const msg = `✅ <b>Post approved!</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${post.theme}\n\nA TL will post it — you'll see it move to "posted" once it's live.`;
+  const msg = `✅ <b>Post approved!</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${escHtml(post.theme)}\n\nA TL will post it — you'll see it move to "posted" once it's live.`;
   await dmNames(recipientNames(post), msg);
 }
 
@@ -148,8 +159,8 @@ async function notifyAssigneesApproved(post) {
 // hard reject. Member edits in the portal and taps Submit for Review again.
 async function notifyAssigneesChangesRequested(post, comment) {
   const msg =
-    `💬 <b>Changes requested on your post</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${post.theme}\n\n` +
-    (comment ? `"${comment}"\n\n` : '') +
+    `💬 <b>Changes requested on your post</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${escHtml(post.theme)}\n\n` +
+    (comment ? `"${escHtml(comment)}"\n\n` : '') +
     `Update it here, then tap Submit for Review again — no need to start over.\n👉 ${PORTAL_URL}`;
   await dmNames(recipientNames(post), msg);
 }
@@ -164,8 +175,8 @@ async function notifyTLsDeleteRequested(post) {
     .text('🗑 Confirm Delete', `comms:confirmdelete:${post.id}`)
     .text('↩️ Keep Post', `comms:canceldelete:${post.id}`);
   const msg =
-    `🗑 <b>Deletion requested</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${post.theme}\n\n` +
-    (post.delete_requested_by ? `Requested by: ${post.delete_requested_by}\n\n` : '') +
+    `🗑 <b>Deletion requested</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${escHtml(post.theme)}\n\n` +
+    (post.delete_requested_by ? `Requested by: ${escHtml(post.delete_requested_by)}\n\n` : '') +
     `Confirm to permanently delete this post, or keep it as-is.`;
   const tls = await getTLTelegramIds();
   for (const tl of tls) {
@@ -208,5 +219,5 @@ module.exports = {
   getTLTelegramIds, getTelegramIdForName, recipientNames,
   notifyAssigneesTagged, notifyTLsSubmitted, notifyAssigneesApproved, notifyAssigneesChangesRequested,
   notifyTLsDeleteRequested, publishToCommsChannel,
-  fmtDate,
+  fmtDate, escHtml,
 };
