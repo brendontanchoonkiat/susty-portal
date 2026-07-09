@@ -1477,7 +1477,11 @@ function renderCommsCalendar(filter, containerId, opts={}) {
   if (!el) return;
   const { limit, dateFrom, showActions } = opts;
 
-  let items = calData.filter(e => e.status !== 'posted');
+  // Archived posts (found 9 Jul 2026 — same bug as the month grid: this list
+  // never excluded them either) stay out of the default/list views. Still
+  // reachable by explicitly filtering for 'archived' if that view is ever
+  // built later — just never shown by default or under the 'all' filter.
+  let items = calData.filter(e => e.status !== 'posted' && e.status !== 'archived');
   if (filter !== 'all') items = items.filter(e => e.status === filter);
   if (dateFrom) items = items.filter(e => e.date >= dateFrom);
   if (limit) items = items.slice(0, limit);
@@ -1556,7 +1560,12 @@ function renderCommsMonthGrid() {
   const daysInMonth = new Date(year, month + 1, 0).getDate();
 
   const byDate = {};
-  (calData||[]).forEach(e => {
+  // Archived posts (found 9 Jul 2026 — they were still rendering on the
+  // month grid, just in the archived colour, since this loop never filtered
+  // by status at all) shouldn't take up a tile on the calendar anymore —
+  // they're still fully visible in a list elsewhere if needed via a status
+  // filter, just not cluttering the grid.
+  (calData||[]).filter(e => e.status !== 'archived').forEach(e => {
     const d = new Date(e.date + 'T00:00:00');
     if (isNaN(d)) return;
     const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
