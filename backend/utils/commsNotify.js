@@ -181,12 +181,14 @@ async function notifyTLsSubmitted(post) {
     (post.details ? `\n🗒 ${escHtml(post.details)}\n` : '') +
     `\n👤 Tagged: ${assignees || escHtml(post.created_by || post.owner) || 'Unknown'}` +
     // Deep link straight to the portal's comment thread on this post (added
-    // 9 Jul 2026, per Brendon) — approve/request-changes stay quick actions
-    // right here in the bot, but reading/writing a comment thread is better
-    // suited to the portal (full-size photos, past comments, resolve
-    // toggles) than a linear chat reply, so this points there instead of
-    // building a separate bot comment flow.
-    `\n💬 <a href="${postLink(post)}">Comment on this post</a>`;
+    // 9 Jul 2026, per Brendon; wording/emoji tightened 9 Jul 2026 after
+    // Judy found "💬 Comment on this post" next to "💬 Request Changes"
+    // confusing — same emoji, both sound like "leave feedback"). Now
+    // deliberately distinct: Request Changes is the formal action that
+    // sends the post back to needs_changes; the portal link is just for
+    // reading/adding casual comments that don't block anything.
+    `\n🔗 <a href="${postLink(post)}">Open on the portal to view/add comments</a>` +
+    `\n<i>(Request Changes below is for "this needs to change before it can post" — comments are just discussion)</i>`;
 
   const tls = await getTLTelegramIds();
   for (const tl of tls) {

@@ -2948,6 +2948,15 @@ bot.on('message:text', async (ctx) => {
       .eq('id', id).select().single();
     if (error || !p) return ctx.reply('⚠️ Could not update — post may no longer exist.');
 
+    // Also drop this into the visible comment thread (added 9 Jul 2026, per
+    // Brendon/Judy's feedback) — previously this text only showed as small
+    // grey "TL feedback" text in the status line, easy to miss. It now
+    // appears as a normal-size comment card in the same place everyone
+    // else's feedback lands, so there's one place to look, not two.
+    const tlName = (await resolveName(ctx)) || 'TL';
+    const { error: commentErr } = await supa.from('comms_comments').insert({ post_id: id, author_name: tlName, comment: text });
+    if (commentErr) console.warn('[Comms] Failed to mirror Request Changes note as a comment:', commentErr.message);
+
     const who = Array.isArray(p.assignees) && p.assignees.length ? p.assignees.join(', ') : (p.created_by || p.owner || 'the owner');
     await ctx.reply(`💬 Sent back to ${who} with your feedback.`);
     commsNotify.notifyAssigneesChangesRequested(p, text).catch(() => {});
