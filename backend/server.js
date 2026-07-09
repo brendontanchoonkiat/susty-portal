@@ -51,7 +51,20 @@ app.use(helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3001').split(',').map(o => o.trim());
+// Always trust the app's own canonical URL as an origin, regardless of
+// whether ALLOWED_ORIGINS was actually set/updated on Railway — this is the
+// frontend's own home (single-file portal served by this same Express app),
+// so it must never depend on remembering to add it to an env var. Found
+// 9 Jul 2026: ALLOWED_ORIGINS on Railway didn't include this URL, so every
+// POST/PATCH/DELETE fetch from the live portal (browsers send an Origin
+// header on same-origin state-changing requests) was being CORS-blocked —
+// which our old catch-all error handler then surfaced as a generic
+// "Internal server error" with no indication it was actually a CORS issue.
+const SELF_ORIGIN = 'https://susty-portal-production.up.railway.app';
+const ALLOWED_ORIGINS = Array.from(new Set([
+  SELF_ORIGIN,
+  ...(process.env.ALLOWED_ORIGINS || 'http://localhost:3001').split(',').map(o => o.trim()),
+]));
 if (process.env.NODE_ENV === 'production' && ALLOWED_ORIGINS.includes('http://localhost:3001'))
   console.warn('[SECURITY] ALLOWED_ORIGINS defaulting to localhost — set it in Railway env vars');
 
@@ -159,7 +172,17 @@ app.get('*', (_req, res) => res.sendFile(path.join(__dirname, '../frontend/index
 
 app.use((err, req, res, _next) => {
   console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
-  if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+  if (res.headersSent) return;
+  // CORS rejections (thrown by the cors package's origin callback, see
+  // above) were previously indistinguishable from a real server crash —
+  // both landed here and returned the same generic 500, which is what made
+  // the CORS-blocked bug look like an unexplained "Internal server error"
+  // on 9 Jul 2026. Surface CORS blocks as their own 403 with the actual
+  // reason instead.
+  if (err.message?.startsWith('CORS blocked:')) {
+    return res.status(403).json({ error: err.message });
+  }
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ─── Weekly snapshot cron — Monday 09:00 SGT (01:00 UTC) ─────────────────────
