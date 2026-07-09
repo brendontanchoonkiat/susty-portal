@@ -1613,12 +1613,14 @@ function renderCommsCalendar(filter, containerId, opts={}) {
     const rejected = (e.rejectedReason && e.status === 'needs_changes') ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
     const canSubmit = showActions && ['idea','draft','planned','needs_changes'].includes(e.status);
     const who = (Array.isArray(e.assignees) && e.assignees.length) ? e.assignees.join(', ') : (e.owner||e.createdBy||'');
-    const deleteLabel = e.deleteRequested ? '🗑 Pending…' : (typeof isAdmin !== 'undefined' && isAdmin ? '🗑 Delete' : '🗑 Request Del.');
+    // Delete/Request Deletion and Archive removed from the quick overview
+    // (9 Jul 2026, per Brendon) — those are destructive/state-changing
+    // enough to warrant opening the post first. Only reachable now via the
+    // ✏️ Edit button, from inside the editor panel.
     const btns = showActions
       ? `<button class="action-btn" onclick="openCommsEditor(${e.id})" style="font-size:.7rem">✏️ Edit</button>` +
         (canSubmit ? `<button class="action-btn" onclick="submitCommsForReview(${e.id})" style="font-size:.7rem">📤 Submit</button>` : '') +
-        (e.status !== 'pending_review' && e.status !== 'approved' ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem">✅ Posted</button>` : '') +
-        `<button class="action-btn" onclick="deleteCommsPost(${e.id})" style="font-size:.7rem;color:#C62828;border-color:#E57373">${deleteLabel}</button>`
+        (e.status !== 'pending_review' && e.status !== 'approved' ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem">✅ Posted</button>` : '')
       : '';
     return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
