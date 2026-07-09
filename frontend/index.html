@@ -1620,12 +1620,22 @@ async function renderCommsCalendar(filter, containerId, opts={}) {
     const statusTag = isPast
       ? `<span class="status-tag badge-pending">⚠️ pending</span>`
       : `<span class="status-tag status-${esc(e.status)}">${esc((e.status||'').replace(/_/g,' '))}</span>`;
-    const imgCount = Array.isArray(e.imageUrls) ? e.imageUrls.length : (e.imageUrl ? 1 : 0);
-    const thumb = e.imageUrl
-      ? `<span style="position:relative;display:inline-block;margin-right:8px;vertical-align:middle">
-           <img src="${esc(e.imageUrl)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;display:block"/>
-           ${imgCount > 1 ? `<span style="position:absolute;bottom:-4px;right:-4px;background:var(--gd);color:#fff;font-size:.6rem;font-weight:700;border-radius:8px;padding:1px 5px">${imgCount}</span>` : ''}
-         </span>`
+    // Full gallery strip instead of one cropped 44px thumbnail + a count
+    // badge (added 9 Jul 2026, per Brendon — with 2 photos you could only
+    // ever see the first one). Click any thumbnail for the full-size view.
+    const images = Array.isArray(e.imageUrls) && e.imageUrls.length ? e.imageUrls : (e.imageUrl ? [e.imageUrl] : []);
+    const GALLERY_CAP = 4;
+    const imageGallery = images.length
+      ? `<div class="cal-gallery" style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">` +
+          images.slice(0, GALLERY_CAP).map((url, i) => `
+            <span style="position:relative;display:block">
+              <img src="${esc(url)}" onclick="openImageLightbox('${esc(url).replace(/'/g,"\\'")}')"
+                style="width:64px;height:64px;object-fit:cover;border-radius:6px;cursor:zoom-in;display:block"/>
+              ${(i === GALLERY_CAP - 1 && images.length > GALLERY_CAP)
+                ? `<span style="position:absolute;inset:0;background:rgba(0,0,0,.55);color:#fff;font-size:.72rem;font-weight:700;border-radius:6px;display:flex;align-items:center;justify-content:center">+${images.length - GALLERY_CAP}</span>`
+                : ''}
+            </span>`).join('') +
+        `</div>`
       : '';
     const rejected = (e.rejectedReason && e.status === 'needs_changes') ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
     const canSubmit = showActions && ['idea','draft','planned','needs_changes'].includes(e.status);
@@ -1666,8 +1676,9 @@ async function renderCommsCalendar(filter, containerId, opts={}) {
 
     return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(who)} · ${esc(e.notes||'')}</div>${rejected}</div>
+      <div><div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(who)} · ${esc(e.notes||'')}</div>${rejected}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>
+      ${imageGallery}
       ${captionPreview}
       ${commentsBlock}
       ${quickComment}
@@ -1848,6 +1859,9 @@ async function loadCommsComments(postId) {
 function renderCommsComments(comments) {
   const list = document.getElementById('cm-comments-list');
   if (!comments.length) { list.innerHTML = '<div style="font-size:.78rem;color:var(--tm)">No comments yet — be the first to weigh in.</div>'; return; }
+  // Delete button (added 9 Jul 2026, per Brendon — admin-only, keeps threads
+  // from getting flooded). Same admin-key gate as post delete.
+  const canDelete = typeof isAdmin !== 'undefined' && isAdmin;
   list.innerHTML = comments.map(c => `
     <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:8px 10px;${c.resolved ? 'opacity:.6' : ''}">
       <div style="display:flex;justify-content:space-between;gap:8px">
@@ -1855,9 +1869,12 @@ function renderCommsComments(comments) {
         <span style="font-size:.68rem;color:var(--tm)">${esc(fmtDateLikeBot(c.createdAt.split('T')[0]))}</span>
       </div>
       <div style="font-size:.82rem;margin-top:2px;white-space:pre-wrap;${c.resolved ? 'text-decoration:line-through' : ''}">${esc(c.comment)}</div>
-      <button type="button" onclick="toggleCommsCommentResolved(${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.66rem;margin-top:6px">
-        ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
-      </button>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button type="button" onclick="toggleCommsCommentResolved(${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.66rem">
+          ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
+        </button>
+        ${canDelete ? `<button type="button" onclick="deleteCommsComment(${c.id})" class="action-btn" style="font-size:.66rem;color:#C62828;border-color:#E57373">🗑 Delete</button>` : ''}
+      </div>
     </div>`).join('');
 }
 
@@ -1868,6 +1885,20 @@ async function toggleCommsCommentResolved(commentId, resolved) {
       method: 'PATCH', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ resolved }),
     });
     if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Could not update comment', true); return; }
+    await loadCommsComments(commsEditingId);
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
+// Admin-only (added 9 Jul 2026, per Brendon — keeps threads from getting
+// flooded with stale/off-topic comments). Same admin-key gate as post delete.
+async function deleteCommsComment(commentId) {
+  if (!commsEditingId) return;
+  if (!confirm('Delete this comment? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${commsEditingId}/comments/${commentId}`, { method: 'DELETE', headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Delete failed', true); return; }
     await loadCommsComments(commsEditingId);
   } catch (e) {
     toast('❌ Could not connect to server', true);
@@ -1907,6 +1938,10 @@ async function postCommsComment() {
 // preloaded in bulk) and after a refresh (refreshQuickComments, one post).
 function renderQuickCommentsHtml(comments, postId) {
   if (!comments.length) return `<div style="font-size:.75rem;color:var(--tm)">No comments yet — be the first to weigh in.</div>`;
+  // Delete button (added 9 Jul 2026, per Brendon — admin-only, so comment
+  // threads don't get flooded with stale/off-topic feedback). Uses the same
+  // admin-key gate as post delete.
+  const canDelete = typeof isAdmin !== 'undefined' && isAdmin;
   return `<div style="display:flex;flex-direction:column;gap:6px">` + comments.map(c => `
     <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:6px 8px;${c.resolved ? 'opacity:.6' : ''}">
       <div style="display:flex;justify-content:space-between;gap:8px">
@@ -1914,9 +1949,12 @@ function renderQuickCommentsHtml(comments, postId) {
         <span style="font-size:.66rem;color:var(--tm)">${esc(fmtDateLikeBot(c.createdAt.split('T')[0]))}</span>
       </div>
       <div style="font-size:.78rem;margin-top:2px;white-space:pre-wrap;${c.resolved ? 'text-decoration:line-through' : ''}">${esc(c.comment)}</div>
-      <button type="button" onclick="quickToggleCommentResolved(${postId}, ${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.64rem;margin-top:4px">
-        ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
-      </button>
+      <div style="display:flex;gap:6px;margin-top:4px">
+        <button type="button" onclick="quickToggleCommentResolved(${postId}, ${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.64rem">
+          ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
+        </button>
+        ${canDelete ? `<button type="button" onclick="quickDeleteComment(${postId}, ${c.id})" class="action-btn" style="font-size:.64rem;color:#C62828;border-color:#E57373">🗑 Delete</button>` : ''}
+      </div>
     </div>`).join('') + `</div>`;
 }
 
@@ -1936,6 +1974,19 @@ async function quickToggleCommentResolved(postId, commentId, resolved) {
       method: 'PATCH', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ resolved }),
     });
     if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Could not update comment', true); return; }
+    await refreshQuickComments(postId);
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
+// Admin-only (added 9 Jul 2026, per Brendon — keeps threads from getting
+// flooded with stale/off-topic comments). Same admin-key gate as post delete.
+async function quickDeleteComment(postId, commentId) {
+  if (!confirm('Delete this comment? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}/comments/${commentId}`, { method: 'DELETE', headers: { 'x-api-key': adminKey } });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Delete failed', true); return; }
     await refreshQuickComments(postId);
   } catch (e) {
     toast('❌ Could not connect to server', true);
@@ -2037,24 +2088,53 @@ async function removeCommsExistingImage(url) {
   }
 }
 
+// Lightbox (added 9 Jul 2026, per Brendon — thumbnails are cropped square so
+// you can't fully see a photo at a glance; click any thumbnail to view it
+// full-size). Single shared overlay, reused everywhere an image appears.
+function openImageLightbox(url) {
+  let overlay = document.getElementById('img-lightbox');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'img-lightbox';
+    overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:9999;align-items:center;justify-content:center;cursor:zoom-out;padding:24px';
+    overlay.onclick = () => overlay.style.display = 'none';
+    overlay.innerHTML = '<img id="img-lightbox-img" style="max-width:92vw;max-height:92vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.5)"/>';
+    document.body.appendChild(overlay);
+  }
+  document.getElementById('img-lightbox-img').src = url;
+  overlay.style.display = 'flex';
+}
+
+// Thumbnails sized up (80px -> 120px) and made clickable to the lightbox
+// (9 Jul 2026, per Brendon — 80px squares cropped too much of each photo to
+// tell them apart). Grid layout instead of loose flex-wrap tightens up the
+// empty space around 1-2 images.
 function renderCommsImagePreview() {
   const preview = document.getElementById('cm-image-preview');
   if (!preview) return;
   const existingThumbs = commsExistingImageUrls.map(url => `
-    <span style="position:relative;display:inline-block">
-      <img src="${esc(url)}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;display:block"/>
-      <button type="button" onclick="removeCommsExistingImage('${esc(url).replace(/'/g,"\\'")}')"
-        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
-        border:none;background:#C62828;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">×</button>
+    <span style="position:relative;display:block">
+      <img src="${esc(url)}" onclick="openImageLightbox('${esc(url).replace(/'/g,"\\'")}')"
+        style="width:120px;height:120px;object-fit:cover;border-radius:8px;display:block;cursor:zoom-in"/>
+      <button type="button" onclick="event.stopPropagation();removeCommsExistingImage('${esc(url).replace(/'/g,"\\'")}')"
+        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;
+        border:none;background:#C62828;color:#fff;font-size:.75rem;line-height:1;cursor:pointer">×</button>
     </span>`).join('');
-  const pendingThumbs = commsPendingImageFiles.map((file, i) => `
-    <span style="position:relative;display:inline-block">
-      <img src="${URL.createObjectURL(file)}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;display:block;opacity:.85"/>
-      <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;font-size:.6rem;padding:1px 4px;border-radius:4px">new</span>
-      <button type="button" onclick="removeCommsPendingImage(${i})"
-        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
-        border:none;background:#C62828;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">×</button>
-    </span>`).join('');
+  const pendingThumbs = commsPendingImageFiles.map((file, i) => {
+    const url = URL.createObjectURL(file);
+    return `
+    <span style="position:relative;display:block">
+      <img src="${url}" onclick="openImageLightbox('${url}')"
+        style="width:120px;height:120px;object-fit:cover;border-radius:8px;display:block;opacity:.85;cursor:zoom-in"/>
+      <span style="position:absolute;bottom:4px;left:4px;background:rgba(0,0,0,.6);color:#fff;font-size:.62rem;padding:1px 5px;border-radius:4px">new</span>
+      <button type="button" onclick="event.stopPropagation();removeCommsPendingImage(${i})"
+        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:22px;height:22px;border-radius:50%;
+        border:none;background:#C62828;color:#fff;font-size:.75rem;line-height:1;cursor:pointer">×</button>
+    </span>`;
+  }).join('');
+  preview.style.display = 'grid';
+  preview.style.gridTemplateColumns = 'repeat(auto-fill, 120px)';
+  preview.style.gap = '10px';
   preview.innerHTML = existingThumbs + pendingThumbs;
 }
 
