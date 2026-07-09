@@ -442,7 +442,7 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 .hero-stage .hero-stat{padding:22px 24px;border-radius:18px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .hero-stage .hero-stat .val{font-size:clamp(1.8rem,3.6vw,2.9rem)}
 .hero-stage .hero-stat .lbl{font-size:.8rem;margin-top:4px}
-.scroll-cue{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
+.scroll-cue{position:absolute;bottom:104px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
   background:none;border:none;cursor:pointer;color:rgba(222,232,212,.85);font-family:inherit;font-size:.66rem;font-weight:700;
   letter-spacing:.14em;text-transform:uppercase;animation:cueBob 2.2s ease-in-out infinite;padding:8px;z-index:3}
 .scroll-cue [data-lucide]{width:20px;height:20px}
@@ -453,6 +453,39 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 /* Reveal-on-scroll (class added by JS only — no-JS stays fully visible) */
 .reveal{opacity:0;transform:translateY(28px);transition:opacity .65s cubic-bezier(.2,.7,.3,1),transform .65s cubic-bezier(.2,.7,.3,1)}
 .reveal.inview{opacity:1;transform:none}
+
+/* ── Hero quick links (ghost pills) ── */
+.hero-links{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap}
+.hero-link{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:24px;cursor:pointer;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:#EAF3E6;
+  font-family:inherit;font-size:.86rem;font-weight:700;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  transition:background .2s,transform .15s}
+.hero-link:hover{background:rgba(255,255,255,.2)}
+.hero-link:active{transform:scale(.96)}
+.hero-link [data-lucide]{width:16px;height:16px}
+
+/* ── Up Next strip (floats over the sheet's top edge, "next match" style) ── */
+.upnext-wrap{margin:-72px 0 30px}
+.upnext{position:relative;z-index:3;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+  background:rgba(252,250,244,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border:1px solid var(--br);border-radius:20px;box-shadow:var(--sh2);padding:18px 22px}
+html[data-theme="dark"] .upnext{background:rgba(29,41,32,.92)}
+.upnext-main{flex:1;min-width:230px;display:flex;flex-direction:column;gap:9px}
+.upnext-head{display:flex;align-items:center;gap:10px}
+.upnext-label{font-size:.66rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:var(--cl)}
+.upnext-count{font-size:.7rem;font-weight:700;background:var(--gp);color:var(--gd);padding:3px 10px;border-radius:12px}
+.upnext-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.upnext-row strong{font-family:'Space Grotesk',sans-serif;font-size:1.02rem;color:var(--tx)}
+.upnext-team{display:inline-flex;gap:5px;flex-wrap:wrap}
+.upnext-side{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.upnext-chip{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;padding:5px 11px;
+  border-radius:14px;border:none;cursor:pointer;font-family:inherit;background:#F3E3CA;color:#8B5A22}
+html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
+@media(max-width:600px){
+  .upnext-wrap{margin:-58px 0 22px}
+  .upnext{padding:15px 16px;gap:12px}
+  .scroll-cue{display:none} /* the peeking strip is the scroll affordance on phones */
+}
 @media(max-width:768px){
   /* Tuck the hero UNDER the frosted sticky nav for a true full-screen first view */
   .hero-stage{margin-top:calc(-1 * var(--nh));height:100vh;height:100dvh}
@@ -544,6 +577,10 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
       <div class="hero-stat" id="ov-energy-wrap"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Electricity — <span id="ov-energy-month">this month</span> <span class="trend" id="ov-energy-trend"></span></div></div>
       <div class="hero-stat" id="ov-posts-wrap"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts planned (upcoming)</div></div>
     </div>
+    <div class="hero-links">
+      <button class="hero-link" onclick="navigateTo('roster')"><i data-lucide="calendar-days"></i> My roster</button>
+      <button class="hero-link" onclick="navigateTo('recycling')"><i data-lucide="recycle"></i> W2R stats</button>
+    </div>
   </div>
   <button class="scroll-cue" id="scroll-cue" onclick="scrollToOvBody()" title="Scroll for more">
     <span>scroll</span><i data-lucide="chevron-down"></i>
@@ -551,8 +588,9 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
   </section>
 
   <div class="ov-body" id="ov-body">
-  <div class="section-title"><i data-lucide="bell-ring"></i> Needs your attention</div>
-  <div class="attn-grid" id="attn-cards"><div class="skel" style="grid-column:1/-1"><div class="sk"></div></div></div>
+  <!-- Up Next strip (9 Jul 2026): replaces "Needs your attention". Floats over
+       the sheet's top edge, peeking into the hero screen as a scroll teaser. -->
+  <div class="upnext-wrap"><div class="upnext" id="upnext-strip"><div class="skel" style="flex:1"><div class="sk" style="height:52px"></div></div></div></div>
 
   <div class="section-title"><i data-lucide="globe"></i> Our Impact — all time</div>
   <div class="card impact-card" id="impact-card">
@@ -1435,22 +1473,40 @@ function launchConfetti(){
 }
 
 // ═══ IMPACT RING (Overview — all-time CO₂e from /api/stats) ═════════════════
+// Animation deferred until the card scrolls into view, so the count-up + ring
+// fill play right as the user reaches it (not invisibly at page load).
+let _impactData = null, _impactInView = false, _impactPlayed = false;
+function tryPlayImpact(){
+  if (_impactPlayed || !_impactData || !_impactInView) return;
+  _impactPlayed = true;
+  const d = _impactData;
+  animateNumber(document.getElementById('impact-co2'), Math.round(d.co2eKg));
+  animateNumber(document.getElementById('impact-trees'), d.treesEquiv);
+  animateNumber(document.getElementById('impact-km'), d.carKmEquiv);
+  animateNumber(document.getElementById('impact-bottles'), d.bottlesEquiv);
+  // Ring fills relative to a 2-tonne CO₂e milestone (caps at full)
+  const CIRC = 351.9, goal = 2000;
+  const frac = Math.min(d.co2eKg / goal, 1);
+  requestAnimationFrame(() =>
+    document.getElementById('impact-arc').style.strokeDashoffset = String(CIRC * (1 - frac)));
+}
 async function loadImpact(){
   try {
     const res = await fetch(`${API}/stats`);
     const { allTime } = await res.json();
     if (!allTime) return;
-    animateNumber(document.getElementById('impact-co2'), Math.round(allTime.co2eKg));
-    animateNumber(document.getElementById('impact-trees'), allTime.treesEquiv);
-    animateNumber(document.getElementById('impact-km'), allTime.carKmEquiv);
-    animateNumber(document.getElementById('impact-bottles'), allTime.bottlesEquiv);
-    // Ring fills relative to a 2-tonne CO₂e milestone (caps at full)
-    const CIRC = 351.9, goal = 2000;
-    const frac = Math.min(allTime.co2eKg / goal, 1);
-    requestAnimationFrame(() =>
-      document.getElementById('impact-arc').style.strokeDashoffset = String(CIRC * (1 - frac)));
+    _impactData = allTime;
+    tryPlayImpact();
   } catch(e){ /* card just stays at — */ }
 }
+(function watchImpactCard(){
+  const card = document.getElementById('impact-card');
+  if (!card || !('IntersectionObserver' in window)) { _impactInView = true; return; }
+  const io = new IntersectionObserver(es => es.forEach(e => {
+    if (e.isIntersecting){ _impactInView = true; tryPlayImpact(); io.unobserve(card); }
+  }), { threshold: .35 });
+  io.observe(card);
+})();
 
 // ═══ CINEMATIC OVERVIEW (pinned hero, scroll-linked fade, section reveals) ═══
 function scrollToOvBody(){
@@ -1766,52 +1822,63 @@ function buildOverviewChart() {
   buildBar('ov-chart', recent.map(r=>r.month), recent.map(r=>r.kg), 'Cardboard (kg)', '#52B788');
 }
 
-// ═══ NEEDS YOUR ATTENTION ════════════════════════════════════════════════════
-// Built from data already fetched by loadRoster()/loadSwaps()/loadComms() — no new API calls.
+// ═══ UP NEXT STRIP ═══════════════════════════════════════════════════════════
+// Replaces "Needs your attention" (9 Jul 2026) — a compact "next match"-style
+// strip: next duty + countdown + who's on, with swap/comms alerts folded into
+// small chips. Built from data already fetched by loadRoster()/loadSwaps()/
+// loadComms() — no new API calls. Function name kept so existing callers work.
 function renderAttention() {
-  const container = document.getElementById('attn-cards');
-  if (!container) return;
+  const el = document.getElementById('upnext-strip');
+  if (!el) return;
 
-  const today = new Date();
+  const today = new Date(); today.setHours(0,0,0,0);
   const myNextSlot = rosterData
     .filter(s => new Date(s.date) >= today)
     .sort((a,b) => new Date(a.date) - new Date(b.date))[0] || null;
   const openSwaps = openSwapsCount;
   const unscheduledPosts = calData.filter(e => e.status === 'draft' || e.status === 'idea').length;
 
-  const cards = [];
-  if (myNextSlot) {
-    // Weekend view (added 9 Jul 2026, per Esther's feedback): if the nearest
-    // upcoming slot is a SAT/SUN duty, pull in the adjacent day too (within
-    // 1 day) so a Sat+Sun duty weekend shows together instead of just the
-    // earlier of the two days. GPC days (5 consecutive days, different flow)
-    // are left as a single-day card.
-    const weekendSlots = ['SAT','SUN'].includes(myNextSlot.session)
-      ? rosterData.filter(s => ['SAT','SUN'].includes(s.session) &&
-          Math.abs(Math.round((new Date(s.date) - new Date(myNextSlot.date)) / 86400000)) <= 1)
-          .sort((a,b) => new Date(a.date) - new Date(b.date))
-      : [myNextSlot];
-    const title = weekendSlots.length > 1
-      ? 'Next up: ' + weekendSlots.map(s => fmtDateLikeBot(s.date)).join(' & ')
-      : 'Next up: ' + fmtDateLikeBot(myNextSlot.date);
-    const body = weekendSlots.map(s => s.session + ' · ' + s.team.join(', ')).join('   |   ');
-    cards.push({ tag:'Next duty', icon:'calendar-check', title, body, cta:'View roster', go:'roster' });
-  }
-  if (openSwaps > 0) cards.push({ tag:'Needs cover', icon:'repeat',
-    title:openSwaps+' swap request'+(openSwaps>1?'s':'')+' open', body:'Someone needs their duty covered.', cta:'View swaps', go:'roster' });
-  if (unscheduledPosts > 0) cards.push({ tag:'Comms', icon:'pencil-line',
-    title:unscheduledPosts+' post'+(unscheduledPosts>1?'s':'')+' to schedule', body:'Drafts/ideas waiting on the comms calendar.', cta:'Schedule', go:'comms' });
+  // Alert chips (previously their own attention cards)
+  const chips = [];
+  if (openSwaps > 0) chips.push(`<button class="upnext-chip" onclick="navigateTo('roster')">🔄 ${openSwaps} swap${openSwaps>1?'s':''} open</button>`);
+  if (unscheduledPosts > 0) chips.push(`<button class="upnext-chip" onclick="navigateTo('comms')">✏️ ${unscheduledPosts} post${unscheduledPosts>1?'s':''} to schedule</button>`);
 
-  container.innerHTML = cards.length ? cards.map(c => `
-    <div class="attn">
-      <div style="display:flex;align-items:center;gap:10px">
-        <i data-lucide="${c.icon}"></i>
-        <span style="font-size:.7rem;font-weight:700;text-transform:uppercase;color:var(--cl)">${esc(c.tag)}</span>
+  if (!myNextSlot) {
+    el.innerHTML = `
+      <div class="upnext-main">
+        <div class="upnext-head"><span class="upnext-label">📅 Next duty</span></div>
+        <div class="upnext-row"><strong>No upcoming duties this month 🌿</strong></div>
       </div>
-      <div><div style="font-weight:700">${esc(c.title)}</div>
-        <div style="font-size:.8rem;color:var(--tm)">${esc(c.body)}</div></div>
-      <button class="cta" onclick="navigateTo('${c.go}')">${esc(c.cta)} →</button>
-    </div>`).join('') : '<div class="loading">All clear — nothing needs you right now 🌿</div>';
+      <div class="upnext-side">${chips.join('')}
+        <button class="btn btn-primary btn-sm" onclick="navigateTo('roster')">Full roster →</button></div>`;
+    refreshIcons(); return;
+  }
+
+  // Weekend pairing (per Esther's feedback): SAT/SUN duties within 1 day show
+  // together; GPC days stay single (5 consecutive days, different flow).
+  const weekendSlots = ['SAT','SUN'].includes(myNextSlot.session)
+    ? rosterData.filter(s => ['SAT','SUN'].includes(s.session) &&
+        Math.abs(Math.round((new Date(s.date) - new Date(myNextSlot.date)) / 86400000)) <= 1)
+        .sort((a,b) => new Date(a.date) - new Date(b.date))
+    : [myNextSlot];
+
+  const days = Math.round((new Date(myNextSlot.date).setHours(0,0,0,0) - today) / 86400000);
+  const countdown = days <= 0 ? '🔥 Today' : days === 1 ? 'Tomorrow' : `in ${days} days`;
+
+  const rows = weekendSlots.map(s => `
+    <div class="upnext-row">
+      <span class="badge badge-${(s.session||'').toLowerCase()}">${esc(s.session)}</span>
+      <strong>${esc(fmtDateLikeBot(s.date))}</strong>
+      <span class="upnext-team">${(s.team||[]).map(t => `<span class="member-tag">${esc(t)}</span>`).join('')}</span>
+    </div>`).join('');
+
+  el.innerHTML = `
+    <div class="upnext-main">
+      <div class="upnext-head"><span class="upnext-label">📅 Next duty</span><span class="upnext-count">${countdown}</span></div>
+      ${rows}
+    </div>
+    <div class="upnext-side">${chips.join('')}
+      <button class="btn btn-primary btn-sm" onclick="navigateTo('roster')">Full roster →</button></div>`;
 
   refreshIcons();
 }
