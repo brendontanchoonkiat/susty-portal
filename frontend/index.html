@@ -2323,6 +2323,20 @@ async function testTelegram() {
     pendingCommsPostId = null;
     if ((calData || []).some(e => e.id === id)) openCommsEditor(id);
   }
+
+  // Auto-refresh comms every 20s so a TL approving/commenting on the bot, or
+  // another member editing, shows up without a manual page reload (added
+  // 9 Jul 2026 per Brendon). Paused while a tab is backgrounded (no point
+  // polling a hidden tab) and skipped while the post editor is open (don't
+  // want a background refresh to re-render the calendar/list mid-edit —
+  // the open editor's own fields aren't affected either way since they're
+  // plain input values, not bound to calData, but skipping is simplest).
+  setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    const editor = document.getElementById('comms-editor');
+    if (editor && editor.style.display !== 'none') return;
+    loadComms();
+  }, 20000);
 })();
 
 // ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════

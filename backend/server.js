@@ -122,6 +122,69 @@ app.use('/api/roster', adminLimiter);
 app.use('/api/recycling/refresh', adminLimiter);
 app.disable('x-powered-by');
 
+// ─── Site lock (added 9 Jul 2026) ─────────────────────────────────────────────
+// A tagged-member notification went out before Brendon was ready to reveal
+// the portal — Telegram DMs can't be unsent, but the portal itself can be
+// hidden behind a passphrase so anyone opening that link (or any other link)
+// sees a plain "coming soon" screen instead of the real site, until Brendon
+// is ready to share the passphrase. Set SITE_LOCK_PASSWORD on Railway to
+// enable; unset (or empty) leaves the site fully open exactly as before —
+// safe to deploy with no env var change and nothing locks. API routes are
+// deliberately NOT gated here (the bot doesn't call its own HTTP API, and
+// there's no UI value in browsing raw JSON), only the pages that render.
+const SITE_LOCK_PASSWORD = process.env.SITE_LOCK_PASSWORD || '';
+const LOCK_COOKIE = 'susty_unlock';
+
+function isUnlocked(req) {
+  if (!SITE_LOCK_PASSWORD) return true;
+  const cookies = req.headers.cookie || '';
+  return cookies.split(';').map(c => c.trim()).includes(`${LOCK_COOKIE}=${SITE_LOCK_PASSWORD}`);
+}
+
+function lockPageHtml(errorMsg) {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Susty Ministry Portal</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;background:#F4F7F3;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+  .card{background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 20px rgba(0,0,0,.08);max-width:340px;width:90%;text-align:center}
+  h1{font-size:1.3rem;margin:0 0 8px}
+  p{color:#666;font-size:.9rem;margin:0 0 20px}
+  input{width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:1rem;margin-bottom:10px}
+  button{width:100%;padding:10px;border:none;border-radius:8px;background:#2E7D32;color:#fff;font-size:1rem;cursor:pointer}
+  .err{color:#C62828;font-size:.85rem;margin-top:8px}
+</style></head>
+<body>
+  <div class="card">
+    <h1>🌿 Susty Ministry Portal</h1>
+    <p>This site isn't public yet — enter the passphrase to continue.</p>
+    <input id="pw" type="password" placeholder="Passphrase" autofocus>
+    <button onclick="tryUnlock()">Enter</button>
+    ${errorMsg ? `<div class="err">${errorMsg}</div>` : ''}
+  </div>
+  <script>
+    async function tryUnlock() {
+      const password = document.getElementById('pw').value;
+      const res = await fetch('/unlock', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ password }) });
+      if (res.ok) { location.reload(); } else { location.href = '/?wrong=1'; }
+    }
+    document.getElementById('pw').addEventListener('keydown', e => { if (e.key === 'Enter') tryUnlock(); });
+  </script>
+</body></html>`;
+}
+
+app.post('/unlock', (req, res) => {
+  if (!SITE_LOCK_PASSWORD) return res.json({ ok: true });
+  if (req.body?.password !== SITE_LOCK_PASSWORD) return res.status(401).json({ error: 'Wrong passphrase' });
+  res.setHeader('Set-Cookie', `${LOCK_COOKIE}=${SITE_LOCK_PASSWORD}; Path=/; HttpOnly; Max-Age=${60 * 60 * 24 * 90}; SameSite=Lax`);
+  res.json({ ok: true });
+});
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+  if (isUnlocked(req)) return next();
+  res.status(200).send(lockPageHtml(req.query.wrong ? 'Wrong passphrase — try again.' : ''));
+});
+
 app.use(express.static(path.join(__dirname, '../frontend'), {
   etag: true, lastModified: true,
   setHeaders: (res) => { res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('X-Frame-Options','DENY'); },
