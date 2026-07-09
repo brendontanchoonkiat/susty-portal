@@ -25,7 +25,7 @@ const db = require('./supabase');
 //   everything by opening the bot's 📢 Comms menu himself (pull, not push).
 const COMMS_TL_NAMES = (process.env.COMMS_TL_NAMES || 'Judy,Brendon').split(',').map(n => n.trim());
 const COMMS_NOTIFY_NAMES = (process.env.COMMS_NOTIFY_NAMES || 'Judy').split(',').map(n => n.trim());
-const COMMS_MEMBER_NAMES = (process.env.COMMS_MEMBER_NAMES || 'Alan,Esther,Elaine,Matthew,Berry').split(',').map(n => n.trim());
+const COMMS_MEMBER_NAMES = (process.env.COMMS_MEMBER_NAMES || 'Alan,Esther,Elaine,Matthew,Berry,Brendon').split(',').map(n => n.trim());
 
 // Public portal URL — included in DMs to assignees so they can jump straight
 // to the Comms tab to make edits. Same origin the frontend/API are served
