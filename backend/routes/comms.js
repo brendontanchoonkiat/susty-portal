@@ -17,11 +17,17 @@ const COMMS_FILE = path.join(__dirname, '../data/comms.json');
 // any time. See extend_comms_posts_for_planning.sql / extend_comms_posts_v2.sql.
 const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
 
+// Accepts common web image types plus iPhone's default HEIC/HEIF — most
+// members will be uploading straight from their phone's camera roll, and a
+// too-narrow allowlist here silently failed the upload with no clear reason
+// surfaced to the user (found 9 Jul 2026 — "pictures... not really saved").
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB — phone camera photos can be large
   fileFilter: (_req, file, cb) => {
-    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) return cb(new Error('Only image files are allowed'));
+    if (!/^image\/(jpeg|jpg|png|webp|gif|heic|heif|bmp)$/i.test(file.mimetype)) {
+      return cb(new Error(`Unsupported image type: ${file.mimetype}`));
+    }
     cb(null, true);
   },
 });
@@ -73,6 +79,8 @@ function fromDbRow(row) {
     createdBy: row.created_by || '',
     assignees: row.assignees || [],
     rejectedReason: row.rejected_reason || null,
+    deleteRequested: !!row.delete_requested,
+    deleteRequestedBy: row.delete_requested_by || null,
     ...(row.posted_at              ? { postedAt: row.posted_at }               : {}),
     ...(row.submitted_at           ? { submittedAt: row.submitted_at }         : {}),
     ...(row.approved_by            ? { approvedBy: row.approved_by }           : {}),
@@ -159,8 +167,17 @@ router.post('/',
   }
 );
 
-// POST /:id/image — upload/replace the post's image (multipart form field "image")
-router.post('/:id/image', upload.single('image'), async (req, res) => {
+// POST /:id/image — upload/replace the post's image (multipart form field "image").
+// Wraps multer's middleware manually (instead of passing it straight to the
+// router) so a fileFilter/size-limit rejection returns a clear 400 with the
+// real reason instead of falling through to the generic 500 handler in
+// server.js, which just said "Internal server error" with no detail.
+router.post('/:id/image', (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Image upload failed' });
+    next();
+  });
+}, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
   if (!req.file) return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
@@ -232,7 +249,14 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
   if (date      !== undefined) patch.date      = date;
   if (caption   !== undefined) patch.caption   = caption;
   if (details   !== undefined) patch.details   = details;
-  if (assignees !== undefined) patch.assignees = assignees;
+  if (assignees !== undefined) {
+    patch.assignees = assignees;
+    // Keep the legacy owner/created_by display fields in sync when nothing
+    // explicitly overrides them — assignees is the single source of truth
+    // for "who" now (no separate "filled in by" field in the portal).
+    if (owner === undefined) patch.owner = assignees.join(', ');
+    if (req.body.createdBy === undefined) patch.created_by = assignees.join(', ');
+  }
 
   const dbc = getClient();
   if (dbc) {
@@ -269,5 +293,58 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
   saveCommsFile(comms);
   res.json(entry);
 });
+
+// POST /:id/request-delete — a member flags a post for deletion instead of
+// deleting it outright. Notifies the comms TLs (Judy/Brendon) with
+// Confirm/Keep buttons via the bot — nothing is actually removed until a TL
+// confirms. No auth required (same open-creation philosophy as the rest of
+// this route) since this only *requests*, it can't destroy data on its own.
+router.post('/:id/request-delete', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+  const requestedBy = typeof req.body?.requestedBy === 'string' ? sanitise(req.body.requestedBy).slice(0, 60) : '';
+
+  const dbc = getClient();
+  if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+
+  const { data, error } = await dbc.from('comms_posts')
+    .update({ delete_requested: true, delete_requested_by: requestedBy || null })
+    .eq('id', id).select().single();
+  if (error) return res.status(404).json({ error: error.message || 'Post not found' });
+
+  try {
+    const { notifyTLsDeleteRequested } = require('../utils/commsNotify');
+    await notifyTLsDeleteRequested(data);
+  } catch (err) {
+    console.warn('[Comms] Failed to notify TLs of delete request:', err.message);
+  }
+
+  res.json(fromDbRow(data));
+});
+
+// DELETE /:id — TL-only immediate delete (admin key required, same gate the
+// roster editor uses). Members go through POST /:id/request-delete instead.
+router.delete('/:id',
+  (req, res, next) => req.app.get('requireApiKey')(req, res, next),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+
+    const dbc = getClient();
+    if (dbc) {
+      const { error } = await dbc.from('comms_posts').delete().eq('id', id);
+      if (error) return res.status(400).json({ error: error.message });
+      return res.json({ success: true });
+    }
+
+    // Local-file fallback
+    const comms = loadCommsFile();
+    const idx = comms.findIndex(e => e.id === id);
+    if (idx === -1) return res.status(404).json({ error: 'Entry not found' });
+    comms.splice(idx, 1);
+    saveCommsFile(comms);
+    res.json({ success: true });
+  }
+);
 
 module.exports = router;

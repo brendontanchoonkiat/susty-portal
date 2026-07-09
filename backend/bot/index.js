@@ -325,6 +325,17 @@ async function isTLForGating(ctx) {
   if (name && TEST_AS_REGULAR_NAMES.includes(name.toLowerCase())) return false;
   return isTL(ctx);
 }
+
+// Comms has its own, smaller cast (commsNotify.COMMS_TL_NAMES — currently
+// Judy + Brendon) than the ministry-wide roster/duty TL list, so a
+// roster-only TL like Wee Shing doesn't see comms review/approval screens.
+// Use this for anything comms-specific that decides who gets TL controls.
+async function isCommsTL(ctx) {
+  const name = await resolveName(ctx);
+  if (!name) return false;
+  if (TEST_AS_REGULAR_NAMES.includes(name.toLowerCase())) return false;
+  return commsNotify.COMMS_TL_NAMES.map(n => n.toLowerCase()).includes(name.toLowerCase());
+}
 // Replies with a "not live yet" message and returns true if this feature is
 // still gated for this user; call at the top of a gated handler and `return`
 // if it resolves true. TLs and EARLY_ACCESS_NAMES bypass every gate.
@@ -897,7 +908,7 @@ bot.callbackQuery('menu:comms', async (ctx) => {
   if (!name) return promptRegister(ctx);
   const supa = db.getClient();
 
-  if (await isTLForGating(ctx)) {
+  if (await isCommsTL(ctx)) {
     let pendingCount = 0, approvedCount = 0;
     if (supa) {
       const { data: pr } = await supa.from('comms_posts').select('id').eq('status', 'pending_review');
@@ -941,7 +952,7 @@ bot.callbackQuery('menu:comms', async (ctx) => {
 
 bot.callbackQuery('menu:commsapprovals', async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return;
+  if (!(await isCommsTL(ctx))) return;
   const supa = db.getClient();
   const { data } = supa
     ? await supa.from('comms_posts').select('*').eq('status', 'pending_review').order('date')
@@ -959,7 +970,7 @@ bot.callbackQuery('menu:commsapprovals', async (ctx) => {
 
 bot.callbackQuery('menu:commspost', async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return;
+  if (!(await isCommsTL(ctx))) return;
   const supa = db.getClient();
   const { data } = supa
     ? await supa.from('comms_posts').select('*').eq('status', 'approved').order('date')
@@ -1013,7 +1024,7 @@ function parseTimeOfDay(text) {
 
 bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return;
+  if (!(await isCommsTL(ctx))) return;
   const id = Number(ctx.match[1]);
   const supa = db.getClient();
   const { data: p } = supa ? await supa.from('comms_posts').select('*').eq('id', id).single() : { data: null };
@@ -1035,6 +1046,9 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   } else {
     kb = backToCommsKb();
   }
+  // TLs can delete straight away from here too, not just confirm a member's
+  // portal-side deletion request.
+  kb.row().text('🗑 Delete Post', `comms:confirmdelete:${p.id}`);
 
   if (p.image_url) {
     await ctx.replyWithPhoto(p.image_url, { caption, parse_mode: 'HTML', reply_markup: kb });
@@ -1045,7 +1059,7 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   const name = await resolveName(ctx);
   const supa = db.getClient();
@@ -1080,7 +1094,7 @@ bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^comms:requestchanges:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   ctx.session.awaitingCommsReject = id;
   await ctx.reply('💬 What should change? Type your feedback — this gets sent straight to whoever\'s tagged on it, and the post stays linked so they can just edit and re-send (no need to start over).');
@@ -1088,7 +1102,7 @@ bot.callbackQuery(/^comms:requestchanges:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^comms:schedule:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   ctx.session.awaitingCommsScheduleTime = id;
   await ctx.reply('⏰ What time should I remind you to post this (Singapore time)? e.g. <code>6:30pm</code> or <code>18:30</code>.', { parse_mode: 'HTML' });
@@ -1096,7 +1110,7 @@ bot.callbackQuery(/^comms:schedule:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^comms:(?:markposted|postnow):(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   const name = await resolveName(ctx);
   const supa = db.getClient();
@@ -1111,6 +1125,37 @@ bot.callbackQuery(/^comms:(?:markposted|postnow):(\d+)$/, async (ctx) => {
   await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
     .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
     .catch(() => ctx.reply(doneMsg));
+});
+
+// A member requested deletion via the portal; TL confirms or keeps it.
+bot.callbackQuery(/^comms:confirmdelete:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  const { error } = await supa.from('comms_posts').delete().eq('id', id);
+  if (error) return ctx.reply('⚠️ Could not delete — post may no longer exist.');
+
+  const doneMsg = '🗑 Post deleted.';
+  await ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }).catch(() => ctx.reply(doneMsg));
+});
+
+bot.callbackQuery(/^comms:canceldelete:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  const { error } = await supa.from('comms_posts')
+    .update({ delete_requested: false, delete_requested_by: null })
+    .eq('id', id);
+  if (error) return ctx.reply('⚠️ Could not update — post may no longer exist.');
+
+  const doneMsg = '↩️ Kept — post was not deleted.';
+  await ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }).catch(() => ctx.reply(doneMsg));
 });
 
 // ─── Profile collection (service day / CG / other ministries / DOB) ──────────

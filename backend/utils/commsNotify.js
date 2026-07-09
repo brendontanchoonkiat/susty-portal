@@ -8,7 +8,15 @@
 
 const db = require('./supabase');
 
-const TL_NAMES = (process.env.TL_NAMES || 'Brendon,Judy,Wee Shing').split(',').map(n => n.trim());
+// Comms has its own, smaller cast than the full W2R roster — deliberately
+// separate from bot/index.js's ministry-wide TL_NAMES (Brendon/Judy/Wee
+// Shing), which is roster/duty-only. Judy runs comms; Brendon stays on as
+// admin/overseer across everything per his instruction, so he's included
+// here too even though he's not the day-to-day comms TL. Wee Shing is not
+// involved in comms and deliberately excluded. Both configurable via env
+// vars (comma-separated) without a redeploy.
+const COMMS_TL_NAMES = (process.env.COMMS_TL_NAMES || 'Judy,Brendon').split(',').map(n => n.trim());
+const COMMS_MEMBER_NAMES = (process.env.COMMS_MEMBER_NAMES || 'Alan,Esther,Elaine,Matthew,Berry').split(',').map(n => n.trim());
 
 function getBot() {
   try { return require('../bot/index').bot; } catch { return null; }
@@ -18,7 +26,7 @@ async function getTLTelegramIds() {
   const supa = db.getClient();
   if (!supa) return [];
   const ids = [];
-  for (const name of TL_NAMES) {
+  for (const name of COMMS_TL_NAMES) {
     const { data } = await supa.from('members').select('telegram_id').ilike('name', name).single();
     if (data?.telegram_id) ids.push({ name, telegram_id: data.telegram_id });
   }
@@ -119,8 +127,30 @@ async function notifyAssigneesChangesRequested(post, comment) {
   await dmNames(recipientNames(post), msg);
 }
 
+// A member tapped "Request Deletion" in the portal — nothing is removed yet.
+// DMs every comms TL with a preview + Confirm Delete / Keep Post buttons.
+async function notifyTLsDeleteRequested(post) {
+  const bot = getBot();
+  if (!bot) { console.warn('[CommsNotify] Bot not available, skipping delete-request notify'); return; }
+  const { InlineKeyboard } = require('grammy');
+  const kb = new InlineKeyboard()
+    .text('🗑 Confirm Delete', `comms:confirmdelete:${post.id}`)
+    .text('↩️ Keep Post', `comms:canceldelete:${post.id}`);
+  const msg =
+    `🗑 <b>Deletion requested</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${post.theme}\n\n` +
+    (post.delete_requested_by ? `Requested by: ${post.delete_requested_by}\n\n` : '') +
+    `Confirm to permanently delete this post, or keep it as-is.`;
+  const tls = await getTLTelegramIds();
+  for (const tl of tls) {
+    try { await bot.api.sendMessage(tl.telegram_id, msg, { parse_mode: 'HTML', reply_markup: kb }); }
+    catch (err) { console.warn(`[CommsNotify] Delete-request notify to ${tl.name} failed:`, err.message); }
+    await new Promise(r => setTimeout(r, 200));
+  }
+}
+
 module.exports = {
-  TL_NAMES, getTLTelegramIds, getTelegramIdForName, recipientNames,
+  COMMS_TL_NAMES, COMMS_MEMBER_NAMES, getTLTelegramIds, getTelegramIdForName, recipientNames,
   notifyAssigneesTagged, notifyTLsSubmitted, notifyAssigneesApproved, notifyAssigneesChangesRequested,
+  notifyTLsDeleteRequested,
   fmtDate,
 };

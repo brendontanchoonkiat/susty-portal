@@ -475,18 +475,16 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   <div class="editor-panel" id="comms-editor" style="display:none">
     <h3 id="comms-editor-title">➕ Add New Post</h3>
     <input type="hidden" id="cm-id"/>
-    <div class="form-row">
-      <div class="form-field"><label>Date</label><input type="date" id="cm-date"/></div>
-      <div class="form-field"><label>Filled in by (your name)</label><input type="text" id="cm-owner" placeholder="Your name"/></div>
-    </div>
+    <div class="form-field" style="margin-bottom:12px"><label>Date</label><input type="date" id="cm-date"/></div>
     <div class="form-field" style="margin-bottom:12px">
       <label>Theme / title</label>
       <input type="text" id="cm-theme" placeholder="e.g. Plastic-Free July kickoff"/>
     </div>
     <div class="form-field" style="margin-bottom:12px">
-      <label>Tag member(s) to fill this in</label>
+      <label>Tag member(s) — who this is for / who's filling it in</label>
       <div class="tag-input-wrap" id="cm-assignee-tags" onclick="document.getElementById('cm-assignee-input').focus()"></div>
       <input class="tag-input" id="cm-assignee-input" placeholder="Type a name and press Enter…" onkeydown="handleCommsTagKey(event)"/>
+      <div id="cm-assignee-quickpicks" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
     </div>
     <div class="form-field" style="margin-bottom:12px">
       <label>Caption (the actual post copy)</label>
@@ -506,6 +504,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
       <button class="btn btn-primary btn-sm" onclick="saveCommsPost()">💾 Save</button>
       <button class="btn btn-outline btn-sm" id="cm-submit-btn" onclick="submitCommsForReview()" style="display:none">📤 Submit for Review</button>
       <button class="btn btn-outline btn-sm" onclick="closeCommsEditor()">Cancel</button>
+      <button class="btn btn-outline btn-sm" id="cm-delete-btn" onclick="deleteCommsPost()" style="display:none;margin-left:auto;color:#C62828;border-color:#E57373">🗑 Delete</button>
     </div>
   </div>
 
@@ -813,6 +812,10 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
 <script>
 // ═══ CONFIG ══════════════════════════════════════════════════════════════════
 const API = 'https://susty-portal-production.up.railway.app/api';
+// Comms team — matches backend/utils/commsNotify.js COMMS_MEMBER_NAMES. Used
+// only for quick-pick tag buttons; the assignee field still accepts free text
+// for anyone else if needed.
+const COMMS_TEAM = ['Alan', 'Esther', 'Elaine', 'Matthew', 'Berry'];
 
 // ═══ STATE ═══════════════════════════════════════════════════════════════════
 let adminKey   = '';
@@ -1563,7 +1566,6 @@ function openCommsEditor(id, dateStr) {
   document.getElementById('comms-editor-title').textContent = post ? '✏️ Edit Post' : '➕ Add New Post';
   document.getElementById('cm-id').value = post ? post.id : '';
   document.getElementById('cm-date').value = post ? post.date : (dateStr || '');
-  document.getElementById('cm-owner').value = post ? (post.createdBy || '') : '';
   document.getElementById('cm-theme').value = post ? post.theme : '';
   document.getElementById('cm-caption').value = post ? (post.caption || '') : '';
   document.getElementById('cm-details').value = post ? (post.details || '') : '';
@@ -1574,14 +1576,19 @@ function openCommsEditor(id, dateStr) {
 
   const info = document.getElementById('cm-status-info');
   const submitBtn = document.getElementById('cm-submit-btn');
+  const deleteBtn = document.getElementById('cm-delete-btn');
   if (post) {
     let statusMsg = `Status: <b>${esc((post.status||'').replace(/_/g,' '))}</b>`;
     if (post.rejectedReason && post.status === 'needs_changes') statusMsg += ` — 💬 TL feedback: ${esc(post.rejectedReason)}`;
+    if (post.deleteRequested) statusMsg += `<br><span style="color:#C62828">🗑 Deletion requested${post.deleteRequestedBy ? ' by ' + esc(post.deleteRequestedBy) : ''} — waiting on a TL to confirm.</span>`;
     info.innerHTML = statusMsg;
     submitBtn.style.display = ['idea','draft','planned','needs_changes'].includes(post.status) ? 'inline-flex' : 'none';
+    deleteBtn.style.display = 'inline-flex';
+    deleteBtn.textContent = post.deleteRequested ? '🗑 Deletion pending…' : (isAdmin ? '🗑 Delete' : '🗑 Request Deletion');
   } else {
     info.innerHTML = '';
     submitBtn.style.display = 'none';
+    deleteBtn.style.display = 'none';
   }
 
   document.getElementById('comms-editor').style.display = 'block';
@@ -1618,10 +1625,17 @@ function removeCommsAssignee(idx) {
 
 function renderCommsAssigneeTags() {
   const wrap = document.getElementById('cm-assignee-tags');
-  if (!wrap) return;
-  wrap.innerHTML = commsAssigneeTags.map((t,i) =>
-    `<span class="member-tag">${esc(t)}<button onclick="removeCommsAssignee(${i})" type="button">×</button></span>`
-  ).join('');
+  if (wrap) {
+    wrap.innerHTML = commsAssigneeTags.map((t,i) =>
+      `<span class="member-tag">${esc(t)}<button onclick="removeCommsAssignee(${i})" type="button">×</button></span>`
+    ).join('');
+  }
+  const quick = document.getElementById('cm-assignee-quickpicks');
+  if (quick) {
+    quick.innerHTML = COMMS_TEAM.filter(n => !commsAssigneeTags.includes(n)).map(n =>
+      `<button type="button" class="action-btn" onclick="addCommsAssignee('${esc(n)}')" style="font-size:.68rem">+ ${esc(n)}</button>`
+    ).join('');
+  }
 }
 
 function previewCommsImage(evt) {
@@ -1636,7 +1650,6 @@ function previewCommsImage(evt) {
 
 async function saveCommsPost() {
   const date    = document.getElementById('cm-date').value.trim();
-  const owner   = document.getElementById('cm-owner').value.trim();
   const theme   = document.getElementById('cm-theme').value.trim();
   const caption = document.getElementById('cm-caption').value.trim();
   const details = document.getElementById('cm-details').value.trim();
@@ -1644,7 +1657,7 @@ async function saveCommsPost() {
   if (!theme) { toast('Theme is required', true); return; }
   if (!date)  { toast('Date is required', true); return; }
 
-  const body = { date, theme, createdBy: owner, caption, details, assignees: commsAssigneeTags };
+  const body = { date, theme, caption, details, assignees: commsAssigneeTags };
 
   try {
     const url    = commsEditingId ? `${API}/comms/${commsEditingId}` : `${API}/comms`;
@@ -1658,7 +1671,10 @@ async function saveCommsPost() {
       const fd = new FormData();
       fd.append('image', commsEditingImageFile);
       const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
-      if (!imgRes.ok) toast('Post saved, but image upload failed', true);
+      if (!imgRes.ok) {
+        const ie = await imgRes.json().catch(()=>({}));
+        toast('Post saved, but image upload failed: ' + (ie.error || 'unknown error'), true);
+      }
     }
 
     toast(commsEditingId ? '✅ Post saved!' : '✅ Post added!');
@@ -1679,6 +1695,42 @@ async function submitCommsForReview(id) {
     });
     if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Submit failed', true); return; }
     toast('📤 Sent to TLs for review!');
+    closeCommsEditor();
+    await loadComms();
+  } catch(e) {
+    toast('❌ Connection error', true);
+  }
+}
+
+// TLs (unlocked via admin key) delete immediately. Everyone else's tap sends
+// a deletion request to the TLs' bot for confirmation — nothing is removed
+// until then.
+async function deleteCommsPost(id) {
+  const postId = id || commsEditingId;
+  if (!postId) return;
+
+  if (isAdmin) {
+    if (!confirm('Delete this post permanently? This cannot be undone.')) return;
+    try {
+      const res = await fetch(`${API}/comms/${postId}`, { method: 'DELETE', headers: { 'x-api-key': adminKey } });
+      if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Delete failed', true); return; }
+      toast('🗑 Post deleted');
+      closeCommsEditor();
+      await loadComms();
+    } catch(e) {
+      toast('❌ Connection error', true);
+    }
+    return;
+  }
+
+  const requestedBy = prompt('Your name (so the TL knows who asked):') || '';
+  if (!confirm('Request deletion of this post? A TL will need to confirm it in the bot before it\'s actually removed.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}/request-delete`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestedBy }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Request failed', true); return; }
+    toast('🗑 Deletion requested — a TL will confirm in the bot');
     closeCommsEditor();
     await loadComms();
   } catch(e) {
