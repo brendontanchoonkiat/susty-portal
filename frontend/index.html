@@ -427,6 +427,38 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   animation:confettiFall linear forwards}
 @keyframes confettiFall{to{transform:translateY(108vh) rotate(720deg)}}
 
+/* ── Cinematic overview: pinned full-page hero + scroll-over sheet ── */
+.hero-stage{position:sticky;top:0;z-index:0;height:calc(100vh - 90px);height:calc(100dvh - 90px);
+  min-height:430px;display:flex;flex-direction:column;justify-content:center}
+.hero-stage .hero{margin-bottom:0;padding:52px 44px;will-change:transform,opacity;transform-origin:center top}
+.hero-stage .hero h1{font-size:clamp(2rem,4.6vw,3.2rem);letter-spacing:-.02em}
+.hero-stage .hero p{font-size:1.02rem;margin-bottom:32px}
+.hero-stage .hero-stats{gap:16px}
+.hero-stage .hero-stat{padding:20px 22px;border-radius:16px}
+.hero-stage .hero-stat .val{font-size:clamp(1.7rem,3.4vw,2.7rem)}
+.hero-stage .hero-stat .lbl{font-size:.8rem;margin-top:4px}
+.scroll-cue{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
+  background:none;border:none;cursor:pointer;color:var(--tm);font-family:inherit;font-size:.66rem;font-weight:700;
+  letter-spacing:.14em;text-transform:uppercase;animation:cueBob 2.2s ease-in-out infinite;padding:8px}
+.scroll-cue [data-lucide]{width:20px;height:20px}
+@keyframes cueBob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
+.ov-body{position:relative;z-index:2;background:var(--bg);border-radius:28px 28px 0 0;
+  margin:26px -24px 0;padding:30px 24px 10px;box-shadow:0 -18px 50px rgba(30,58,46,.16)}
+html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.5)}
+/* Reveal-on-scroll (class added by JS only — no-JS stays fully visible) */
+.reveal{opacity:0;transform:translateY(28px);transition:opacity .65s cubic-bezier(.2,.7,.3,1),transform .65s cubic-bezier(.2,.7,.3,1)}
+.reveal.inview{opacity:1;transform:none}
+@media(max-width:768px){
+  .hero-stage{top:var(--nh);height:calc(100vh - var(--nh) - 70px);height:calc(100dvh - var(--nh) - 70px)}
+}
+@media(max-width:600px){
+  .hero-stage .hero{padding:30px 20px}
+  .ov-body{margin:20px -14px 0;padding:22px 14px 8px;border-radius:22px 22px 0 0}
+}
+@media(max-width:480px){
+  .hero-stage{height:calc(100vh - var(--nh) - 110px);height:calc(100dvh - var(--nh) - 110px)}
+}
+
 /* ── Reduced motion: calm everything down ── */
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
@@ -492,6 +524,9 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 
 <!-- ═══ OVERVIEW ════════════════════════════════════════════════════════════ -->
 <div class="page active" id="page-overview">
+  <!-- Cinematic pinned hero (9 Jul 2026): fills the viewport; the .ov-body
+       sheet below slides up OVER it on scroll while the hero scales/fades. -->
+  <section class="hero-stage" id="hero-stage">
   <div class="hero">
     <h1 id="hero-greeting">Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
@@ -502,7 +537,12 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
       <div class="hero-stat" id="ov-posts-wrap"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts planned (upcoming)</div></div>
     </div>
   </div>
+  <button class="scroll-cue" id="scroll-cue" onclick="scrollToOvBody()" title="Scroll for more">
+    <span>scroll</span><i data-lucide="chevron-down"></i>
+  </button>
+  </section>
 
+  <div class="ov-body" id="ov-body">
   <div class="section-title"><i data-lucide="bell-ring"></i> Needs your attention</div>
   <div class="attn-grid" id="attn-cards"><div class="skel" style="grid-column:1/-1"><div class="sk"></div></div></div>
 
@@ -538,6 +578,7 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   </div>
   <div class="section-title">📢 Upcoming Posts</div>
   <div class="cal-grid" id="ov-cal"><div class="skel"><div class="sk"></div><div class="sk"></div></div></div>
+  </div><!-- /ov-body -->
 </div>
 
 <!-- ═══ ENERGY ═══════════════════════════════════════════════════════════════ -->
@@ -1402,6 +1443,52 @@ async function loadImpact(){
       document.getElementById('impact-arc').style.strokeDashoffset = String(CIRC * (1 - frac)));
   } catch(e){ /* card just stays at — */ }
 }
+
+// ═══ CINEMATIC OVERVIEW (pinned hero, scroll-linked fade, section reveals) ═══
+function scrollToOvBody(){
+  const b = document.getElementById('ov-body');
+  if (b) b.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+(function cinematicOverview(){
+  const stage = document.getElementById('hero-stage');
+  const body  = document.getElementById('ov-body');
+  if (!stage || !body) return;
+  const hero = stage.querySelector('.hero');
+  const cue  = document.getElementById('scroll-cue');
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let ticking = false;
+
+  function fx(){
+    ticking = false;
+    if (reduced) return;
+    const pg = document.getElementById('page-overview');
+    if (!pg || !pg.classList.contains('active')) return;
+    // Progress 0→1 = how far the sheet has slid over the pinned hero.
+    // Rect-based, so it works with both scrollers (.page-wrap on desktop, window on mobile).
+    const sr = stage.getBoundingClientRect(), br = body.getBoundingClientRect();
+    const h = sr.height || 1;
+    const p = Math.min(Math.max(1 - (br.top - sr.top) / h, 0), 1);
+    hero.style.transform = `scale(${(1 - p * .07).toFixed(4)}) translateY(${(-p * 26).toFixed(1)}px)`;
+    hero.style.opacity = String(1 - p * .7);
+    if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
+  }
+  function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
+  window.addEventListener('scroll', onScroll, { passive:true });
+  const wrap = document.querySelector('.page-wrap');
+  if (wrap) wrap.addEventListener('scroll', onScroll, { passive:true });
+  window.addEventListener('resize', onScroll);
+
+  // Reveal each section of the sheet as it scrolls into view
+  const io = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting){ e.target.classList.add('inview'); io.unobserve(e.target); }
+  }), { threshold: .12 });
+  [...body.children].forEach((el, i) => {
+    el.classList.add('reveal');
+    el.style.transitionDelay = Math.min(i * 55, 220) + 'ms';
+    io.observe(el);
+  });
+  fx();
+})();
 
 // ═══ TOAST ═══════════════════════════════════════════════════════════════════
 function toast(msg, isError=false) {
