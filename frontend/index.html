@@ -478,12 +478,12 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 /* ── Growth tree: fixed to the viewport's right edge, ABOVE the sheet, so it's
    visible from the hero onward. Gentle idle sway via the `rotate` property
    (doesn't clash with the JS-driven transforms on its leaves). ── */
-#growth-tree{position:fixed;right:12px;bottom:0;height:min(64vh,560px);z-index:4;
-  pointer-events:none;opacity:.9;transform-origin:50% 100%;animation:treeSway 8s ease-in-out infinite}
+#growth-tree{position:fixed;right:22px;bottom:8px;height:min(30vh,270px);z-index:4;
+  pointer-events:none;opacity:.92;transform-origin:50% 100%;animation:treeSway 8s ease-in-out infinite}
 @keyframes treeSway{0%,100%{rotate:.7deg}50%{rotate:-.7deg}}
 #growth-tree circle{transform-box:fill-box;transform-origin:center}
-@media(max-width:600px){ #growth-tree{height:36vh;right:4px} }
-@media (prefers-reduced-motion:reduce){ #growth-tree{opacity:.35} }
+@media(max-width:768px){ #growth-tree{display:none} } /* hidden on mobile — covered content */
+@media (prefers-reduced-motion:reduce){ #growth-tree{opacity:.6} }
 
 /* ── Up Next strip ("next match" style) ── */
 .upnext-wrap{margin:0 0 14px}
@@ -606,26 +606,41 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
        (z-index 4) so it's visible from the hero onward — a young sapling on the
        hero that blooms continuously as you scroll and lands beside the dashboard.
        Grown/bloomed by scroll progress (setTreeGrowth in cinematicOverview). -->
-  <svg id="growth-tree" viewBox="0 0 300 460" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path data-from="0"    data-to="0.45" d="M150 455 C148 390 142 340 150 285 C156 240 150 205 149 170" stroke="#7A5C3E" stroke-width="10" stroke-linecap="round"/>
-    <path data-from="0.28" data-to="0.55" d="M150 300 C120 275 95 265 72 236"   stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
-    <path data-from="0.34" data-to="0.60" d="M150 285 C185 255 210 250 233 217" stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
-    <path data-from="0.44" data-to="0.70" d="M149 215 C125 190 110 180 97 152"  stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
-    <path data-from="0.50" data-to="0.75" d="M149 195 C175 170 190 160 204 132" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
-    <path data-from="0.55" data-to="0.80" d="M149 170 C148 140 150 120 148 96"  stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
-    <circle data-from="0.55" data-to="0.80" cx="72"  cy="224" r="26" fill="#5E8F66"/>
-    <circle data-from="0.60" data-to="0.85" cx="233" cy="205" r="23" fill="#5E8F66"/>
-    <circle data-from="0.62" data-to="0.84" cx="120" cy="190" r="18" fill="#8FBF9F"/>
-    <circle data-from="0.66" data-to="0.86" cx="182" cy="162" r="18" fill="#8FBF9F"/>
-    <circle data-from="0.65" data-to="0.88" cx="97"  cy="145" r="24" fill="#7FA57B"/>
-    <circle data-from="0.68" data-to="0.90" cx="204" cy="122" r="23" fill="#7FA57B"/>
-    <circle data-from="0.72" data-to="0.94" cx="150" cy="118" r="20" fill="#5E8F66"/>
-    <circle data-from="0.70" data-to="0.92" cx="148" cy="82"  r="27" fill="#7FA57B"/>
-    <circle data-from="0.85" data-to="1"    cx="70"  cy="200" r="7"  fill="#C79A55"/>
-    <circle data-from="0.90" data-to="1"    cx="148" cy="56"  r="8"  fill="#C79A55"/>
-    <circle data-from="0.88" data-to="1"    cx="236" cy="184" r="7"  fill="#C79A55"/>
-    <circle data-from="0.92" data-to="1"    cx="102" cy="122" r="6"  fill="#C79A55"/>
-    <circle data-from="0.90" data-to="1"    cx="206" cy="98"  r="6"  fill="#C79A55"/>
+  <svg id="growth-tree" viewBox="0 0 300 340" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <!-- trunk + branches -->
+    <path data-from="0"    data-to="0.40" d="M150 335 C147 300 144 275 150 240 C154 215 150 200 149 185" stroke="#7A5C3E" stroke-width="12" stroke-linecap="round"/>
+    <path data-from="0.25" data-to="0.50" d="M150 250 C128 235 112 228 96 210"  stroke="#7A5C3E" stroke-width="7" stroke-linecap="round"/>
+    <path data-from="0.30" data-to="0.55" d="M150 240 C172 225 188 218 205 198" stroke="#7A5C3E" stroke-width="7" stroke-linecap="round"/>
+    <path data-from="0.35" data-to="0.60" d="M149 210 C132 195 122 190 110 172" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
+    <path data-from="0.40" data-to="0.62" d="M149 200 C168 185 178 178 192 160" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
+    <path data-from="0.42" data-to="0.65" d="M149 185 C149 165 148 155 149 140" stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
+    <!-- canopy — base layer -->
+    <circle data-from="0.50" data-to="0.70" cx="96"  cy="205" r="30" fill="#5E8F66"/>
+    <circle data-from="0.52" data-to="0.72" cx="205" cy="193" r="30" fill="#5E8F66"/>
+    <circle data-from="0.54" data-to="0.74" cx="150" cy="170" r="34" fill="#7FA57B"/>
+    <circle data-from="0.55" data-to="0.75" cx="110" cy="168" r="28" fill="#7FA57B"/>
+    <circle data-from="0.56" data-to="0.76" cx="192" cy="156" r="28" fill="#5E8F66"/>
+    <!-- canopy — mid layer -->
+    <circle data-from="0.58" data-to="0.78" cx="75"  cy="180" r="24" fill="#8FBF9F"/>
+    <circle data-from="0.60" data-to="0.80" cx="225" cy="168" r="24" fill="#8FBF9F"/>
+    <circle data-from="0.62" data-to="0.82" cx="130" cy="140" r="26" fill="#5E8F66"/>
+    <circle data-from="0.64" data-to="0.84" cx="172" cy="132" r="26" fill="#7FA57B"/>
+    <circle data-from="0.63" data-to="0.83" cx="62"  cy="158" r="18" fill="#7FA57B"/>
+    <circle data-from="0.65" data-to="0.85" cx="238" cy="146" r="18" fill="#5E8F66"/>
+    <!-- canopy — top layer -->
+    <circle data-from="0.66" data-to="0.86" cx="105" cy="128" r="22" fill="#8FBF9F"/>
+    <circle data-from="0.68" data-to="0.88" cx="195" cy="116" r="22" fill="#8FBF9F"/>
+    <circle data-from="0.70" data-to="0.90" cx="150" cy="112" r="28" fill="#5E8F66"/>
+    <circle data-from="0.72" data-to="0.92" cx="122" cy="98"  r="20" fill="#7FA57B"/>
+    <circle data-from="0.74" data-to="0.94" cx="178" cy="92"  r="20" fill="#5E8F66"/>
+    <circle data-from="0.76" data-to="0.96" cx="150" cy="72"  r="24" fill="#7FA57B"/>
+    <!-- blossoms -->
+    <circle data-from="0.85" data-to="1" cx="76"  cy="160" r="6" fill="#C79A55"/>
+    <circle data-from="0.88" data-to="1" cx="150" cy="58"  r="7" fill="#C79A55"/>
+    <circle data-from="0.90" data-to="1" cx="234" cy="138" r="6" fill="#C79A55"/>
+    <circle data-from="0.92" data-to="1" cx="112" cy="92"  r="5" fill="#C79A55"/>
+    <circle data-from="0.94" data-to="1" cx="188" cy="82"  r="5" fill="#C79A55"/>
+    <circle data-from="0.96" data-to="1" cx="140" cy="146" r="5" fill="#C79A55"/>
   </svg>
 
   <div class="ov-body" id="ov-body">
@@ -1601,13 +1616,9 @@ function scrollToOvBody(){
     hero.style.opacity = String(1 - p * .65);
     if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
     initTree();          // lazy — measures path lengths once the page is visible
-    // Sapling on the hero (g=.42: trunk + first bare branches), full bloom as
-    // the dashboard locks in. On narrower screens the tree fades to a
-    // watermark at the dashboard so it never fights the cards for attention.
-    setTreeGrowth(0.42 + 0.58 * p);
-    if (tree) tree.style.opacity = matchMedia('(min-width:1500px)').matches
-      ? String((0.9 - p * 0.3).toFixed(2))   // wide: full on hero, gentle layer at dashboard
-      : String((0.88 - p * 0.58).toFixed(2)); // narrow: fades to watermark at dashboard
+    // Young tree on the hero (g=.55: trunk, branches + first canopy circles),
+    // fills out and blooms as the dashboard locks in.
+    setTreeGrowth(0.55 + 0.45 * p);
   }
   function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
   window.addEventListener('scroll', onScroll, { passive:true });
