@@ -362,10 +362,12 @@ async function blockedByRecyclingGate(ctx) {
   return true;
 }
 // Swap requests/browsing/accepting — paused while the current month's roster
-// gets locked in. TLs bypass (they still manage swaps already in flight).
+// gets locked in. TLs and EARLY_ACCESS_NAMES bypass (they still manage swaps
+// already in flight / are testing ahead of general rollout).
 async function blockedBySwapGate(ctx) {
   if (await swapRequestsLive()) return false;
   if (await isTLForGating(ctx)) return false;
+  if (await hasEarlyAccess(ctx)) return false;
   const text =
     `🔒 <b>Duty swaps are paused for now</b> while this month's roster gets finalized. ` +
     `They'll reopen once the next roster goes out — stay tuned 🌿`;
@@ -592,13 +594,14 @@ async function buildMainMenu(ctx) {
 }
 
 // Swap buttons are hidden entirely (not just gated on click) while swaps are
-// paused — see swapRequestsLive(). TLs still see them, to manage any swaps
-// still in flight from before the pause.
+// paused — see swapRequestsLive(). TLs and EARLY_ACCESS_NAMES still see them
+// (TLs to manage any swaps still in flight from before the pause; early
+// access testers to test the flow ahead of general rollout).
 async function buildRosterMenu(ctx) {
   const kb = new InlineKeyboard()
     .text('🗓 My Roster',   'action:myroster').text('⏭ Next Duty', 'action:nextduty').row()
     .text('📋 Full Roster', 'action:roster').row();
-  if ((await swapRequestsLive()) || (await isTLForGating(ctx))) {
+  if ((await swapRequestsLive()) || (await isTLForGating(ctx)) || (await hasEarlyAccess(ctx))) {
     kb.text('🔄 Open Swaps', 'action:swaps').text('📨 Request Swap', 'action:swap').row();
   }
   kb.text('← Back', 'menu:main');
@@ -743,7 +746,7 @@ bot.callbackQuery(/^remind:cantmake:(\d+)$/, async (ctx) => {
   // a Request Swap button that just says "paused" is a dead end. While
   // that's the case, tell them to message a TL directly instead. TLs
   // themselves always bypass the swap gate, so they still get routed there.
-  if ((await swapRequestsLive()) || (await isTLForGating(ctx))) {
+  if ((await swapRequestsLive()) || (await isTLForGating(ctx)) || (await hasEarlyAccess(ctx))) {
     const text =
       `⚠️ Got it — noted that you can't make it.\n\n` +
       `Please head to <b>Roster → Request Swap</b> so we can find someone to cover this slot.`;
