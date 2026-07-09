@@ -430,7 +430,11 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 /* ── Cinematic overview: FULL-SCREEN pinned hero + scroll-over sheet ──
    #page-overview drops its padding/max-width so the gradient runs edge to
    edge; the sheet (.ov-body) re-centers its own content to 1100px. */
-#page-overview{max-width:none;padding:0 0 60px}
+#page-overview{max-width:none;padding:0;scroll-snap-align:start}
+/* One-scroll lock: hero page ↔ dashboard page (snap areas only exist on the
+   Overview page, so every other tab scrolls normally) */
+.page-wrap{scroll-snap-type:y mandatory}
+@media(max-width:768px){ html{scroll-snap-type:y mandatory} }
 .hero-stage{position:sticky;top:0;z-index:0;height:100vh;height:100dvh;
   min-height:480px;overflow:hidden}
 .hero-stage .hero{height:100%;margin:0;border-radius:0;display:flex;flex-direction:column;justify-content:center;
@@ -442,30 +446,41 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 .hero-stage .hero-stat{padding:22px 24px;border-radius:18px;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .hero-stage .hero-stat .val{font-size:clamp(1.8rem,3.6vw,2.9rem)}
 .hero-stage .hero-stat .lbl{font-size:.8rem;margin-top:4px}
-.scroll-cue{position:absolute;bottom:104px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
+.scroll-cue{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
   background:none;border:none;cursor:pointer;color:rgba(222,232,212,.85);font-family:inherit;font-size:.66rem;font-weight:700;
   letter-spacing:.14em;text-transform:uppercase;animation:cueBob 2.2s ease-in-out infinite;padding:8px;z-index:3}
 .scroll-cue [data-lucide]{width:20px;height:20px}
 @keyframes cueBob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
 .ov-body{position:relative;z-index:2;background:var(--bg);border-radius:30px 30px 0 0;
-  margin:0;padding:36px max(24px,calc((100% - 1100px)/2)) 10px;box-shadow:0 -18px 50px rgba(30,58,46,.22)}
+  margin:0;padding:22px max(24px,calc((100% - 1100px)/2)) 14px;box-shadow:0 -18px 50px rgba(30,58,46,.22);
+  height:100vh;height:100dvh;overflow-y:auto;scroll-snap-align:start;scroll-snap-stop:always}
 html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 /* Reveal-on-scroll (class added by JS only — no-JS stays fully visible) */
 .reveal{opacity:0;transform:translateY(28px);transition:opacity .65s cubic-bezier(.2,.7,.3,1),transform .65s cubic-bezier(.2,.7,.3,1)}
 .reveal.inview{opacity:1;transform:none}
 
-/* ── Hero quick links (ghost pills) ── */
-.hero-links{display:flex;gap:10px;margin-top:26px;flex-wrap:wrap}
-.hero-link{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:24px;cursor:pointer;
-  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);color:#EAF3E6;
-  font-family:inherit;font-size:.86rem;font-weight:700;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-  transition:background .2s,transform .15s}
-.hero-link:hover{background:rgba(255,255,255,.2)}
-.hero-link:active{transform:scale(.96)}
-.hero-link [data-lucide]{width:16px;height:16px}
+/* ── Compact one-page dashboard (everything fits the second snap page) ── */
+#ov-body .section-title{font-size:.92rem;margin-bottom:8px;padding-bottom:5px}
+#ov-body .impact-card{padding:14px 18px;gap:16px;margin-bottom:14px}
+#ov-body .impact-ring{width:104px;height:104px}
+#ov-body .impact-ring svg{width:100%;height:100%}
+#ov-body .equiv{padding:9px 12px}
+#ov-body .card-grid{gap:12px;margin-bottom:14px}
+#ov-body .card{padding:14px;margin-bottom:0}
+#ov-body .chart-wrap{height:min(23vh,210px)}
+#ov-cal{display:flex;overflow-x:auto;gap:12px;padding-bottom:6px;-webkit-overflow-scrolling:touch}
+#ov-cal .cal-item{flex:0 0 235px;display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+#ov-cal .loading,#ov-cal .skel{flex:1}
+@media(max-width:600px){ #ov-body{padding-bottom:calc(84px + env(safe-area-inset-bottom))} }
 
-/* ── Up Next strip (floats over the sheet's top edge, "next match" style) ── */
-.upnext-wrap{margin:-72px 0 30px}
+/* ── Growth tree (behind dashboard content, above sheet background) ── */
+#growth-tree{position:absolute;right:max(6px,2%);bottom:0;height:74%;z-index:-1;pointer-events:none;opacity:.5}
+html[data-theme="dark"] #growth-tree{opacity:.32}
+#growth-tree circle{transform-box:fill-box;transform-origin:center}
+@media(max-width:600px){ #growth-tree{opacity:.22;height:52%} }
+
+/* ── Up Next strip ("next match" style) ── */
+.upnext-wrap{margin:0 0 14px}
 .upnext{position:relative;z-index:3;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
   background:rgba(252,250,244,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border:1px solid var(--br);border-radius:20px;box-shadow:var(--sh2);padding:18px 22px}
@@ -482,9 +497,7 @@ html[data-theme="dark"] .upnext{background:rgba(29,41,32,.92)}
   border-radius:14px;border:none;cursor:pointer;font-family:inherit;background:#F3E3CA;color:#8B5A22}
 html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
 @media(max-width:600px){
-  .upnext-wrap{margin:-58px 0 22px}
-  .upnext{padding:15px 16px;gap:12px}
-  .scroll-cue{display:none} /* the peeking strip is the scroll affordance on phones */
+  .upnext{padding:14px 16px;gap:12px}
 }
 @media(max-width:768px){
   /* Tuck the hero UNDER the frosted sticky nav for a true full-screen first view */
@@ -577,10 +590,6 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
       <div class="hero-stat" id="ov-energy-wrap"><div class="val" id="ov-energy">—</div><div class="lbl">⚡ Electricity — <span id="ov-energy-month">this month</span> <span class="trend" id="ov-energy-trend"></span></div></div>
       <div class="hero-stat" id="ov-posts-wrap"><div class="val" id="ov-posts">—</div><div class="lbl">📅 Posts planned (upcoming)</div></div>
     </div>
-    <div class="hero-links">
-      <button class="hero-link" onclick="navigateTo('roster')"><i data-lucide="calendar-days"></i> My roster</button>
-      <button class="hero-link" onclick="navigateTo('recycling')"><i data-lucide="recycle"></i> W2R stats</button>
-    </div>
   </div>
   <button class="scroll-cue" id="scroll-cue" onclick="scrollToOvBody()" title="Scroll for more">
     <span>scroll</span><i data-lucide="chevron-down"></i>
@@ -588,8 +597,30 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
   </section>
 
   <div class="ov-body" id="ov-body">
-  <!-- Up Next strip (9 Jul 2026): replaces "Needs your attention". Floats over
-       the sheet's top edge, peeking into the hero screen as a scroll teaser. -->
+  <!-- Growth tree: drawn/bloomed by scroll progress (setTreeGrowth in cinematicOverview).
+       z-index -1 → behind the dashboard content, above the sheet background. -->
+  <svg id="growth-tree" viewBox="0 0 300 460" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path data-from="0"    data-to="0.45" d="M150 455 C148 390 142 340 150 285 C156 240 150 205 149 170" stroke="#7A5C3E" stroke-width="10" stroke-linecap="round"/>
+    <path data-from="0.28" data-to="0.55" d="M150 300 C120 275 95 265 72 236"   stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
+    <path data-from="0.34" data-to="0.60" d="M150 285 C185 255 210 250 233 217" stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
+    <path data-from="0.44" data-to="0.70" d="M149 215 C125 190 110 180 97 152"  stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
+    <path data-from="0.50" data-to="0.75" d="M149 195 C175 170 190 160 204 132" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
+    <path data-from="0.55" data-to="0.80" d="M149 170 C148 140 150 120 148 96"  stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
+    <circle data-from="0.55" data-to="0.80" cx="72"  cy="224" r="26" fill="#5E8F66"/>
+    <circle data-from="0.60" data-to="0.85" cx="233" cy="205" r="23" fill="#5E8F66"/>
+    <circle data-from="0.62" data-to="0.84" cx="120" cy="190" r="18" fill="#8FBF9F"/>
+    <circle data-from="0.66" data-to="0.86" cx="182" cy="162" r="18" fill="#8FBF9F"/>
+    <circle data-from="0.65" data-to="0.88" cx="97"  cy="145" r="24" fill="#7FA57B"/>
+    <circle data-from="0.68" data-to="0.90" cx="204" cy="122" r="23" fill="#7FA57B"/>
+    <circle data-from="0.72" data-to="0.94" cx="150" cy="118" r="20" fill="#5E8F66"/>
+    <circle data-from="0.70" data-to="0.92" cx="148" cy="82"  r="27" fill="#7FA57B"/>
+    <circle data-from="0.85" data-to="1"    cx="70"  cy="200" r="7"  fill="#C79A55"/>
+    <circle data-from="0.90" data-to="1"    cx="148" cy="56"  r="8"  fill="#C79A55"/>
+    <circle data-from="0.88" data-to="1"    cx="236" cy="184" r="7"  fill="#C79A55"/>
+    <circle data-from="0.92" data-to="1"    cx="102" cy="122" r="6"  fill="#C79A55"/>
+    <circle data-from="0.90" data-to="1"    cx="206" cy="98"  r="6"  fill="#C79A55"/>
+  </svg>
+  <!-- Up Next strip (9 Jul 2026): replaces "Needs your attention". -->
   <div class="upnext-wrap"><div class="upnext" id="upnext-strip"><div class="skel" style="flex:1"><div class="sk" style="height:52px"></div></div></div></div>
 
   <div class="section-title"><i data-lucide="globe"></i> Our Impact — all time</div>
@@ -1522,6 +1553,29 @@ function scrollToOvBody(){
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let ticking = false;
 
+  // ── Growth tree: drawn + bloomed by scroll progress. If reduced motion,
+  // we never init it, so the SVG stays fully grown (its natural state).
+  const tree = document.getElementById('growth-tree');
+  let treeParts = null;
+  function initTree(){
+    if (treeParts || !tree || reduced) return;
+    treeParts = [...tree.querySelectorAll('[data-from]')].map(el => {
+      const isPath = el.tagName.toLowerCase() === 'path';
+      let len = 0;
+      if (isPath){ len = el.getTotalLength(); el.style.strokeDasharray = String(len); el.style.strokeDashoffset = String(len); }
+      else el.style.transform = 'scale(0)';
+      return { el, isPath, len, from: +el.dataset.from, to: +el.dataset.to };
+    });
+  }
+  function setTreeGrowth(g){
+    if (!treeParts) return;
+    treeParts.forEach(pt => {
+      const t = Math.min(Math.max((g - pt.from) / (pt.to - pt.from), 0), 1);
+      if (pt.isPath) pt.el.style.strokeDashoffset = String(pt.len * (1 - t));
+      else pt.el.style.transform = `scale(${(1 - Math.pow(1 - t, 3)).toFixed(3)})`;
+    });
+  }
+
   function fx(){
     ticking = false;
     if (reduced) return;
@@ -1537,6 +1591,8 @@ function scrollToOvBody(){
     hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
     hero.style.opacity = String(1 - p * .65);
     if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
+    initTree();          // lazy — measures path lengths once the page is visible
+    setTreeGrowth(p);    // tree finishes blooming exactly as the dashboard locks in
   }
   function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
   window.addEventListener('scroll', onScroll, { passive:true });
@@ -1548,7 +1604,7 @@ function scrollToOvBody(){
   const io = new IntersectionObserver(entries => entries.forEach(e => {
     if (e.isIntersecting){ e.target.classList.add('inview'); io.unobserve(e.target); }
   }), { threshold: .12 });
-  [...body.children].forEach((el, i) => {
+  [...body.children].filter(el => el.id !== 'growth-tree').forEach((el, i) => {
     el.classList.add('reveal');
     el.style.transitionDelay = Math.min(i * 55, 220) + 'ms';
     io.observe(el);
