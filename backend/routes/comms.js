@@ -3,15 +3,30 @@ const express = require('express');
 const router  = express.Router();
 const fs      = require('fs');
 const path    = require('path');
+const multer  = require('multer');
 const { validateCommsPost, validateCommsPatch, sanitise } = require('../middleware/validate');
 const { getClient } = require('../utils/supabase');
+const db = require('../utils/supabase');
 
 const COMMS_FILE = path.join(__dirname, '../data/comms.json');
-const VALID_STATUS = ['planned', 'draft', 'idea', 'posted', 'archived'];
+// Planning flow: idea/draft/planned -> pending_review (member submitted) ->
+// approved (TL ok'd it) -> posted (TL posted it via the bot). `archived` can
+// be applied any time. Reject sends a post back to 'draft' with
+// rejected_reason set — see extend_comms_posts_for_planning.sql.
+const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'approved', 'posted', 'archived'];
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8MB
+  fileFilter: (_req, file, cb) => {
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(file.mimetype)) return cb(new Error('Only image files are allowed'));
+    cb(null, true);
+  },
+});
 
 // Seed used only as a local-file fallback when Supabase is unreachable —
 // Supabase (comms_posts table) is now the primary source of truth. See
-// create_comms_posts_table.sql for the migration + the exact seed values.
+// create_comms_posts_table.sql / extend_comms_posts_for_planning.sql for schema.
 const SEED = [
   { id: 1, date: '2026-06-05', theme: 'World Environment Day',                          owner: 'Alan',       notes: 'Ask other teams their plan for Unicon',          status: 'planned' },
   { id: 2, date: '2026-06-07', theme: 'UNICON (5–7 Jun)',                                owner: 'All',        notes: 'Check if any recycling efforts here',            status: 'planned' },
@@ -43,14 +58,23 @@ function saveCommsFile(data) {
 if (!fs.existsSync(COMMS_FILE)) saveCommsFile(SEED);
 
 // ─── Supabase (primary) ────────────────────────────────────────────────────────
-// comms_posts row shape ≈ { id, date, theme, owner, notes, status, posted_at }.
-// Mapped to the frontend's camelCase `postedAt` at the API boundary so the
-// existing frontend code (renderCommsCalendar, renderPostedComms) needs no changes.
+// comms_posts row shape ≈ { id, date, theme, owner, notes, status, posted_at,
+// caption, details, image_url, created_by, submitted_at, approved_by,
+// approved_at, rejected_reason, posted_by }. Mapped to the frontend's
+// camelCase at the API boundary.
 function fromDbRow(row) {
   return {
     id: row.id, date: row.date, theme: row.theme, owner: row.owner,
     notes: row.notes, status: row.status,
-    ...(row.posted_at ? { postedAt: row.posted_at } : {}),
+    caption: row.caption || '', details: row.details || '',
+    imageUrl: row.image_url || null,
+    createdBy: row.created_by || '',
+    rejectedReason: row.rejected_reason || null,
+    ...(row.posted_at    ? { postedAt: row.posted_at }       : {}),
+    ...(row.submitted_at ? { submittedAt: row.submitted_at } : {}),
+    ...(row.approved_by  ? { approvedBy: row.approved_by }   : {}),
+    ...(row.approved_at  ? { approvedAt: row.approved_at }   : {}),
+    ...(row.posted_by    ? { postedBy: row.posted_by }       : {}),
   };
 }
 
@@ -86,23 +110,28 @@ router.get('/upcoming', async (_req, res) => {
   res.json(data.filter(e => e.date >= today && e.status !== 'posted'));
 });
 
-// POST — add new entry (admin only)
+// POST — add new entry. Deliberately NOT admin-gated: any comms team member
+// plans posts straight from the portal calendar (matches the ministry's
+// "anyone can propose, TL approves before it goes live" workflow — the actual
+// gate is the pending_review -> approve step, not post creation).
 router.post('/',
-  (req, res, next) => req.app.get('requireApiKey')(req, res, next),
   validateCommsPost,
   async (req, res) => {
-    const { theme, owner, notes, date, status } = req.body;
+    const { theme, owner, notes, date, caption, details, createdBy, status } = req.body;
     const entry = {
-      date:   date   || '',
-      theme:  theme,
-      owner:  owner  || '',
-      notes:  notes  || '',
-      status: VALID_STATUS.includes(status) ? status : 'planned',
+      date:       date   || '',
+      theme:      theme,
+      owner:      owner  || createdBy || '',
+      notes:      notes  || '',
+      caption:    caption || '',
+      details:    details || '',
+      created_by: createdBy || owner || '',
+      status:     VALID_STATUS.includes(status) ? status : 'draft',
     };
 
-    const db = getClient();
-    if (db) {
-      const { data, error } = await db.from('comms_posts').insert(entry).select().single();
+    const dbc = getClient();
+    if (dbc) {
+      const { data, error } = await dbc.from('comms_posts').insert(entry).select().single();
       if (!error) return res.status(201).json(fromDbRow(data));
       console.warn('[Comms] Supabase insert failed, falling back to local file:', error.message);
     }
@@ -116,12 +145,57 @@ router.post('/',
   }
 );
 
-// PATCH /:id — update status (mark as posted / revert, etc.) — no auth required (intentional)
+// POST /:id/image — upload/replace the post's image (multipart form field "image")
+router.post('/:id/image', upload.single('image'), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+  if (!req.file) return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
+
+  const dbc = getClient();
+  if (!dbc) return res.status(503).json({ error: 'Image upload requires Supabase (not configured)' });
+
+  const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  const filename = `post_${id}_${Date.now()}.${ext}`;
+  const imageUrl = await db.uploadImage(req.file.buffer, filename, req.file.mimetype, 'comms');
+  if (!imageUrl) return res.status(502).json({ error: 'Image upload to storage failed' });
+
+  const { data, error } = await dbc.from('comms_posts').update({ image_url: imageUrl }).eq('id', id).select().single();
+  if (error) return res.status(404).json({ error: 'Post not found' });
+  res.json(fromDbRow(data));
+});
+
+// POST /:id/submit — member pushes their (self-checked) post to the TLs for
+// review. Sets status to pending_review and DMs every TL a preview with
+// Approve/Reject buttons via the bot.
+router.post('/:id/submit', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+
+  const dbc = getClient();
+  if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+
+  const { data, error } = await dbc.from('comms_posts')
+    .update({ status: 'pending_review', submitted_at: new Date().toISOString(), rejected_reason: null })
+    .eq('id', id).select().single();
+  if (error) return res.status(404).json({ error: 'Post not found' });
+
+  try {
+    const { notifyTLsSubmitted } = require('../utils/commsNotify');
+    await notifyTLsSubmitted(data);
+  } catch (err) {
+    console.warn('[Comms] Failed to notify TLs of submission:', err.message);
+  }
+
+  res.json(fromDbRow(data));
+});
+
+// PATCH /:id — update status (mark as posted / revert, etc.) or edit fields
+// — no auth required (intentional, matches the rest of this route's design)
 router.patch('/:id', validateCommsPatch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 
-  const { status, theme, owner, notes, date } = req.body;
+  const { status, theme, owner, notes, date, caption, details } = req.body;
   if (status !== undefined && !VALID_STATUS.includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
@@ -133,14 +207,16 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
     // so a reverted post doesn't carry a stale "posted" timestamp.
     patch.posted_at = status === 'posted' ? new Date().toISOString() : null;
   }
-  if (theme !== undefined) patch.theme = theme;
-  if (owner !== undefined) patch.owner = owner;
-  if (notes !== undefined) patch.notes = notes;
-  if (date  !== undefined) patch.date  = date;
+  if (theme   !== undefined) patch.theme   = theme;
+  if (owner   !== undefined) patch.owner   = owner;
+  if (notes   !== undefined) patch.notes   = notes;
+  if (date    !== undefined) patch.date    = date;
+  if (caption !== undefined) patch.caption = caption;
+  if (details !== undefined) patch.details = details;
 
-  const db = getClient();
-  if (db) {
-    const { data, error } = await db.from('comms_posts').update(patch).eq('id', id).select().single();
+  const dbc = getClient();
+  if (dbc) {
+    const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
     if (!error && data) return res.json(fromDbRow(data));
     if (error && error.code !== 'PGRST116') console.warn('[Comms] Supabase update failed, falling back to local file:', error.message);
   }
@@ -154,10 +230,12 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
     if (status === 'posted') entry.postedAt = new Date().toISOString();
     else delete entry.postedAt;
   }
-  if (theme !== undefined) entry.theme = theme;
-  if (owner !== undefined) entry.owner = owner;
-  if (notes !== undefined) entry.notes = notes;
-  if (date  !== undefined) entry.date  = date;
+  if (theme   !== undefined) entry.theme   = theme;
+  if (owner   !== undefined) entry.owner   = owner;
+  if (notes   !== undefined) entry.notes   = notes;
+  if (date    !== undefined) entry.date    = date;
+  if (caption !== undefined) entry.caption = caption;
+  if (details !== undefined) entry.details = details;
   saveCommsFile(comms);
   res.json(entry);
 });

@@ -11,6 +11,7 @@ catch { console.warn('[Reminders] node-cron not installed — run npm install no
 
 const { InlineKeyboard } = require('grammy');
 const db = require('./supabase');
+const commsNotify = require('./commsNotify');
 
 /**
  * Start reminder cron. Fires daily at 09:00 SGT (01:00 UTC).
@@ -24,6 +25,7 @@ function startReminderCron(bot) {
     console.log('[Reminders] Running daily duty check...');
     await sendDutyReminders(bot);
     await sendBirthdayReminders(bot);
+    await sendCommsReminders(bot);
   }, { timezone: 'UTC' });
 
   console.log('[Reminders] Cron scheduled: daily at 09:00 SGT');
@@ -237,4 +239,81 @@ async function postSessionSummary(bot, slotDate) {
   await bot.api.sendMessage(process.env.TELEGRAM_CHAT_ID, msg, { parse_mode: 'HTML' }).catch(() => {});
 }
 
-module.exports = { startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders };
+/**
+ * Comms post-planning reminders — runs as part of the daily cron alongside
+ * duty/birthday reminders. Three separate nudges, all opt-in via what's
+ * actually due (skips silently if nothing qualifies, same pattern as the
+ * duty reminders):
+ *   1. Owner nudge — post is scheduled for tomorrow but still idea/draft/
+ *      planned (never submitted for review).
+ *   2. TL nudge — any post currently sitting in pending_review, so approvals
+ *      don't get missed.
+ *   3. TL nudge — approved posts due today/tomorrow, ready to actually publish.
+ */
+async function sendCommsReminders(bot) {
+  const supa = db.getClient();
+  if (!supa) return;
+
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const fmt = (d) => d.toISOString().split('T')[0];
+
+  const { data: posts } = await supa.from('comms_posts')
+    .select('*')
+    .in('status', ['idea', 'draft', 'planned', 'pending_review', 'approved'])
+    .gte('date', fmt(today));
+  if (!posts?.length) return;
+
+  // 1. Owner nudge
+  const needsSubmit = posts.filter(p => p.date === fmt(tomorrow) && ['idea', 'draft', 'planned'].includes(p.status));
+  for (const p of needsSubmit) {
+    const ownerName = p.created_by || p.owner;
+    const id = await commsNotify.getTelegramIdForName(ownerName);
+    if (!id) continue;
+    try {
+      await bot.api.sendMessage(id,
+        `⏰ <b>Comms reminder</b>\n\n📅 "${p.theme}" is scheduled for tomorrow (${commsNotify.fmtDate(p.date)}) but hasn't been submitted for review yet.\n\n` +
+        `Finish it up in the portal Comms tab and tap Submit for Review.`,
+        { parse_mode: 'HTML' }
+      );
+      console.log(`[Reminders] Sent comms submit-nudge to ${ownerName}`);
+    } catch (err) {
+      console.warn(`[Reminders] Comms nudge to ${ownerName} failed:`, err.message);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  // 2. TL nudge — pending approvals
+  const pendingReview = posts.filter(p => p.status === 'pending_review');
+  if (pendingReview.length) {
+    const lines = pendingReview.map(p => `  • ${commsNotify.fmtDate(p.date)} — ${p.theme}`).join('\n');
+    const msg = `✅ <b>Comms — Pending Your Approval</b>\n\n${lines}\n\nOpen the bot's 📢 Comms menu to review.`;
+    const tls = await commsNotify.getTLTelegramIds();
+    for (const tl of tls) {
+      try {
+        await bot.api.sendMessage(tl.telegram_id, msg, { parse_mode: 'HTML' });
+      } catch (err) {
+        console.warn(`[Reminders] Comms approval nudge to ${tl.name} failed:`, err.message);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  // 3. TL nudge — ready to post
+  const readyToPost = posts.filter(p => p.status === 'approved' && (p.date === fmt(today) || p.date === fmt(tomorrow)));
+  if (readyToPost.length) {
+    const lines = readyToPost.map(p => `  • ${commsNotify.fmtDate(p.date)} — ${p.theme}`).join('\n');
+    const msg = `📮 <b>Comms — Ready to Post</b>\n\n${lines}\n\nOpen the bot's 📢 Comms menu → Ready to Post, publish it, then tap Mark as Posted.`;
+    const tls = await commsNotify.getTLTelegramIds();
+    for (const tl of tls) {
+      try {
+        await bot.api.sendMessage(tl.telegram_id, msg, { parse_mode: 'HTML' });
+      } catch (err) {
+        console.warn(`[Reminders] Comms ready-to-post nudge to ${tl.name} failed:`, err.message);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+}
+
+module.exports = { startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders, sendCommsReminders };

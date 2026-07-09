@@ -15,6 +15,7 @@ const {
 
 const db     = require('../utils/supabase');
 const carbon = require('../utils/carbon');
+const commsNotify = require('../utils/commsNotify');
 function getReminders() {
   try { return require('../utils/reminders'); } catch { return null; }
 }
@@ -136,6 +137,8 @@ bot.use(session({
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
+    // Comms post review (added for portal planning calendar workflow)
+    awaitingCommsReject:   null,   // comms_posts id: TL is typing feedback to send back to the owner
     // GPC W2R Check-in (one-off, added 8 Jul 2026)
     pendingGpcCheckin:         null,  // { ministry_status, other_ministry?, duration?, arrival_note? } — staged until final save
     awaitingGpcOtherMinistry:  false, // waiting for free-text ministry name after "Also another ministry" tap
@@ -560,7 +563,8 @@ async function buildMainMenu(ctx) {
     // Roster submenu already has "Open Swaps" / "Request Swap" — don't
     // duplicate those two at the top level too.
     const kb = new InlineKeyboard()
-      .text('📋 Roster', 'menu:roster');
+      .text('📋 Roster', 'menu:roster').row()
+      .text('📢 Comms',  'menu:comms');
     if (await recyclingLogsLive()) kb.row().text('🪣 Recycling Logs', 'menu:duty');
     return kb;
   }
@@ -568,6 +572,7 @@ async function buildMainMenu(ctx) {
   const kb = new InlineKeyboard()
     .text('📋 Roster',         'menu:roster').row()
     .text('🪣 Recycling Logs', 'menu:duty').row()
+    .text('📢 Comms',          'menu:comms').row()
     .text('📊 Stats & Impact', 'menu:stats').row()
     .text('✏️ My Profile',     'menu:profile');
   if (showAvail) kb.row().text('📅 My Availability', 'menu:avail');
@@ -868,6 +873,183 @@ bot.callbackQuery('menu:stats', async (ctx) => {
     '📊 <b>Stats & Impact</b>\n\nSee how much W2R has recycled and the impact made.',
     { parse_mode: 'HTML', reply_markup: statsMenu }
   );
+});
+
+// ─── Comms (post planning / review) ────────────────────────────────────────────
+// Planning (date, caption, image, details) happens in the portal's Comms tab —
+// any member can propose a post there. The bot's job is the review layer: a
+// member submits their (self-checked) post from the portal, which DMs every TL
+// a preview with Approve/Reject here; once approved, a TL posts it manually
+// and taps "Mark as Posted" to close the loop. See utils/commsNotify.js and
+// routes/comms.js (POST /:id/submit) for the portal-side half of this.
+function backToCommsKb() {
+  return new InlineKeyboard().text('← Back', 'menu:comms');
+}
+
+function commsStatusLabel(status) {
+  return (status || '').replace(/_/g, ' ');
+}
+
+bot.callbackQuery('menu:comms', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const name = await resolveName(ctx);
+  if (!name) return promptRegister(ctx);
+  const supa = db.getClient();
+
+  if (await isTLForGating(ctx)) {
+    let pendingCount = 0, approvedCount = 0;
+    if (supa) {
+      const { data: pr } = await supa.from('comms_posts').select('id').eq('status', 'pending_review');
+      const { data: ap } = await supa.from('comms_posts').select('id').eq('status', 'approved');
+      pendingCount = pr?.length || 0;
+      approvedCount = ap?.length || 0;
+    }
+    const kb = new InlineKeyboard()
+      .text(`✅ Pending Approvals (${pendingCount})`, 'menu:commsapprovals').row()
+      .text(`📮 Ready to Post (${approvedCount})`, 'menu:commspost').row()
+      .text('← Back', 'menu:main');
+    return ctx.editMessageText(
+      '📢 <b>Comms</b>\n\nPost planning happens in the portal Comms tab. Review and post from here.',
+      { parse_mode: 'HTML', reply_markup: kb }
+    ).catch(() => ctx.reply('📢 <b>Comms</b>', { parse_mode: 'HTML', reply_markup: kb }));
+  }
+
+  // Regular member — show what's waiting on them (created via the portal)
+  let mine = [];
+  if (supa) {
+    const { data } = await supa.from('comms_posts').select('*')
+      .or(`created_by.eq.${name},owner.eq.${name}`)
+      .in('status', ['draft', 'pending_review'])
+      .order('date');
+    mine = data || [];
+  }
+  const lines = mine.length
+    ? mine.map(p =>
+        `• ${fmtDateShort(p.date)} — ${p.theme} <i>(${commsStatusLabel(p.status)})</i>` +
+        (p.rejected_reason ? `\n   💬 ${p.rejected_reason}` : '')
+      ).join('\n')
+    : 'Nothing pending right now.';
+  return ctx.editMessageText(
+    `📢 <b>Comms</b>\n\nPlan and submit posts from the portal Comms tab.\n\n<b>Your posts:</b>\n${lines}`,
+    { parse_mode: 'HTML', reply_markup: backToMain() }
+  ).catch(() => ctx.reply('📢 Comms', { reply_markup: backToMain() }));
+});
+
+bot.callbackQuery('menu:commsapprovals', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return;
+  const supa = db.getClient();
+  const { data } = supa
+    ? await supa.from('comms_posts').select('*').eq('status', 'pending_review').order('date')
+    : { data: [] };
+  if (!data?.length) {
+    return ctx.editMessageText('✅ No posts waiting for review.', { reply_markup: backToCommsKb() })
+      .catch(() => ctx.reply('✅ No posts waiting for review.', { reply_markup: backToCommsKb() }));
+  }
+  const kb = new InlineKeyboard();
+  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${p.theme}`, `comms:view:${p.id}`).row());
+  kb.text('← Back', 'menu:comms');
+  return ctx.editMessageText('✅ <b>Pending Approvals</b>\n\nTap a post to review.', { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply('✅ Pending Approvals', { reply_markup: kb }));
+});
+
+bot.callbackQuery('menu:commspost', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return;
+  const supa = db.getClient();
+  const { data } = supa
+    ? await supa.from('comms_posts').select('*').eq('status', 'approved').order('date')
+    : { data: [] };
+  if (!data?.length) {
+    return ctx.editMessageText('📮 No approved posts waiting to go live.', { reply_markup: backToCommsKb() })
+      .catch(() => ctx.reply('📮 No approved posts waiting to go live.', { reply_markup: backToCommsKb() }));
+  }
+  const kb = new InlineKeyboard();
+  data.forEach(p => kb.text(`${fmtDateShort(p.date)} — ${p.theme}`, `comms:view:${p.id}`).row());
+  kb.text('← Back', 'menu:comms');
+  return ctx.editMessageText('📮 <b>Ready to Post</b>\n\nTap a post to view + mark posted.', { parse_mode: 'HTML', reply_markup: kb })
+    .catch(() => ctx.reply('📮 Ready to Post', { reply_markup: kb }));
+});
+
+// Shows a full preview (image if attached) with the action buttons for
+// whatever state the post is currently in. Sent as a fresh message (rather
+// than edited in place) since the list message may be text-only but the
+// preview may need to become a photo message.
+bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return;
+  const id = Number(ctx.match[1]);
+  const supa = db.getClient();
+  const { data: p } = supa ? await supa.from('comms_posts').select('*').eq('id', id).single() : { data: null };
+  if (!p) return ctx.reply('⚠️ Post not found — it may have been edited or deleted.');
+
+  const caption =
+    `📅 <b>${fmtDateShort(p.date)}</b>\n📝 <b>${p.theme}</b>\n` +
+    (p.caption ? `\n"${p.caption}"\n` : '') +
+    (p.details ? `\n🗒 ${p.details}\n` : '') +
+    `\n👤 Planned by: ${p.created_by || p.owner || '—'}\n📌 Status: ${commsStatusLabel(p.status)}`;
+
+  let kb;
+  if (p.status === 'pending_review') {
+    kb = new InlineKeyboard().text('✅ Approve', `comms:approve:${p.id}`).text('✖️ Reject', `comms:reject:${p.id}`);
+  } else if (p.status === 'approved') {
+    kb = new InlineKeyboard().text('✅ Mark as Posted', `comms:markposted:${p.id}`);
+  } else {
+    kb = backToCommsKb();
+  }
+
+  if (p.image_url) {
+    await ctx.replyWithPhoto(p.image_url, { caption, parse_mode: 'HTML', reply_markup: kb });
+  } else {
+    await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: kb });
+  }
+});
+
+bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  const name = await resolveName(ctx);
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  const { data: p, error } = await supa.from('comms_posts')
+    .update({ status: 'approved', approved_by: name, approved_at: new Date().toISOString(), rejected_reason: null })
+    .eq('id', id).select().single();
+  if (error || !p) return ctx.reply('⚠️ Could not approve — post may no longer exist.');
+
+  const doneMsg = `✅ Approved by ${name}.`;
+  await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
+    .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
+    .catch(() => ctx.reply(doneMsg));
+  commsNotify.notifyOwnerApproved(p).catch(() => {});
+});
+
+bot.callbackQuery(/^comms:reject:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  ctx.session.awaitingCommsReject = id;
+  await ctx.reply('✖️ What should change? Type your feedback — this gets sent straight to whoever planned it.');
+});
+
+bot.callbackQuery(/^comms:markposted:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  const name = await resolveName(ctx);
+  const supa = db.getClient();
+  if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+  const { data: p, error } = await supa.from('comms_posts')
+    .update({ status: 'posted', posted_by: name, posted_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error || !p) return ctx.reply('⚠️ Could not update — post may no longer exist.');
+
+  const doneMsg = `📮 Marked as posted by ${name}. Nice work! 🌿`;
+  await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
+    .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
+    .catch(() => ctx.reply(doneMsg));
 });
 
 // ─── Profile collection (service day / CG / other ministries / DOB) ──────────
@@ -2318,6 +2500,7 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
   try {
     await reminders.sendDutyReminders(bot);
     await reminders.sendBirthdayReminders(bot);
+    if (reminders.sendCommsReminders) await reminders.sendCommsReminders(bot);
     const doneMsg =
       `✅ <b>Test run complete.</b>\n\n` +
       `This only sends to members who actually have a slot exactly 5 or 1 day from today, ` +
@@ -2532,6 +2715,28 @@ bot.on('message:text', async (ctx) => {
     if (ctx.session.awaitingSwapReason || ctx.session.pendingSwapReason || ctx.session.awaitingAcceptDate) {
       return cancelSwapFlow(ctx);
     }
+    if (ctx.session.awaitingCommsReject) {
+      ctx.session.awaitingCommsReject = null;
+      return ctx.reply('Cancelled — post left as-is.');
+    }
+  }
+
+  // Comms: TL is typing feedback after tapping "Reject" on a pending post
+  if (ctx.session.awaitingCommsReject) {
+    const id = ctx.session.awaitingCommsReject;
+    ctx.session.awaitingCommsReject = null;
+    const name = await resolveName(ctx);
+    const supa = db.getClient();
+    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+    const { data: p, error } = await supa.from('comms_posts')
+      .update({ status: 'draft', rejected_reason: text, submitted_at: null })
+      .eq('id', id).select().single();
+    if (error || !p) return ctx.reply('⚠️ Could not update — post may no longer exist.');
+
+    await ctx.reply(`✖️ Sent back to ${p.created_by || p.owner || 'the owner'} with your feedback.`);
+    commsNotify.notifyOwnerRejected(p, text).catch(() => {});
+    return;
   }
 
   // Registration — if user types again while in name-confirm, restart matching

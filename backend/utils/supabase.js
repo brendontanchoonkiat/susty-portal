@@ -278,15 +278,17 @@ async function upsertMonthlyTotal(month, year, cardboardKg, plasticKg, source = 
   return data;
 }
 
-// Upload image buffer to Supabase Storage; returns public URL or null
-async function uploadImage(buffer, filename, mimeType = 'image/jpeg') {
+// Upload image buffer to Supabase Storage; returns public URL or null.
+// `folder` defaults to 'logs' (recycling log photos); comms post images use
+// 'comms' so the two don't mix in the same storage prefix.
+async function uploadImage(buffer, filename, mimeType = 'image/jpeg', folder = 'logs') {
   const db = getClient();
   if (!db) return null;
   const bucket = process.env.SUPABASE_STORAGE_BUCKET || 'session-images';
   try {
     const { data, error } = await db.storage
       .from(bucket)
-      .upload(`logs/${filename}`, buffer, { contentType: mimeType, upsert: false });
+      .upload(`${folder}/${filename}`, buffer, { contentType: mimeType, upsert: false });
     if (error) { console.error('[Supabase] uploadImage:', error.message); return null; }
     const { data: urlData } = db.storage.from(bucket).getPublicUrl(data.path);
     return urlData?.publicUrl || null;

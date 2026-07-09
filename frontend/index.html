@@ -127,6 +127,8 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .cal-item{display:grid;grid-template-columns:80px 1fr auto;align-items:center;gap:14px;background:var(--sf);border-radius:var(--r);padding:14px 16px;box-shadow:var(--sh);border-left:4px solid var(--gs)}
 .cal-item.status-draft{border-left-color:var(--am)}
 .cal-item.status-idea{border-left-color:var(--br)}
+.cal-item.status-pending_review{border-left-color:#7C3AED}
+.cal-item.status-approved{border-left-color:#1E40AF}
 .cal-date{font-size:.72rem;color:var(--tm);line-height:1.4}
 .cal-date strong{display:block;font-size:1rem;color:var(--gd);font-weight:700}
 .cal-theme{font-size:.88rem;font-weight:600}
@@ -136,6 +138,8 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .status-draft{background:#FFF3CD;color:#856404}
 .status-idea{background:#EEE;color:#555}
 .status-posted{background:#D4EDDA;color:#155724}
+.status-pending_review{background:#EDE3FB;color:#5B21B6}
+.status-approved{background:#DBEAFE;color:#1E40AF}
 .badge-pending{background:#FFEBEE;color:#C62828}
 .badge-posted{background:#D4EDDA;color:#155724}
 .cal-item.past-pending{border-left-color:#E57373;background:#FFF8F8}
@@ -457,12 +461,70 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
 
 <!-- ═══ COMMS ════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-comms">
-  <div class="section-title" style="font-size:1.2rem;margin-bottom:20px">📢 Comms Posting Schedule</div>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:4px">
+    <div class="section-title" style="font-size:1.2rem;margin-bottom:0">📢 Comms Posting Schedule</div>
+    <button class="btn btn-primary btn-sm" onclick="openCommsEditor()">+ Add Post</button>
+  </div>
+  <p style="font-size:.78rem;color:var(--tm);margin-bottom:18px">
+    Plan a post here — click a date or "+ Add Post". Once it's ready, tap "Submit for Review" so a TL can approve it in the bot. A TL marks it posted from there once it's live.
+  </p>
+
+  <!-- Add/Edit post panel (hidden by default) -->
+  <div class="editor-panel" id="comms-editor" style="display:none">
+    <h3 id="comms-editor-title">➕ Add New Post</h3>
+    <input type="hidden" id="cm-id"/>
+    <div class="form-row">
+      <div class="form-field"><label>Date</label><input type="date" id="cm-date"/></div>
+      <div class="form-field"><label>Planned by</label><input type="text" id="cm-owner" placeholder="Your name"/></div>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Theme / title</label>
+      <input type="text" id="cm-theme" placeholder="e.g. Plastic-Free July kickoff"/>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Caption (the actual post copy)</label>
+      <textarea id="cm-caption" rows="4" placeholder="Write the caption exactly as it should be posted…" style="width:100%;font-family:inherit;font-size:.85rem;padding:8px;border-radius:8px;border:1px solid var(--br);resize:vertical"></textarea>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Details / instructions (for the TL, not posted publicly)</label>
+      <textarea id="cm-details" rows="2" placeholder="e.g. tag @sustyministry, use the vertical crop" style="width:100%;font-family:inherit;font-size:.85rem;padding:8px;border-radius:8px;border:1px solid var(--br);resize:vertical"></textarea>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Image</label>
+      <input type="file" id="cm-image-file" accept="image/*" onchange="previewCommsImage(event)"/>
+      <div id="cm-image-preview" style="margin-top:8px"></div>
+    </div>
+    <div id="cm-status-info" style="font-size:.75rem;color:var(--tm);margin-bottom:12px"></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="saveCommsPost()">💾 Save</button>
+      <button class="btn btn-outline btn-sm" id="cm-submit-btn" onclick="submitCommsForReview()" style="display:none">📤 Submit for Review</button>
+      <button class="btn btn-outline btn-sm" onclick="closeCommsEditor()">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Calendar grid -->
+  <div class="card" style="margin-top:16px">
+    <div class="cal-month-nav">
+      <button class="cal-nav-btn" onclick="prevCommsMonth()">‹</button>
+      <span class="cal-month-title" id="comms-cal-month-label">July 2026</span>
+      <button class="cal-nav-btn" onclick="nextCommsMonth()">›</button>
+    </div>
+    <div class="cal-weekgrid">
+      <div class="cal-day-header">Mon</div><div class="cal-day-header">Tue</div><div class="cal-day-header">Wed</div>
+      <div class="cal-day-header">Thu</div><div class="cal-day-header">Fri</div><div class="cal-day-header">Sat</div><div class="cal-day-header">Sun</div>
+    </div>
+    <div class="cal-weekgrid" id="comms-month-grid" style="margin-top:4px">
+      <div class="loading" style="grid-column:1/-1">Loading…</div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:10px;flex-wrap:wrap;margin:18px 0">
     <button class="btn btn-outline btn-sm" onclick="filterCal('all')">All</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('planned')">✅ Planned</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('draft')">✏️ Draft</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('idea')">💡 Ideas</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('pending_review')">📤 Pending Review</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('approved')">✅ Approved</button>
   </div>
   <div class="cal-grid" id="comms-cal"><div class="loading">Loading…</div></div>
 
@@ -1380,6 +1442,7 @@ async function loadComms() {
     // Comms page: full active list with post actions
     renderCommsCalendar('all', 'comms-cal', { showActions: true });
     renderPostedComms();
+    renderCommsMonthGrid();
 
     // Overview: items from 1 week ago onwards, no actions, max 3
     const cutoff = new Date();
@@ -1404,19 +1467,179 @@ function renderCommsCalendar(filter, containerId, opts={}) {
   const today = new Date().toISOString().split('T')[0];
   el.innerHTML = items.map(e => {
     const d       = new Date(e.date + 'T00:00:00');
-    const isPast  = e.date < today;
+    const isPast  = e.date < today && e.status !== 'pending_review' && e.status !== 'approved';
     const statusTag = isPast
       ? `<span class="status-tag badge-pending">⚠️ pending</span>`
-      : `<span class="status-tag status-${e.status}">${e.status}</span>`;
-    const postBtn = showActions
-      ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem;margin-top:4px;white-space:nowrap">✅ Mark posted</button>`
+      : `<span class="status-tag status-${esc(e.status)}">${esc((e.status||'').replace(/_/g,' '))}</span>`;
+    const thumb = e.imageUrl ? `<img src="${esc(e.imageUrl)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;margin-right:8px;vertical-align:middle"/>` : '';
+    const rejected = e.rejectedReason ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
+    const canSubmit = showActions && ['idea','draft','planned'].includes(e.status);
+    const btns = showActions
+      ? `<button class="action-btn" onclick="openCommsEditor(${e.id})" style="font-size:.7rem">✏️ Edit</button>` +
+        (canSubmit ? `<button class="action-btn" onclick="submitCommsForReview(${e.id})" style="font-size:.7rem">📤 Submit</button>` : '') +
+        (e.status !== 'pending_review' && e.status !== 'approved' ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem">✅ Posted</button>` : '')
       : '';
     return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div><div class="cal-theme">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)} · ${esc(e.notes||'')}</div></div>
-      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}${postBtn}</div>
+      <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner||e.createdBy||'')} · ${esc(e.notes||'')}</div>${rejected}</div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>
     </div>`;
   }).join('');
+}
+
+// ═══ COMMS CALENDAR GRID + EDITOR ═══════════════════════════════════════════
+let commsViewDate = new Date(); commsViewDate.setDate(1);
+
+function prevCommsMonth() {
+  commsViewDate = new Date(commsViewDate.getFullYear(), commsViewDate.getMonth() - 1, 1);
+  renderCommsMonthGrid();
+}
+function nextCommsMonth() {
+  commsViewDate = new Date(commsViewDate.getFullYear(), commsViewDate.getMonth() + 1, 1);
+  renderCommsMonthGrid();
+}
+
+function renderCommsMonthGrid() {
+  const grid = document.getElementById('comms-month-grid');
+  if (!grid) return;
+  const year  = commsViewDate.getFullYear();
+  const month = commsViewDate.getMonth();
+  const today = new Date();
+
+  const labelEl = document.getElementById('comms-cal-month-label');
+  if (labelEl) labelEl.textContent = new Date(year, month, 1).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+
+  const firstDay    = (new Date(year, month, 1).getDay() + 6) % 7; // 0=Mon
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  const byDate = {};
+  (calData||[]).forEach(e => {
+    const d = new Date(e.date + 'T00:00:00');
+    if (isNaN(d)) return;
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    (byDate[key] = byDate[key] || []).push(e);
+  });
+
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += '<div class="cal-cell empty"></div>';
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = year === today.getFullYear() && month === today.getMonth() && d === today.getDate();
+    const posts = byDate[key] || [];
+
+    const postHtml = posts.map(p =>
+      `<div class="cal-slot" style="cursor:pointer;background:#F0EAFB;color:#5B21B6;border:1px solid #D6C6F5" onclick="event.stopPropagation();openCommsEditor(${p.id})" title="${esc(p.theme)}">${esc((p.theme||'').slice(0,18))}${p.theme && p.theme.length>18?'…':''}</div>`
+    ).join('');
+
+    cells += `<div class="cal-cell${isToday?' today':''}" style="cursor:pointer" onclick="openCommsEditor(null,'${key}')">` +
+      `<div class="cal-day-num">${d}</div>${postHtml}</div>`;
+  }
+  grid.innerHTML = cells;
+}
+
+let commsEditingId = null;
+let commsEditingImageFile = null;
+
+// Pass an id to edit an existing post, or a dateStr (YYYY-MM-DD) to start a
+// new post pre-filled to that date, or neither for a blank new post.
+function openCommsEditor(id, dateStr) {
+  commsEditingImageFile = null;
+  const post = id ? (calData||[]).find(e => e.id === id) : null;
+  commsEditingId = post ? post.id : null;
+
+  document.getElementById('comms-editor-title').textContent = post ? '✏️ Edit Post' : '➕ Add New Post';
+  document.getElementById('cm-id').value = post ? post.id : '';
+  document.getElementById('cm-date').value = post ? post.date : (dateStr || '');
+  document.getElementById('cm-owner').value = post ? (post.owner || post.createdBy || '') : '';
+  document.getElementById('cm-theme').value = post ? post.theme : '';
+  document.getElementById('cm-caption').value = post ? (post.caption || '') : '';
+  document.getElementById('cm-details').value = post ? (post.details || '') : '';
+  document.getElementById('cm-image-file').value = '';
+
+  const preview = document.getElementById('cm-image-preview');
+  preview.innerHTML = post && post.imageUrl ? `<img src="${esc(post.imageUrl)}" style="max-width:160px;border-radius:8px"/>` : '';
+
+  const info = document.getElementById('cm-status-info');
+  const submitBtn = document.getElementById('cm-submit-btn');
+  if (post) {
+    let statusMsg = `Status: <b>${esc((post.status||'').replace(/_/g,' '))}</b>`;
+    if (post.rejectedReason) statusMsg += ` — 💬 TL feedback: ${esc(post.rejectedReason)}`;
+    info.innerHTML = statusMsg;
+    submitBtn.style.display = ['idea','draft','planned'].includes(post.status) ? 'inline-flex' : 'none';
+  } else {
+    info.innerHTML = '';
+    submitBtn.style.display = 'none';
+  }
+
+  document.getElementById('comms-editor').style.display = 'block';
+  document.getElementById('comms-editor').scrollIntoView({behavior:'smooth'});
+}
+
+function closeCommsEditor() {
+  document.getElementById('comms-editor').style.display = 'none';
+  commsEditingId = null;
+  commsEditingImageFile = null;
+}
+
+function previewCommsImage(evt) {
+  const file = evt.target.files[0];
+  commsEditingImageFile = file || null;
+  const preview = document.getElementById('cm-image-preview');
+  if (!file) { preview.innerHTML = ''; return; }
+  const reader = new FileReader();
+  reader.onload = (e) => { preview.innerHTML = `<img src="${e.target.result}" style="max-width:160px;border-radius:8px"/>`; };
+  reader.readAsDataURL(file);
+}
+
+async function saveCommsPost() {
+  const date    = document.getElementById('cm-date').value.trim();
+  const owner   = document.getElementById('cm-owner').value.trim();
+  const theme   = document.getElementById('cm-theme').value.trim();
+  const caption = document.getElementById('cm-caption').value.trim();
+  const details = document.getElementById('cm-details').value.trim();
+
+  if (!theme) { toast('Theme is required', true); return; }
+  if (!date)  { toast('Date is required', true); return; }
+
+  const body = { date, theme, owner, createdBy: owner, caption, details };
+
+  try {
+    const url    = commsEditingId ? `${API}/comms/${commsEditingId}` : `${API}/comms`;
+    const method = commsEditingId ? 'PATCH' : 'POST';
+    const res = await fetch(url, { method, headers: { 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error||'Save failed', true); return; }
+    const saved = await res.json();
+    commsEditingId = saved.id;
+
+    if (commsEditingImageFile) {
+      const fd = new FormData();
+      fd.append('image', commsEditingImageFile);
+      const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
+      if (!imgRes.ok) toast('Post saved, but image upload failed', true);
+    }
+
+    toast(commsEditingId ? '✅ Post saved!' : '✅ Post added!');
+    closeCommsEditor();
+    await loadComms();
+  } catch(e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
+async function submitCommsForReview(id) {
+  const postId = id || commsEditingId;
+  if (!postId) return;
+  if (!confirm('Submit this post for TL review? They\'ll get a preview in the bot to approve or send back.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}/submit`, { method: 'POST' });
+    if (!res.ok) { toast('Submit failed', true); return; }
+    toast('📤 Sent to TLs for review!');
+    closeCommsEditor();
+    await loadComms();
+  } catch(e) {
+    toast('❌ Connection error', true);
+  }
 }
 
 function renderPostedComms() {

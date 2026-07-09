@@ -1,12 +1,14 @@
 'use strict';
 const validator = require('validator');
 
-const MAX_NAME_LEN   = 60;
-const MAX_DATE_LEN   = 40;
-const MAX_REASON_LEN = 300;
-const MAX_THEME_LEN  = 200;
-const MAX_NOTES_LEN  = 500;
-const MAX_OWNER_LEN  = 60;
+const MAX_NAME_LEN    = 60;
+const MAX_DATE_LEN    = 40;
+const MAX_REASON_LEN  = 300;
+const MAX_THEME_LEN   = 200;
+const MAX_NOTES_LEN   = 500;
+const MAX_OWNER_LEN   = 60;
+const MAX_CAPTION_LEN = 2200; // Instagram-length caption
+const MAX_DETAILS_LEN = 1000;
 
 function sanitise(str) {
   if (typeof str !== 'string') return '';
@@ -65,9 +67,10 @@ function validateSwapId(req, res, next) {
   next();
 }
 
-// Validates a comms POST (new entry) — requires theme; owner/notes/date optional
+// Validates a comms POST (new entry) — requires theme; owner/notes/date/
+// caption/details/createdBy optional
 function validateCommsPost(req, res, next) {
-  const { theme, owner, notes, date } = req.body;
+  const { theme, owner, notes, date, caption, details, createdBy } = req.body;
   if (!theme || typeof theme !== 'string' || !theme.trim())
     return res.status(400).json({ error: 'theme is required' });
   if (theme.length > MAX_THEME_LEN)
@@ -78,16 +81,25 @@ function validateCommsPost(req, res, next) {
     return res.status(400).json({ error: `notes must be a string under ${MAX_NOTES_LEN} chars` });
   if (date !== undefined && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())))
     return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  if (caption !== undefined && (typeof caption !== 'string' || caption.length > MAX_CAPTION_LEN))
+    return res.status(400).json({ error: `caption must be a string under ${MAX_CAPTION_LEN} chars` });
+  if (details !== undefined && (typeof details !== 'string' || details.length > MAX_DETAILS_LEN))
+    return res.status(400).json({ error: `details must be a string under ${MAX_DETAILS_LEN} chars` });
+  if (createdBy !== undefined && (typeof createdBy !== 'string' || createdBy.length > MAX_OWNER_LEN))
+    return res.status(400).json({ error: `createdBy must be a string under ${MAX_OWNER_LEN} chars` });
   req.body.theme = sanitise(theme);
-  if (owner !== undefined) req.body.owner = sanitise(owner);
-  if (notes !== undefined) req.body.notes = sanitise(notes);
-  if (date  !== undefined) req.body.date  = date.trim();
+  if (owner     !== undefined) req.body.owner     = sanitise(owner);
+  if (notes     !== undefined) req.body.notes     = sanitise(notes);
+  if (date      !== undefined) req.body.date      = date.trim();
+  if (caption   !== undefined) req.body.caption   = sanitise(caption);
+  if (details   !== undefined) req.body.details   = sanitise(details);
+  if (createdBy !== undefined) req.body.createdBy = sanitise(createdBy);
   next();
 }
 
 // Validates a comms PATCH (status update + optional field edits)
 function validateCommsPatch(req, res, next) {
-  const { theme, owner, notes, date } = req.body;
+  const { theme, owner, notes, date, caption, details } = req.body;
   if (theme !== undefined) {
     if (typeof theme !== 'string' || !theme.trim() || theme.length > MAX_THEME_LEN)
       return res.status(400).json({ error: `theme must be a non-empty string under ${MAX_THEME_LEN} chars` });
@@ -107,6 +119,16 @@ function validateCommsPatch(req, res, next) {
     if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim()))
       return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
     req.body.date = date.trim();
+  }
+  if (caption !== undefined) {
+    if (typeof caption !== 'string' || caption.length > MAX_CAPTION_LEN)
+      return res.status(400).json({ error: `caption must be a string under ${MAX_CAPTION_LEN} chars` });
+    req.body.caption = sanitise(caption);
+  }
+  if (details !== undefined) {
+    if (typeof details !== 'string' || details.length > MAX_DETAILS_LEN)
+      return res.status(400).json({ error: `details must be a string under ${MAX_DETAILS_LEN} chars` });
+    req.body.details = sanitise(details);
   }
   next();
 }
