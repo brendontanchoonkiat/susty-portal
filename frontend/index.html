@@ -129,6 +129,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .cal-item.status-idea{border-left-color:var(--br)}
 .cal-item.status-pending_review{border-left-color:#7C3AED}
 .cal-item.status-approved{border-left-color:#1E40AF}
+.cal-item.status-needs_changes{border-left-color:#C62828}
 .cal-date{font-size:.72rem;color:var(--tm);line-height:1.4}
 .cal-date strong{display:block;font-size:1rem;color:var(--gd);font-weight:700}
 .cal-theme{font-size:.88rem;font-weight:600}
@@ -140,6 +141,7 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .status-posted{background:#D4EDDA;color:#155724}
 .status-pending_review{background:#EDE3FB;color:#5B21B6}
 .status-approved{background:#DBEAFE;color:#1E40AF}
+.status-needs_changes{background:#FDE2E2;color:#C62828}
 .badge-pending{background:#FFEBEE;color:#C62828}
 .badge-posted{background:#D4EDDA;color:#155724}
 .cal-item.past-pending{border-left-color:#E57373;background:#FFF8F8}
@@ -475,11 +477,16 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <input type="hidden" id="cm-id"/>
     <div class="form-row">
       <div class="form-field"><label>Date</label><input type="date" id="cm-date"/></div>
-      <div class="form-field"><label>Planned by</label><input type="text" id="cm-owner" placeholder="Your name"/></div>
+      <div class="form-field"><label>Filled in by (your name)</label><input type="text" id="cm-owner" placeholder="Your name"/></div>
     </div>
     <div class="form-field" style="margin-bottom:12px">
       <label>Theme / title</label>
       <input type="text" id="cm-theme" placeholder="e.g. Plastic-Free July kickoff"/>
+    </div>
+    <div class="form-field" style="margin-bottom:12px">
+      <label>Tag member(s) to fill this in</label>
+      <div class="tag-input-wrap" id="cm-assignee-tags" onclick="document.getElementById('cm-assignee-input').focus()"></div>
+      <input class="tag-input" id="cm-assignee-input" placeholder="Type a name and press Enter…" onkeydown="handleCommsTagKey(event)"/>
     </div>
     <div class="form-field" style="margin-bottom:12px">
       <label>Caption (the actual post copy)</label>
@@ -524,6 +531,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <button class="btn btn-outline btn-sm" onclick="filterCal('draft')">✏️ Draft</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('idea')">💡 Ideas</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('pending_review')">📤 Pending Review</button>
+    <button class="btn btn-outline btn-sm" onclick="filterCal('needs_changes')">💬 Needs Changes</button>
     <button class="btn btn-outline btn-sm" onclick="filterCal('approved')">✅ Approved</button>
   </div>
   <div class="cal-grid" id="comms-cal"><div class="loading">Loading…</div></div>
@@ -1472,8 +1480,9 @@ function renderCommsCalendar(filter, containerId, opts={}) {
       ? `<span class="status-tag badge-pending">⚠️ pending</span>`
       : `<span class="status-tag status-${esc(e.status)}">${esc((e.status||'').replace(/_/g,' '))}</span>`;
     const thumb = e.imageUrl ? `<img src="${esc(e.imageUrl)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;margin-right:8px;vertical-align:middle"/>` : '';
-    const rejected = e.rejectedReason ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
-    const canSubmit = showActions && ['idea','draft','planned'].includes(e.status);
+    const rejected = (e.rejectedReason && e.status === 'needs_changes') ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
+    const canSubmit = showActions && ['idea','draft','planned','needs_changes'].includes(e.status);
+    const who = (Array.isArray(e.assignees) && e.assignees.length) ? e.assignees.join(', ') : (e.owner||e.createdBy||'');
     const btns = showActions
       ? `<button class="action-btn" onclick="openCommsEditor(${e.id})" style="font-size:.7rem">✏️ Edit</button>` +
         (canSubmit ? `<button class="action-btn" onclick="submitCommsForReview(${e.id})" style="font-size:.7rem">📤 Submit</button>` : '') +
@@ -1481,7 +1490,7 @@ function renderCommsCalendar(filter, containerId, opts={}) {
       : '';
     return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner||e.createdBy||'')} · ${esc(e.notes||'')}</div>${rejected}</div>
+      <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(who)} · ${esc(e.notes||'')}</div>${rejected}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>
     </div>`;
   }).join('');
@@ -1540,6 +1549,7 @@ function renderCommsMonthGrid() {
 
 let commsEditingId = null;
 let commsEditingImageFile = null;
+let commsAssigneeTags = [];
 
 // Pass an id to edit an existing post, or a dateStr (YYYY-MM-DD) to start a
 // new post pre-filled to that date, or neither for a blank new post.
@@ -1547,11 +1557,13 @@ function openCommsEditor(id, dateStr) {
   commsEditingImageFile = null;
   const post = id ? (calData||[]).find(e => e.id === id) : null;
   commsEditingId = post ? post.id : null;
+  commsAssigneeTags = post && Array.isArray(post.assignees) ? [...post.assignees] : [];
+  renderCommsAssigneeTags();
 
   document.getElementById('comms-editor-title').textContent = post ? '✏️ Edit Post' : '➕ Add New Post';
   document.getElementById('cm-id').value = post ? post.id : '';
   document.getElementById('cm-date').value = post ? post.date : (dateStr || '');
-  document.getElementById('cm-owner').value = post ? (post.owner || post.createdBy || '') : '';
+  document.getElementById('cm-owner').value = post ? (post.createdBy || '') : '';
   document.getElementById('cm-theme').value = post ? post.theme : '';
   document.getElementById('cm-caption').value = post ? (post.caption || '') : '';
   document.getElementById('cm-details').value = post ? (post.details || '') : '';
@@ -1564,9 +1576,9 @@ function openCommsEditor(id, dateStr) {
   const submitBtn = document.getElementById('cm-submit-btn');
   if (post) {
     let statusMsg = `Status: <b>${esc((post.status||'').replace(/_/g,' '))}</b>`;
-    if (post.rejectedReason) statusMsg += ` — 💬 TL feedback: ${esc(post.rejectedReason)}`;
+    if (post.rejectedReason && post.status === 'needs_changes') statusMsg += ` — 💬 TL feedback: ${esc(post.rejectedReason)}`;
     info.innerHTML = statusMsg;
-    submitBtn.style.display = ['idea','draft','planned'].includes(post.status) ? 'inline-flex' : 'none';
+    submitBtn.style.display = ['idea','draft','planned','needs_changes'].includes(post.status) ? 'inline-flex' : 'none';
   } else {
     info.innerHTML = '';
     submitBtn.style.display = 'none';
@@ -1580,6 +1592,36 @@ function closeCommsEditor() {
   document.getElementById('comms-editor').style.display = 'none';
   commsEditingId = null;
   commsEditingImageFile = null;
+  commsAssigneeTags = [];
+}
+
+function handleCommsTagKey(e) {
+  if ((e.key === 'Enter' || e.key === ',') && e.target.value.trim()) {
+    e.preventDefault();
+    addCommsAssignee(e.target.value.trim());
+    e.target.value = '';
+  } else if (e.key === 'Backspace' && !e.target.value && commsAssigneeTags.length) {
+    removeCommsAssignee(commsAssigneeTags.length - 1);
+  }
+}
+
+function addCommsAssignee(name) {
+  if (commsAssigneeTags.includes(name) || commsAssigneeTags.length >= 10) return;
+  commsAssigneeTags.push(name);
+  renderCommsAssigneeTags();
+}
+
+function removeCommsAssignee(idx) {
+  commsAssigneeTags.splice(idx, 1);
+  renderCommsAssigneeTags();
+}
+
+function renderCommsAssigneeTags() {
+  const wrap = document.getElementById('cm-assignee-tags');
+  if (!wrap) return;
+  wrap.innerHTML = commsAssigneeTags.map((t,i) =>
+    `<span class="member-tag">${esc(t)}<button onclick="removeCommsAssignee(${i})" type="button">×</button></span>`
+  ).join('');
 }
 
 function previewCommsImage(evt) {
@@ -1602,7 +1644,7 @@ async function saveCommsPost() {
   if (!theme) { toast('Theme is required', true); return; }
   if (!date)  { toast('Date is required', true); return; }
 
-  const body = { date, theme, owner, createdBy: owner, caption, details };
+  const body = { date, theme, createdBy: owner, caption, details, assignees: commsAssigneeTags };
 
   try {
     const url    = commsEditingId ? `${API}/comms/${commsEditingId}` : `${API}/comms`;
@@ -1632,8 +1674,10 @@ async function submitCommsForReview(id) {
   if (!postId) return;
   if (!confirm('Submit this post for TL review? They\'ll get a preview in the bot to approve or send back.')) return;
   try {
-    const res = await fetch(`${API}/comms/${postId}/submit`, { method: 'POST' });
-    if (!res.ok) { toast('Submit failed', true); return; }
+    const res = await fetch(`${API}/comms/${postId}/submit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Submit failed', true); return; }
     toast('📤 Sent to TLs for review!');
     closeCommsEditor();
     await loadComms();

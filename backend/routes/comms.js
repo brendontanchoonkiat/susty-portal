@@ -9,11 +9,13 @@ const { getClient } = require('../utils/supabase');
 const db = require('../utils/supabase');
 
 const COMMS_FILE = path.join(__dirname, '../data/comms.json');
-// Planning flow: idea/draft/planned -> pending_review (member submitted) ->
-// approved (TL ok'd it) -> posted (TL posted it via the bot). `archived` can
-// be applied any time. Reject sends a post back to 'draft' with
-// rejected_reason set — see extend_comms_posts_for_planning.sql.
-const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'approved', 'posted', 'archived'];
+// Planning flow: idea/draft/planned -> pending_review (member pushed it to
+// the TLs) -> approved (TL ok'd it) -> posted (TL posted it via the bot).
+// `needs_changes` is the comment-loop state: TL sent feedback instead of a
+// hard reject — the post stays linked, the member edits and pushes again
+// (back to pending_review), no need to start over. `archived` can be applied
+// any time. See extend_comms_posts_for_planning.sql / extend_comms_posts_v2.sql.
+const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -69,12 +71,14 @@ function fromDbRow(row) {
     caption: row.caption || '', details: row.details || '',
     imageUrl: row.image_url || null,
     createdBy: row.created_by || '',
+    assignees: row.assignees || [],
     rejectedReason: row.rejected_reason || null,
-    ...(row.posted_at    ? { postedAt: row.posted_at }       : {}),
-    ...(row.submitted_at ? { submittedAt: row.submitted_at } : {}),
-    ...(row.approved_by  ? { approvedBy: row.approved_by }   : {}),
-    ...(row.approved_at  ? { approvedAt: row.approved_at }   : {}),
-    ...(row.posted_by    ? { postedBy: row.posted_by }       : {}),
+    ...(row.posted_at              ? { postedAt: row.posted_at }               : {}),
+    ...(row.submitted_at           ? { submittedAt: row.submitted_at }         : {}),
+    ...(row.approved_by            ? { approvedBy: row.approved_by }           : {}),
+    ...(row.approved_at            ? { approvedAt: row.approved_at }           : {}),
+    ...(row.posted_by              ? { postedBy: row.posted_by }               : {}),
+    ...(row.scheduled_post_time    ? { scheduledPostTime: row.scheduled_post_time } : {}),
   };
 }
 
@@ -117,22 +121,32 @@ router.get('/upcoming', async (_req, res) => {
 router.post('/',
   validateCommsPost,
   async (req, res) => {
-    const { theme, owner, notes, date, caption, details, createdBy, status } = req.body;
+    const { theme, owner, notes, date, caption, details, createdBy, status, assignees } = req.body;
+    const cleanAssignees = Array.isArray(assignees) ? assignees : [];
     const entry = {
       date:       date   || '',
       theme:      theme,
-      owner:      owner  || createdBy || '',
+      // `owner` stays as a display fallback for older UI bits — derived from
+      // assignees when tagging is used, otherwise whoever filled the form in.
+      owner:      owner || cleanAssignees.join(', ') || createdBy || '',
       notes:      notes  || '',
       caption:    caption || '',
       details:    details || '',
       created_by: createdBy || owner || '',
+      assignees:  cleanAssignees,
       status:     VALID_STATUS.includes(status) ? status : 'draft',
     };
 
     const dbc = getClient();
     if (dbc) {
       const { data, error } = await dbc.from('comms_posts').insert(entry).select().single();
-      if (!error) return res.status(201).json(fromDbRow(data));
+      if (!error) {
+        if (cleanAssignees.length) {
+          try { await require('../utils/commsNotify').notifyAssigneesTagged(data); }
+          catch (err) { console.warn('[Comms] Failed to notify assignees of tagging:', err.message); }
+        }
+        return res.status(201).json(fromDbRow(data));
+      }
       console.warn('[Comms] Supabase insert failed, falling back to local file:', error.message);
     }
 
@@ -166,7 +180,9 @@ router.post('/:id/image', upload.single('image'), async (req, res) => {
 
 // POST /:id/submit — member pushes their (self-checked) post to the TLs for
 // review. Sets status to pending_review and DMs every TL a preview with
-// Approve/Reject buttons via the bot.
+// Approve/Request Changes buttons via the bot. Works from any pre-review
+// status (idea/draft/planned) and also from needs_changes (the comment-loop
+// re-submit after editing).
 router.post('/:id/submit', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
@@ -175,9 +191,12 @@ router.post('/:id/submit', async (req, res) => {
   if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
 
   const { data, error } = await dbc.from('comms_posts')
-    .update({ status: 'pending_review', submitted_at: new Date().toISOString(), rejected_reason: null })
+    .update({ status: 'pending_review', submitted_at: new Date().toISOString() })
     .eq('id', id).select().single();
-  if (error) return res.status(404).json({ error: 'Post not found' });
+  if (error) {
+    console.warn('[Comms] Submit update failed:', error.message);
+    return res.status(404).json({ error: error.message || 'Post not found' });
+  }
 
   try {
     const { notifyTLsSubmitted } = require('../utils/commsNotify');
@@ -195,7 +214,7 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 
-  const { status, theme, owner, notes, date, caption, details } = req.body;
+  const { status, theme, owner, notes, date, caption, details, assignees } = req.body;
   if (status !== undefined && !VALID_STATUS.includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
@@ -207,18 +226,28 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
     // so a reverted post doesn't carry a stale "posted" timestamp.
     patch.posted_at = status === 'posted' ? new Date().toISOString() : null;
   }
-  if (theme   !== undefined) patch.theme   = theme;
-  if (owner   !== undefined) patch.owner   = owner;
-  if (notes   !== undefined) patch.notes   = notes;
-  if (date    !== undefined) patch.date    = date;
-  if (caption !== undefined) patch.caption = caption;
-  if (details !== undefined) patch.details = details;
+  if (theme     !== undefined) patch.theme     = theme;
+  if (owner     !== undefined) patch.owner     = owner;
+  if (notes     !== undefined) patch.notes     = notes;
+  if (date      !== undefined) patch.date      = date;
+  if (caption   !== undefined) patch.caption   = caption;
+  if (details   !== undefined) patch.details   = details;
+  if (assignees !== undefined) patch.assignees = assignees;
 
   const dbc = getClient();
   if (dbc) {
     const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
-    if (!error && data) return res.json(fromDbRow(data));
-    if (error && error.code !== 'PGRST116') console.warn('[Comms] Supabase update failed, falling back to local file:', error.message);
+    if (!error && data) {
+      if (assignees !== undefined) {
+        try { await require('../utils/commsNotify').notifyAssigneesTagged(data); }
+        catch (err) { console.warn('[Comms] Failed to notify assignees of tagging:', err.message); }
+      }
+      return res.json(fromDbRow(data));
+    }
+    if (error) {
+      console.warn('[Comms] Supabase update failed, falling back to local file:', error.message);
+      if (error.code !== 'PGRST116') return res.status(400).json({ error: error.message });
+    }
   }
 
   // Local-file fallback
@@ -230,12 +259,13 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
     if (status === 'posted') entry.postedAt = new Date().toISOString();
     else delete entry.postedAt;
   }
-  if (theme   !== undefined) entry.theme   = theme;
-  if (owner   !== undefined) entry.owner   = owner;
-  if (notes   !== undefined) entry.notes   = notes;
-  if (date    !== undefined) entry.date    = date;
-  if (caption !== undefined) entry.caption = caption;
-  if (details !== undefined) entry.details = details;
+  if (theme     !== undefined) entry.theme     = theme;
+  if (owner     !== undefined) entry.owner     = owner;
+  if (notes     !== undefined) entry.notes     = notes;
+  if (date      !== undefined) entry.date      = date;
+  if (caption   !== undefined) entry.caption   = caption;
+  if (details   !== undefined) entry.details   = details;
+  if (assignees !== undefined) entry.assignees = assignees;
   saveCommsFile(comms);
   res.json(entry);
 });

@@ -62,9 +62,20 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '10kb', strict: true }));
+// Comms image upload (POST /api/comms/:id/image) is multipart/form-data,
+// not JSON — everything else on POST/PATCH/PUT still has to be JSON. Without
+// this exception the strict check below 415'd every image upload before it
+// ever reached multer (found 9 Jul 2026 while wiring up the comms planning
+// calendar).
+const MULTIPART_ROUTES = [/^\/api\/comms\/\d+\/image$/];
 app.use((req, res, next) => {
-  if (['POST','PATCH','PUT'].includes(req.method) && !(req.headers['content-type'] || '').includes('application/json'))
-    return res.status(415).json({ error: 'Content-Type must be application/json' });
+  if (['POST','PATCH','PUT'].includes(req.method)) {
+    const ct = req.headers['content-type'] || '';
+    const isMultipartRoute = MULTIPART_ROUTES.some(re => re.test(req.path));
+    if (isMultipartRoute && ct.includes('multipart/form-data')) return next();
+    if (!ct.includes('application/json'))
+      return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
   next();
 });
 

@@ -28,7 +28,12 @@ function startReminderCron(bot) {
     await sendCommsReminders(bot);
   }, { timezone: 'UTC' });
 
-  console.log('[Reminders] Cron scheduled: daily at 09:00 SGT');
+  // Every 5 minutes — checks for comms posts whose TL-scheduled "time to
+  // post" has arrived. Much finer-grained than the daily digest above,
+  // since a TL might pick e.g. 6:30pm for a specific post.
+  cron.schedule('*/5 * * * *', () => checkScheduledCommsPosts(bot));
+
+  console.log('[Reminders] Cron scheduled: daily at 09:00 SGT, comms schedule check every 5 min');
 }
 
 // TLs who get birthday heads-up DMs (same list the bot uses for admin access)
@@ -254,33 +259,47 @@ async function sendCommsReminders(bot) {
   const supa = db.getClient();
   if (!supa) return;
 
-  const today    = new Date(); today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const today     = new Date(); today.setHours(0, 0, 0, 0);
+  const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const in2Days   = new Date(today); in2Days.setDate(today.getDate() + 2);
   const fmt = (d) => d.toISOString().split('T')[0];
 
   const { data: posts } = await supa.from('comms_posts')
     .select('*')
-    .in('status', ['idea', 'draft', 'planned', 'pending_review', 'approved'])
+    .in('status', ['idea', 'draft', 'planned', 'pending_review', 'needs_changes', 'approved'])
     .gte('date', fmt(today));
   if (!posts?.length) return;
 
-  // 1. Owner nudge
-  const needsSubmit = posts.filter(p => p.date === fmt(tomorrow) && ['idea', 'draft', 'planned'].includes(p.status));
-  for (const p of needsSubmit) {
-    const ownerName = p.created_by || p.owner;
-    const id = await commsNotify.getTelegramIdForName(ownerName);
-    if (!id) continue;
-    try {
-      await bot.api.sendMessage(id,
-        `⏰ <b>Comms reminder</b>\n\n📅 "${p.theme}" is scheduled for tomorrow (${commsNotify.fmtDate(p.date)}) but hasn't been submitted for review yet.\n\n` +
-        `Finish it up in the portal Comms tab and tap Submit for Review.`,
-        { parse_mode: 'HTML' }
-      );
-      console.log(`[Reminders] Sent comms submit-nudge to ${ownerName}`);
-    } catch (err) {
-      console.warn(`[Reminders] Comms nudge to ${ownerName} failed:`, err.message);
+  // 1. Assignee nudge — post is due in 2 days OR tomorrow and still hasn't
+  // been pushed to the TLs (idea/draft/planned), or is sitting in
+  // needs_changes waiting on the member to edit and re-submit. Mirrors the
+  // duty reminder's 5-day/1-day pattern, compressed to 2-day/1-day since
+  // comms posts are usually planned closer to the date.
+  const needsAction = posts.filter(p =>
+    (p.date === fmt(tomorrow) || p.date === fmt(in2Days)) &&
+    ['idea', 'draft', 'planned', 'needs_changes'].includes(p.status)
+  );
+  for (const p of needsAction) {
+    const daysOut = p.date === fmt(tomorrow) ? 1 : 2;
+    const names = commsNotify.recipientNames(p);
+    const action = p.status === 'needs_changes'
+      ? `still has TL feedback to address${p.rejected_reason ? ` — "${p.rejected_reason}"` : ''}`
+      : `hasn't been submitted for review yet`;
+    const msg =
+      `⏰ <b>Comms reminder — ${daysOut} day${daysOut > 1 ? 's' : ''} to go!</b>\n\n` +
+      `📅 "${p.theme}" is scheduled for ${commsNotify.fmtDate(p.date)} but ${action}.\n\n` +
+      `Finish it up in the portal Comms tab and tap Submit for Review.`;
+    for (const name of names) {
+      const id = await commsNotify.getTelegramIdForName(name);
+      if (!id) continue;
+      try {
+        await bot.api.sendMessage(id, msg, { parse_mode: 'HTML' });
+        console.log(`[Reminders] Sent comms nudge (${daysOut}d) to ${name}`);
+      } catch (err) {
+        console.warn(`[Reminders] Comms nudge to ${name} failed:`, err.message);
+      }
+      await new Promise(r => setTimeout(r, 200));
     }
-    await new Promise(r => setTimeout(r, 200));
   }
 
   // 2. TL nudge — pending approvals
@@ -299,8 +318,10 @@ async function sendCommsReminders(bot) {
     }
   }
 
-  // 3. TL nudge — ready to post
-  const readyToPost = posts.filter(p => p.status === 'approved' && (p.date === fmt(today) || p.date === fmt(tomorrow)));
+  // 3. TL nudge — approved posts due in 2 days, tomorrow, or today, ready to publish
+  const readyToPost = posts.filter(p =>
+    p.status === 'approved' && (p.date === fmt(today) || p.date === fmt(tomorrow) || p.date === fmt(in2Days))
+  );
   if (readyToPost.length) {
     const lines = readyToPost.map(p => `  • ${commsNotify.fmtDate(p.date)} — ${p.theme}`).join('\n');
     const msg = `📮 <b>Comms — Ready to Post</b>\n\n${lines}\n\nOpen the bot's 📢 Comms menu → Ready to Post, publish it, then tap Mark as Posted.`;
@@ -316,4 +337,60 @@ async function sendCommsReminders(bot) {
   }
 }
 
-module.exports = { startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders, sendCommsReminders };
+/**
+ * Fires the exact-time "post now" ping for comms posts a TL scheduled via
+ * the bot's ⏰ Schedule Reminder flow (comms_posts.scheduled_post_time).
+ * Runs every 5 minutes (see startReminderCron); picks up anything whose
+ * scheduled time has passed in the last 10 minutes and hasn't been pinged
+ * yet (scheduled_reminder_sent guards against re-firing every tick).
+ * DMs whoever approved the post (falls back to all TLs) with a one-tap
+ * "✅ Mark as Posted" button — the bot never auto-publishes to social media,
+ * this is purely the reminder + confirmation step.
+ */
+async function checkScheduledCommsPosts(bot) {
+  const supa = db.getClient();
+  if (!supa) return;
+
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - 10 * 60 * 1000); // last 10 min, matches the 5-min poll with overlap
+
+  const { data: due } = await supa.from('comms_posts')
+    .select('*')
+    .eq('status', 'approved')
+    .eq('scheduled_reminder_sent', false)
+    .not('scheduled_post_time', 'is', null)
+    .lte('scheduled_post_time', now.toISOString())
+    .gte('scheduled_post_time', windowStart.toISOString());
+
+  if (!due?.length) return;
+
+  for (const p of due) {
+    const kb = new InlineKeyboard().text('✅ Mark as Posted', `comms:markposted:${p.id}`);
+    const msg =
+      `🔔 <b>Time to post!</b>\n\n📅 ${commsNotify.fmtDate(p.date)}\n📝 ${p.theme}\n\n` +
+      `Publish it now, then tap the button below once it's live.`;
+
+    const approverName = p.approved_by;
+    const recipients = approverName ? [approverName] : (await commsNotify.getTLTelegramIds()).map(t => t.name);
+
+    for (const name of recipients) {
+      const id = await commsNotify.getTelegramIdForName(name);
+      if (!id) continue;
+      try {
+        if (p.image_url) await bot.api.sendPhoto(id, p.image_url, { caption: msg, parse_mode: 'HTML', reply_markup: kb });
+        else await bot.api.sendMessage(id, msg, { parse_mode: 'HTML', reply_markup: kb });
+        console.log(`[Reminders] Sent scheduled post-time ping for post ${p.id} to ${name}`);
+      } catch (err) {
+        console.warn(`[Reminders] Scheduled comms ping to ${name} failed:`, err.message);
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    await supa.from('comms_posts').update({ scheduled_reminder_sent: true }).eq('id', p.id);
+  }
+}
+
+module.exports = {
+  startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders,
+  sendCommsReminders, checkScheduledCommsPosts,
+};

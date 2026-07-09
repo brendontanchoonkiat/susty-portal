@@ -138,7 +138,8 @@ bot.use(session({
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
     // Comms post review (added for portal planning calendar workflow)
-    awaitingCommsReject:   null,   // comms_posts id: TL is typing feedback to send back to the owner
+    awaitingCommsReject:      null,  // comms_posts id: TL is typing feedback to send back to the tagged member(s)
+    awaitingCommsScheduleTime: null, // comms_posts id: TL is typing a time-of-day for the scheduled "time to post" ping
     // GPC W2R Check-in (one-off, added 8 Jul 2026)
     pendingGpcCheckin:         null,  // { ministry_status, other_ministry?, duration?, arrival_note? } — staged until final save
     awaitingGpcOtherMinistry:  false, // waiting for free-text ministry name after "Also another ministry" tap
@@ -914,19 +915,22 @@ bot.callbackQuery('menu:comms', async (ctx) => {
     ).catch(() => ctx.reply('📢 <b>Comms</b>', { parse_mode: 'HTML', reply_markup: kb }));
   }
 
-  // Regular member — show what's waiting on them (created via the portal)
+  // Regular member — show what's waiting on them: tagged as an assignee, OR
+  // (for older posts / self-proposed ones) named as owner/created_by.
   let mine = [];
   if (supa) {
     const { data } = await supa.from('comms_posts').select('*')
-      .or(`created_by.eq.${name},owner.eq.${name}`)
-      .in('status', ['draft', 'pending_review'])
+      .in('status', ['draft', 'pending_review', 'needs_changes'])
       .order('date');
-    mine = data || [];
+    mine = (data || []).filter(p =>
+      (Array.isArray(p.assignees) && p.assignees.includes(name)) ||
+      p.created_by === name || p.owner === name
+    );
   }
   const lines = mine.length
     ? mine.map(p =>
         `• ${fmtDateShort(p.date)} — ${p.theme} <i>(${commsStatusLabel(p.status)})</i>` +
-        (p.rejected_reason ? `\n   💬 ${p.rejected_reason}` : '')
+        (p.rejected_reason && p.status === 'needs_changes' ? `\n   💬 ${p.rejected_reason}` : '')
       ).join('\n')
     : 'Nothing pending right now.';
   return ctx.editMessageText(
@@ -975,6 +979,38 @@ bot.callbackQuery('menu:commspost', async (ctx) => {
 // whatever state the post is currently in. Sent as a fresh message (rather
 // than edited in place) since the list message may be text-only but the
 // preview may need to become a photo message.
+function commsAssigneeLine(p) {
+  const names = Array.isArray(p.assignees) && p.assignees.length ? p.assignees.join(', ') : (p.created_by || p.owner || '—');
+  return `👤 Tagged: ${names}`;
+}
+
+// Singapore-local "is this post's date today" check — the bot/Railway run in
+// UTC, so this can't just compare against `new Date()` directly.
+function isPostDateTodaySGT(dateStr) {
+  const nowSGT = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  const todaySGT = nowSGT.toISOString().split('T')[0];
+  return dateStr === todaySGT;
+}
+
+// Parses free-typed times like "6pm", "6:30pm", "18:30" — returns {hour,min}
+// in 24h, or null if unparseable.
+function parseTimeOfDay(text) {
+  const m = text.trim().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const ampm = m[3] ? m[3].toLowerCase() : null;
+  if (min > 59) return null;
+  if (ampm) {
+    if (hour < 1 || hour > 12) return null;
+    if (ampm === 'pm' && hour < 12) hour += 12;
+    if (ampm === 'am' && hour === 12) hour = 0;
+  } else if (hour > 23) {
+    return null;
+  }
+  return { hour, min };
+}
+
 bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   if (!(await isTLForGating(ctx))) return;
@@ -987,13 +1023,15 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
     `📅 <b>${fmtDateShort(p.date)}</b>\n📝 <b>${p.theme}</b>\n` +
     (p.caption ? `\n"${p.caption}"\n` : '') +
     (p.details ? `\n🗒 ${p.details}\n` : '') +
-    `\n👤 Planned by: ${p.created_by || p.owner || '—'}\n📌 Status: ${commsStatusLabel(p.status)}`;
+    `\n${commsAssigneeLine(p)}\n📌 Status: ${commsStatusLabel(p.status)}`;
 
   let kb;
   if (p.status === 'pending_review') {
-    kb = new InlineKeyboard().text('✅ Approve', `comms:approve:${p.id}`).text('✖️ Reject', `comms:reject:${p.id}`);
+    kb = new InlineKeyboard().text('✅ Approve', `comms:approve:${p.id}`).text('💬 Request Changes', `comms:requestchanges:${p.id}`);
   } else if (p.status === 'approved') {
-    kb = new InlineKeyboard().text('✅ Mark as Posted', `comms:markposted:${p.id}`);
+    kb = new InlineKeyboard()
+      .text('▶️ Post Now', `comms:postnow:${p.id}`).row()
+      .text('⏰ Schedule Reminder Time', `comms:schedule:${p.id}`);
   } else {
     kb = backToCommsKb();
   }
@@ -1014,26 +1052,49 @@ bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
   if (!supa) return ctx.reply('⚠️ Supabase not configured.');
 
   const { data: p, error } = await supa.from('comms_posts')
-    .update({ status: 'approved', approved_by: name, approved_at: new Date().toISOString(), rejected_reason: null })
+    .update({ status: 'approved', approved_by: name, approved_at: new Date().toISOString() })
     .eq('id', id).select().single();
   if (error || !p) return ctx.reply('⚠️ Could not approve — post may no longer exist.');
 
-  const doneMsg = `✅ Approved by ${name}.`;
-  await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
-    .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
-    .catch(() => ctx.reply(doneMsg));
-  commsNotify.notifyOwnerApproved(p).catch(() => {});
+  commsNotify.notifyAssigneesApproved(p).catch(() => {});
+
+  // If it's already the post's date, offer to post right now instead of
+  // waiting for a reminder; otherwise it just sits as approved and the daily
+  // digest (or a TL-scheduled time) will prompt on the day.
+  if (isPostDateTodaySGT(p.date)) {
+    const doneMsg = `✅ Approved by ${name}. It's scheduled for today — post it whenever you're ready.`;
+    const kb = new InlineKeyboard().text('▶️ Post Now', `comms:postnow:${p.id}`);
+    await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
+      .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
+      .catch(() => {});
+    await ctx.reply('When it\'s live:', { reply_markup: kb });
+  } else {
+    const doneMsg = `✅ Approved by ${name}. You'll get a reminder closer to ${fmtDateShort(p.date)} to post it — or tap below to pick an exact time now.`;
+    const kb = new InlineKeyboard().text('⏰ Schedule Reminder Time', `comms:schedule:${p.id}`);
+    await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
+      .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
+      .catch(() => ctx.reply(doneMsg));
+    await ctx.reply('Want a specific reminder time?', { reply_markup: kb }).catch(() => {});
+  }
 });
 
-bot.callbackQuery(/^comms:reject:(\d+)$/, async (ctx) => {
+bot.callbackQuery(/^comms:requestchanges:(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   ctx.session.awaitingCommsReject = id;
-  await ctx.reply('✖️ What should change? Type your feedback — this gets sent straight to whoever planned it.');
+  await ctx.reply('💬 What should change? Type your feedback — this gets sent straight to whoever\'s tagged on it, and the post stays linked so they can just edit and re-send (no need to start over).');
 });
 
-bot.callbackQuery(/^comms:markposted:(\d+)$/, async (ctx) => {
+bot.callbackQuery(/^comms:schedule:(\d+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
+  const id = Number(ctx.match[1]);
+  ctx.session.awaitingCommsScheduleTime = id;
+  await ctx.reply('⏰ What time should I remind you to post this (Singapore time)? e.g. <code>6:30pm</code> or <code>18:30</code>.', { parse_mode: 'HTML' });
+});
+
+bot.callbackQuery(/^comms:(?:markposted|postnow):(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   if (!(await isTLForGating(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
@@ -2501,6 +2562,7 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
     await reminders.sendDutyReminders(bot);
     await reminders.sendBirthdayReminders(bot);
     if (reminders.sendCommsReminders) await reminders.sendCommsReminders(bot);
+    if (reminders.checkScheduledCommsPosts) await reminders.checkScheduledCommsPosts(bot);
     const doneMsg =
       `✅ <b>Test run complete.</b>\n\n` +
       `This only sends to members who actually have a slot exactly 5 or 1 day from today, ` +
@@ -2719,23 +2781,57 @@ bot.on('message:text', async (ctx) => {
       ctx.session.awaitingCommsReject = null;
       return ctx.reply('Cancelled — post left as-is.');
     }
+    if (ctx.session.awaitingCommsScheduleTime) {
+      ctx.session.awaitingCommsScheduleTime = null;
+      return ctx.reply('Cancelled — no reminder time set.');
+    }
   }
 
-  // Comms: TL is typing feedback after tapping "Reject" on a pending post
+  // Comms: TL is typing feedback after tapping "Request Changes" on a
+  // pending post — comment loop, not a hard reject: status goes to
+  // needs_changes (post stays linked) rather than back to draft.
   if (ctx.session.awaitingCommsReject) {
     const id = ctx.session.awaitingCommsReject;
     ctx.session.awaitingCommsReject = null;
-    const name = await resolveName(ctx);
     const supa = db.getClient();
     if (!supa) return ctx.reply('⚠️ Supabase not configured.');
 
     const { data: p, error } = await supa.from('comms_posts')
-      .update({ status: 'draft', rejected_reason: text, submitted_at: null })
+      .update({ status: 'needs_changes', rejected_reason: text })
       .eq('id', id).select().single();
     if (error || !p) return ctx.reply('⚠️ Could not update — post may no longer exist.');
 
-    await ctx.reply(`✖️ Sent back to ${p.created_by || p.owner || 'the owner'} with your feedback.`);
-    commsNotify.notifyOwnerRejected(p, text).catch(() => {});
+    const who = Array.isArray(p.assignees) && p.assignees.length ? p.assignees.join(', ') : (p.created_by || p.owner || 'the owner');
+    await ctx.reply(`💬 Sent back to ${who} with your feedback.`);
+    commsNotify.notifyAssigneesChangesRequested(p, text).catch(() => {});
+    return;
+  }
+
+  // Comms: TL is typing a time-of-day for the scheduled "time to post" ping
+  if (ctx.session.awaitingCommsScheduleTime) {
+    const id = ctx.session.awaitingCommsScheduleTime;
+    const parsed = parseTimeOfDay(text);
+    if (!parsed) {
+      return ctx.reply('⚠️ Couldn\'t read that time. Try something like <code>6:30pm</code> or <code>18:30</code>.', { parse_mode: 'HTML' });
+    }
+    ctx.session.awaitingCommsScheduleTime = null;
+    const supa = db.getClient();
+    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
+
+    const { data: p } = await supa.from('comms_posts').select('date').eq('id', id).single();
+    if (!p) return ctx.reply('⚠️ Post not found — it may have been edited or deleted.');
+
+    const pad = (n) => String(n).padStart(2, '0');
+    const scheduledAt = new Date(`${p.date}T${pad(parsed.hour)}:${pad(parsed.min)}:00+08:00`);
+
+    const { error } = await supa.from('comms_posts')
+      .update({ scheduled_post_time: scheduledAt.toISOString(), scheduled_reminder_sent: false })
+      .eq('id', id);
+    if (error) return ctx.reply('⚠️ Could not save that time.');
+
+    const displayHour = parsed.hour % 12 === 0 ? 12 : parsed.hour % 12;
+    const ampmLabel = parsed.hour < 12 ? 'am' : 'pm';
+    await ctx.reply(`⏰ Got it — I'll ping you at ${displayHour}:${pad(parsed.min)}${ampmLabel} SGT with a Mark as Posted button.`);
     return;
   }
 

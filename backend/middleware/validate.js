@@ -9,6 +9,21 @@ const MAX_NOTES_LEN   = 500;
 const MAX_OWNER_LEN   = 60;
 const MAX_CAPTION_LEN = 2200; // Instagram-length caption
 const MAX_DETAILS_LEN = 1000;
+const MAX_ASSIGNEES   = 10;
+
+// Shared by validateCommsPost/Patch — returns a sanitised array or null (+
+// sends the response itself) on validation failure.
+function validateAssignees(assignees, res) {
+  if (!Array.isArray(assignees)) { res.status(400).json({ error: 'assignees must be an array of names' }); return null; }
+  if (assignees.length > MAX_ASSIGNEES) { res.status(400).json({ error: `assignees must be ${MAX_ASSIGNEES} or fewer` }); return null; }
+  for (const a of assignees) {
+    if (typeof a !== 'string' || !a.trim() || a.length > MAX_OWNER_LEN) {
+      res.status(400).json({ error: `each assignee must be a non-empty string under ${MAX_OWNER_LEN} chars` });
+      return null;
+    }
+  }
+  return assignees.map(a => sanitise(a));
+}
 
 function sanitise(str) {
   if (typeof str !== 'string') return '';
@@ -70,7 +85,7 @@ function validateSwapId(req, res, next) {
 // Validates a comms POST (new entry) — requires theme; owner/notes/date/
 // caption/details/createdBy optional
 function validateCommsPost(req, res, next) {
-  const { theme, owner, notes, date, caption, details, createdBy } = req.body;
+  const { theme, owner, notes, date, caption, details, createdBy, assignees } = req.body;
   if (!theme || typeof theme !== 'string' || !theme.trim())
     return res.status(400).json({ error: 'theme is required' });
   if (theme.length > MAX_THEME_LEN)
@@ -87,6 +102,11 @@ function validateCommsPost(req, res, next) {
     return res.status(400).json({ error: `details must be a string under ${MAX_DETAILS_LEN} chars` });
   if (createdBy !== undefined && (typeof createdBy !== 'string' || createdBy.length > MAX_OWNER_LEN))
     return res.status(400).json({ error: `createdBy must be a string under ${MAX_OWNER_LEN} chars` });
+  if (assignees !== undefined) {
+    const clean = validateAssignees(assignees, res);
+    if (clean === null) return;
+    req.body.assignees = clean;
+  }
   req.body.theme = sanitise(theme);
   if (owner     !== undefined) req.body.owner     = sanitise(owner);
   if (notes     !== undefined) req.body.notes     = sanitise(notes);
@@ -99,7 +119,7 @@ function validateCommsPost(req, res, next) {
 
 // Validates a comms PATCH (status update + optional field edits)
 function validateCommsPatch(req, res, next) {
-  const { theme, owner, notes, date, caption, details } = req.body;
+  const { theme, owner, notes, date, caption, details, assignees } = req.body;
   if (theme !== undefined) {
     if (typeof theme !== 'string' || !theme.trim() || theme.length > MAX_THEME_LEN)
       return res.status(400).json({ error: `theme must be a non-empty string under ${MAX_THEME_LEN} chars` });
@@ -129,6 +149,11 @@ function validateCommsPatch(req, res, next) {
     if (typeof details !== 'string' || details.length > MAX_DETAILS_LEN)
       return res.status(400).json({ error: `details must be a string under ${MAX_DETAILS_LEN} chars` });
     req.body.details = sanitise(details);
+  }
+  if (assignees !== undefined) {
+    const clean = validateAssignees(assignees, res);
+    if (clean === null) return;
+    req.body.assignees = clean;
   }
   next();
 }
