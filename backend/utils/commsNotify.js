@@ -87,6 +87,17 @@ function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// Deep link straight to a post's editor (comms tab, correct tile already
+// opened) instead of just the portal homepage — the frontend's restoreTab()
+// reads #comms-<id> and calls openCommsEditor(id) once data has loaded.
+// Added 9 Jul 2026 per Brendon: assignees/edit-request DMs previously just
+// linked to PORTAL_URL, leaving the member to hunt for the right tile among
+// several identically-coloured ones (also fixed separately) — easy to give up
+// and assume the post/photo/caption was gone when it was just hard to find.
+function postLink(post) {
+  return `${PORTAL_URL}/#comms-${post.id}`;
+}
+
 function fmtDate(dateStr) {
   try {
     return new Date(dateStr + 'T00:00:00').toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -112,7 +123,7 @@ async function notifyAssigneesTagged(post) {
   const msg =
     `📌 <b>You've been tagged on a comms post</b>\n\n` +
     `📅 <b>${fmtDate(post.date)}</b>\n📝 <b>${escHtml(post.theme)}</b>\n\n` +
-    `Fill in the caption, notes and image, then tap Submit for Review when it's ready.\n👉 ${PORTAL_URL}`;
+    `Fill in the caption, notes and image, then tap Submit for Review when it's ready.\n👉 ${postLink(post)}`;
   await dmNames(post.assignees, msg);
 }
 
@@ -161,7 +172,7 @@ async function notifyAssigneesChangesRequested(post, comment) {
   const msg =
     `💬 <b>Changes requested on your post</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${escHtml(post.theme)}\n\n` +
     (comment ? `"${escHtml(comment)}"\n\n` : '') +
-    `Update it here, then tap Submit for Review again — no need to start over.\n👉 ${PORTAL_URL}`;
+    `Update it here, then tap Submit for Review again — no need to start over.\n👉 ${postLink(post)}`;
   await dmNames(recipientNames(post), msg);
 }
 
@@ -219,5 +230,5 @@ module.exports = {
   getTLTelegramIds, getTelegramIdForName, recipientNames,
   notifyAssigneesTagged, notifyTLsSubmitted, notifyAssigneesApproved, notifyAssigneesChangesRequested,
   notifyTLsDeleteRequested, publishToCommsChannel,
-  fmtDate, escHtml,
+  fmtDate, escHtml, postLink,
 };

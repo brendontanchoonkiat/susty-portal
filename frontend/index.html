@@ -886,6 +886,10 @@ function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
 
 let rosterData = [];
 let calData    = [];
+// Set by restoreTab() from a #comms-<id> URL hash (used by tagged/edit-request
+// DM links so they open straight to the post instead of just the homepage) —
+// consumed once loadComms() has actually populated calData, see the init IIFE.
+let pendingCommsPostId = null;
 let cbData     = [], plData = [];
 let currentFilter = 'all';
 let teamTags   = [];
@@ -995,11 +999,16 @@ document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => navigateTo(t.dataset.page));
 });
 
-// Restore tab from URL hash on load/refresh
+// Restore tab from URL hash on load/refresh. Also supports #comms-<id>
+// (e.g. from a tagged/edit-request DM link) to open a specific post's editor
+// once comms data has loaded — see pendingCommsPostId, consumed in the init
+// IIFE further down after loadComms() resolves.
 (function restoreTab() {
-  const hash = location.hash.replace('#', '');
+  const raw = location.hash.replace('#', '');
+  const [hash, idStr] = raw.split('-');
   const valid = ['overview','energy','recycling','comms','roster','members','faq','test'];
   if (hash && valid.includes(hash)) navigateTo(hash);
+  if (hash === 'comms' && idStr && /^\d+$/.test(idStr)) pendingCommsPostId = Number(idStr);
 })();
 
 // ═══ TOAST ═══════════════════════════════════════════════════════════════════
@@ -1502,6 +1511,26 @@ function renderCommsCalendar(filter, containerId, opts={}) {
 }
 
 // ═══ COMMS CALENDAR GRID + EDITOR ═══════════════════════════════════════════
+// Same palette as the .status-tag badge classes above (kept in sync
+// manually — there's no single source of truth between CSS and JS here).
+// Added 9 Jul 2026 per Brendon: calendar tiles were always the same purple
+// regardless of status, making it hard to tell a needs_changes post apart
+// from a fresh planned one at a glance.
+const COMMS_STATUS_COLORS = {
+  planned:        { bg: '#E8F5E9', color: '#2E7D32', border: '#C8E6C9' },
+  draft:          { bg: '#FFF3CD', color: '#856404', border: '#FFE69C' },
+  idea:           { bg: '#EEEEEE', color: '#555555', border: '#DDDDDD' },
+  pending_review: { bg: '#EDE3FB', color: '#5B21B6', border: '#D6C6F5' },
+  needs_changes:  { bg: '#FDE2E2', color: '#C62828', border: '#F5B5B5' },
+  approved:       { bg: '#DBEAFE', color: '#1E40AF', border: '#BFDBFE' },
+  posted:         { bg: '#D4EDDA', color: '#155724', border: '#BFE6C9' },
+  archived:       { bg: '#EEEEEE', color: '#555555', border: '#DDDDDD' },
+};
+function commsStatusStyle(status) {
+  const c = COMMS_STATUS_COLORS[status] || COMMS_STATUS_COLORS.planned;
+  return `background:${c.bg};color:${c.color};border:1px solid ${c.border}`;
+}
+
 let commsViewDate = new Date(); commsViewDate.setDate(1);
 
 function prevCommsMonth() {
@@ -1543,7 +1572,7 @@ function renderCommsMonthGrid() {
     const posts = byDate[key] || [];
 
     const postHtml = posts.map(p =>
-      `<div class="cal-slot" style="cursor:pointer;background:#F0EAFB;color:#5B21B6;border:1px solid #D6C6F5" onclick="event.stopPropagation();openCommsEditor(${p.id})" title="${esc(p.theme)}">${esc((p.theme||'').slice(0,18))}${p.theme && p.theme.length>18?'…':''}</div>`
+      `<div class="cal-slot" style="cursor:pointer;${commsStatusStyle(p.status)}" onclick="event.stopPropagation();openCommsEditor(${p.id})" title="${esc(p.theme)} — ${esc((p.status||'').replace(/_/g,' '))}">${esc((p.theme||'').slice(0,18))}${p.theme && p.theme.length>18?'…':''}</div>`
     ).join('');
 
     cells += `<div class="cal-cell${isToday?' today':''}" style="cursor:pointer" onclick="openCommsEditor(null,'${key}')">` +
@@ -2289,6 +2318,11 @@ async function testTelegram() {
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
   renderAttention();
   refreshIcons();
+  if (pendingCommsPostId) {
+    const id = pendingCommsPostId;
+    pendingCommsPostId = null;
+    if ((calData || []).some(e => e.id === id)) openCommsEditor(id);
+  }
 })();
 
 // ═══ ENERGY EDITOR ═══════════════════════════════════════════════════════════
