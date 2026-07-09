@@ -144,43 +144,54 @@ router.get('/upcoming', async (_req, res) => {
 router.post('/',
   validateCommsPost,
   async (req, res) => {
-    const { theme, owner, notes, date, caption, details, createdBy, status, assignees } = req.body;
-    const cleanAssignees = Array.isArray(assignees) ? assignees : [];
-    const entry = {
-      date:       date   || '',
-      theme:      theme,
-      // `owner` stays as a display fallback for older UI bits — derived from
-      // assignees when tagging is used, otherwise whoever filled the form in.
-      owner:      owner || cleanAssignees.join(', ') || createdBy || '',
-      notes:      notes  || '',
-      caption:    caption || '',
-      details:    details || '',
-      created_by: createdBy || owner || '',
-      assignees:  cleanAssignees,
-      status:     status !== undefined && VALID_STATUS.includes(status)
-                    ? status
-                    : deriveEditorialStatus(null, { caption, details, image_url: null }),
-    };
+    try {
+      const { theme, owner, notes, date, caption, details, createdBy, status, assignees } = req.body;
+      const cleanAssignees = Array.isArray(assignees) ? assignees : [];
+      const entry = {
+        date:       date   || '',
+        theme:      theme,
+        // `owner` stays as a display fallback for older UI bits — derived from
+        // assignees when tagging is used, otherwise whoever filled the form in.
+        owner:      owner || cleanAssignees.join(', ') || createdBy || '',
+        notes:      notes  || '',
+        caption:    caption || '',
+        details:    details || '',
+        created_by: createdBy || owner || '',
+        assignees:  cleanAssignees,
+        status:     status !== undefined && VALID_STATUS.includes(status)
+                      ? status
+                      : deriveEditorialStatus(null, { caption, details, image_url: null }),
+      };
 
-    const dbc = getClient();
-    if (dbc) {
-      const { data, error } = await dbc.from('comms_posts').insert(entry).select().single();
-      if (!error) {
-        if (cleanAssignees.length) {
-          try { await require('../utils/commsNotify').notifyAssigneesTagged(data); }
-          catch (err) { console.warn('[Comms] Failed to notify assignees of tagging:', err.message); }
+      const dbc = getClient();
+      if (dbc) {
+        const { data, error } = await dbc.from('comms_posts').insert(entry).select().single();
+        if (!error) {
+          if (cleanAssignees.length) {
+            try { await require('../utils/commsNotify').notifyAssigneesTagged(data); }
+            catch (err) { console.warn('[Comms] Failed to notify assignees of tagging:', err.message); }
+          }
+          return res.status(201).json(fromDbRow(data));
         }
-        return res.status(201).json(fromDbRow(data));
+        console.warn('[Comms] Supabase insert failed, falling back to local file:', error.message);
       }
-      console.warn('[Comms] Supabase insert failed, falling back to local file:', error.message);
-    }
 
-    // Local-file fallback
-    const comms = loadCommsFile();
-    const localEntry = { id: Date.now(), ...entry };
-    comms.push(localEntry);
-    saveCommsFile(comms);
-    res.status(201).json(localEntry);
+      // Local-file fallback
+      const comms = loadCommsFile();
+      const localEntry = { id: Date.now(), ...entry };
+      comms.push(localEntry);
+      saveCommsFile(comms);
+      res.status(201).json(localEntry);
+    } catch (err) {
+      // Catches anything unexpected (Supabase client throwing instead of
+      // returning {error}, local-file fs errors, etc.) — without this,
+      // an async throw here doesn't reach server.js's error middleware at
+      // all in Express 4 (it becomes a silent unhandled rejection and the
+      // request just hangs), so surfacing it explicitly here is the only
+      // way the caller gets a real response instead of a timeout.
+      console.error('[Comms] POST / failed:', err.stack || err.message);
+      res.status(500).json({ error: `Save failed: ${err.message}` });
+    }
   }
 );
 
@@ -195,28 +206,36 @@ router.post('/:id/image', (req, res, next) => {
     next();
   });
 }, async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
-  if (!req.file) return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+    if (!req.file) return res.status(400).json({ error: 'No image file provided (field name must be "image")' });
 
-  const dbc = getClient();
-  if (!dbc) return res.status(503).json({ error: 'Image upload requires Supabase (not configured)' });
+    const dbc = getClient();
+    if (!dbc) return res.status(503).json({ error: 'Image upload requires Supabase (not configured)' });
 
-  const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-  const filename = `post_${id}_${Date.now()}.${ext}`;
-  const imageUrl = await db.uploadImage(req.file.buffer, filename, req.file.mimetype, 'comms');
-  if (!imageUrl) return res.status(502).json({ error: 'Image upload to storage failed' });
+    const ext = (req.file.mimetype.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const filename = `post_${id}_${Date.now()}.${ext}`;
+    const imageUrl = await db.uploadImage(req.file.buffer, filename, req.file.mimetype, 'comms');
+    if (!imageUrl) return res.status(502).json({ error: 'Image upload to storage failed' });
 
-  // An attached image always counts as "started on" — bump planned -> draft
-  // the same way adding a caption/details does (deriveEditorialStatus is a
-  // no-op once the post is past the pre-review stage).
-  const { data: existing } = await dbc.from('comms_posts').select('status').eq('id', id).single();
-  const patch = { image_url: imageUrl };
-  if (existing) patch.status = deriveEditorialStatus(existing.status, { image_url: imageUrl });
+    // An attached image always counts as "started on" — bump planned -> draft
+    // the same way adding a caption/details does (deriveEditorialStatus is a
+    // no-op once the post is past the pre-review stage).
+    const { data: existing } = await dbc.from('comms_posts').select('status').eq('id', id).single();
+    const patch = { image_url: imageUrl };
+    if (existing) patch.status = deriveEditorialStatus(existing.status, { image_url: imageUrl });
 
-  const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
-  if (error) return res.status(404).json({ error: 'Post not found' });
-  res.json(fromDbRow(data));
+    const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
+    if (error) return res.status(404).json({ error: 'Post not found' });
+    res.json(fromDbRow(data));
+  } catch (err) {
+    // Same rationale as POST / — without this, an unexpected throw here
+    // (e.g. Supabase Storage client rejecting instead of returning null)
+    // becomes a silent hang instead of a response the frontend can show.
+    console.error('[Comms] POST /:id/image failed:', err.stack || err.message);
+    res.status(500).json({ error: `Image upload failed: ${err.message}` });
+  }
 });
 
 // POST /:id/submit — member pushes their (self-checked) post to the TLs for
@@ -252,6 +271,7 @@ router.post('/:id/submit', async (req, res) => {
 // PATCH /:id — update status (mark as posted / revert, etc.) or edit fields
 // — no auth required (intentional, matches the rest of this route's design)
 router.patch('/:id', validateCommsPatch, async (req, res) => {
+  try {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 
@@ -334,6 +354,10 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
   if (assignees !== undefined) entry.assignees = assignees;
   saveCommsFile(comms);
   res.json(entry);
+  } catch (err) {
+    console.error('[Comms] PATCH /:id failed:', err.stack || err.message);
+    res.status(500).json({ error: `Save failed: ${err.message}` });
+  }
 });
 
 // POST /:id/request-delete — a member flags a post for deletion instead of
