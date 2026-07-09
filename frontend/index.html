@@ -872,6 +872,11 @@ const API = 'https://susty-portal-production.up.railway.app/api';
 // only for quick-pick tag buttons; the assignee field still accepts free text
 // for anyone else if needed.
 const COMMS_TEAM = ['Alan', 'Esther', 'Elaine', 'Matthew', 'Berry', 'Brendon'];
+// Comments only open up once a post has actually been submitted for review
+// (added 9 Jul 2026, per Brendon) — matches COMMENTABLE_STATUSES in
+// backend/routes/comms.js. Shared by the quick-comment box in the list view
+// and the full thread in the editor.
+const COMMS_COMMENTABLE_STATUSES = ['pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
 
 // ═══ STATE ═══════════════════════════════════════════════════════════════════
 let adminKey   = '';
@@ -1622,10 +1627,33 @@ function renderCommsCalendar(filter, containerId, opts={}) {
         (canSubmit ? `<button class="action-btn" onclick="submitCommsForReview(${e.id})" style="font-size:.7rem">📤 Submit</button>` : '') +
         (e.status !== 'pending_review' && e.status !== 'approved' ? `<button class="action-btn" onclick="markAsPosted(${e.id})" style="font-size:.7rem">✅ Posted</button>` : '')
       : '';
+
+    // Caption visible + quick-comment box right in the list (added 9 Jul
+    // 2026, per Brendon — captions were hidden until you opened Edit, and
+    // commenting required opening the full editor too). Both span the full
+    // row width below the existing 3-column grid line.
+    const captionText = (e.caption || '').trim();
+    const captionPreview = captionText
+      ? `<div class="cal-caption" style="grid-column:1/-1;font-size:.82rem;font-style:italic;color:var(--tx,#3A3A32);margin-top:8px;padding-top:8px;border-top:1px dashed var(--br)">
+           "${esc(captionText.length > 220 ? captionText.slice(0,220) + '…' : captionText)}"
+         </div>`
+      : '';
+    const quickComment = (showActions && COMMS_COMMENTABLE_STATUSES.includes(e.status))
+      ? `<div class="cal-quick-comment" style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:${captionText?'8px':'8px'}">
+           <input type="text" id="qc-author-${e.id}" placeholder="Your name" value="${esc(localStorage.getItem('commsCommenterName')||'')}"
+             style="flex:1;min-width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--br);font-size:.76rem;font-family:inherit"/>
+           <input type="text" id="qc-text-${e.id}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')quickPostComment(${e.id})"
+             style="flex:3;min-width:140px;padding:6px 8px;border-radius:6px;border:1px solid var(--br);font-size:.76rem;font-family:inherit"/>
+           <button class="action-btn" onclick="quickPostComment(${e.id})" style="font-size:.72rem">💬 Send</button>
+         </div>`
+      : '';
+
     return `<div class="cal-item status-${esc(e.status)}${isPast ? ' past-pending' : ''}">
       <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
       <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(who)} · ${esc(e.notes||'')}</div>${rejected}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>
+      ${captionPreview}
+      ${quickComment}
     </div>`;
   }).join('');
 }
@@ -1764,10 +1792,9 @@ function openCommsEditor(id, dateStr) {
   // Comments only open up once the post has actually been submitted for
   // review (added 9 Jul 2026, per Brendon) — before that it's a private
   // draft, nothing to comment on yet.
-  const COMMENTABLE_STATUSES = ['pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
   const commentsSection = document.getElementById('cm-comments-section');
   const commentsHint = document.getElementById('cm-comments-hint');
-  if (post && COMMENTABLE_STATUSES.includes(post.status)) {
+  if (post && COMMS_COMMENTABLE_STATUSES.includes(post.status)) {
     commentsSection.style.display = 'block';
     commentsHint.style.display = 'none';
     document.getElementById('cm-comment-author').value = localStorage.getItem('commsCommenterName') || '';
@@ -1830,25 +1857,43 @@ async function toggleCommsCommentResolved(commentId, resolved) {
   }
 }
 
-async function postCommsComment() {
-  if (!commsEditingId) return;
-  const authorEl  = document.getElementById('cm-comment-author');
-  const textEl    = document.getElementById('cm-comment-text');
-  const author    = authorEl.value.trim();
-  const comment   = textEl.value.trim();
-  if (!author)  { toast('Enter your name', true); return; }
-  if (!comment) { toast('Comment cannot be empty', true); return; }
-
+// Shared by postCommsComment() (editor thread) and quickPostComment() (list
+// view) — posts the comment and remembers the commenter's name. Returns
+// true on success so callers can decide what to refresh.
+async function sendCommsComment(postId, author, comment) {
+  if (!author)  { toast('Enter your name', true); return false; }
+  if (!comment) { toast('Comment cannot be empty', true); return false; }
   try {
-    const res = await fetch(`${API}/comms/${commsEditingId}/comments`, {
+    const res = await fetch(`${API}/comms/${postId}/comments`, {
       method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ author, comment }),
     });
-    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Comment failed', true); return; }
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Comment failed', true); return false; }
     localStorage.setItem('commsCommenterName', author);
-    textEl.value = '';
-    await loadCommsComments(commsEditingId);
+    return true;
   } catch (e) {
     toast('❌ Could not connect to server', true);
+    return false;
+  }
+}
+
+async function postCommsComment() {
+  if (!commsEditingId) return;
+  const authorEl = document.getElementById('cm-comment-author');
+  const textEl   = document.getElementById('cm-comment-text');
+  const ok = await sendCommsComment(commsEditingId, authorEl.value.trim(), textEl.value.trim());
+  if (ok) { textEl.value = ''; await loadCommsComments(commsEditingId); }
+}
+
+// Quick-comment box directly on the list row (added 9 Jul 2026, per Brendon
+// — members shouldn't need to open the full editor just to leave feedback).
+async function quickPostComment(postId) {
+  const authorEl = document.getElementById(`qc-author-${postId}`);
+  const textEl   = document.getElementById(`qc-text-${postId}`);
+  if (!authorEl || !textEl) return;
+  const ok = await sendCommsComment(postId, authorEl.value.trim(), textEl.value.trim());
+  if (ok) {
+    textEl.value = '';
+    toast('💬 Comment sent');
   }
 }
 
