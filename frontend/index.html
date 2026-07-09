@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
 <title>Sustainability Ministry Portal</title>
+<!-- PWA / add-to-home-screen (added 9 Jul 2026) -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1E3A2E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Susty">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/icon-192.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -292,6 +301,136 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   .nav-mobile-select option{ color:#1a3328; }
   #nav-admin-bar{ order:2; margin-left:auto; }
 }
+
+/* ═══════════ BEAUTIFY PASS (9 Jul 2026) — all additive ═══════════ */
+
+/* ── Dark mode ── */
+html[data-theme="dark"]{
+  --gd:#BFDCC6; --gm:#8FBF9F; --gs:#7FB584; --gp:#24382C;
+  --am:#D9AE6A; --cl:#D08055;
+  --bg:#141B15; --sf:#1D2920; --tx:#E4EDE2; --tm:#93A18D; --br:#2C3D31;
+  --sh:0 2px 10px rgba(0,0,0,.35); --sh2:0 12px 32px rgba(0,0,0,.55);
+}
+html[data-theme="dark"] body{background:var(--bg)}
+html[data-theme="dark"] nav{background:linear-gradient(180deg,#121d16,#0e1711)}
+html[data-theme="dark"] .nav-tab.active{background:rgba(255,255,255,.14);color:#fff}
+html[data-theme="dark"] .hero{background:linear-gradient(120deg,#16241C,#24382C,#1B3A2A,#16241C);background-size:300% 300%}
+html[data-theme="dark"] .roster-table th{background:#22352A;color:#BFD8C4}
+html[data-theme="dark"] .roster-table tr:nth-child(even) td{background:#1A241C}
+html[data-theme="dark"] .roster-table tr:hover td{background:#223225}
+html[data-theme="dark"] .btn-primary{background:#3A6B50;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+html[data-theme="dark"] .btn-primary:hover{background:#468060}
+html[data-theme="dark"] .btn-outline{border-color:#5E8A6E;color:#BFDCC6}
+html[data-theme="dark"] .view-tab.active{background:#3A6B50;color:#fff;border-color:#3A6B50}
+html[data-theme="dark"] .editor-panel{background:#1C2A20;border-color:#3A6B50}
+html[data-theme="dark"] .cal-cell.today{background:#20301F}
+html[data-theme="dark"] .cal-cell.today .cal-day-num{color:#10180F}
+html[data-theme="dark"] #toast{background:#22352A}
+html[data-theme="dark"] .live-badge.live{background:#1E3A28;color:#8FD9A8}
+html[data-theme="dark"] .live-badge.fallback{background:#3A311A;color:#E3C36B}
+html[data-theme="dark"] .nav-tab.active{background:rgba(255,255,255,.16)}
+html[data-theme="dark"] .attn .cta{background:#2C4434;color:#CBE3CF}
+
+/* ── Grain texture overlay (very subtle) ── */
+body::after{content:'';position:fixed;inset:0;z-index:1000;pointer-events:none;opacity:.035;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E")}
+html[data-theme="dark"] body::after{opacity:.05}
+
+/* ── Living hero: slow gradient drift + soft glow blob ── */
+.hero{background:linear-gradient(120deg,#1E3A2E,#3A6B50,#2C5E46,#1E3A2E);
+  background-size:300% 300%;animation:heroShift 22s ease infinite}
+@keyframes heroShift{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+.hero::after{content:'';position:absolute;width:340px;height:340px;border-radius:50%;right:-90px;bottom:-160px;
+  background:radial-gradient(circle,rgba(127,181,132,.35),transparent 65%);animation:heroGlow 9s ease-in-out infinite alternate;pointer-events:none}
+@keyframes heroGlow{from{transform:scale(.9) translateY(8px);opacity:.6}to{transform:scale(1.15);opacity:1}}
+
+/* ── Count-up numbers ── */
+.hero-stat .val,.ring-val{font-variant-numeric:tabular-nums}
+
+/* ── Skeleton shimmer ── */
+.skel{display:grid;gap:10px}
+.skel .sk{height:60px;border-radius:12px;border:1px solid var(--br);
+  background:linear-gradient(100deg,var(--sf) 40%,var(--gp) 50%,var(--sf) 60%);
+  background-size:200% 100%;animation:shimmer 1.3s infinite}
+@keyframes shimmer{to{background-position:-200% 0}}
+.loading{animation:softPulse 1.6s ease-in-out infinite}
+@keyframes softPulse{0%,100%{opacity:1}50%{opacity:.45}}
+
+/* ── Staggered entrance for freshly shown pages ── */
+.page.active > *{animation:rise .45s cubic-bezier(.2,.7,.3,1) both}
+.page.active > *:nth-child(1){animation-delay:.02s}.page.active > *:nth-child(2){animation-delay:.07s}
+.page.active > *:nth-child(3){animation-delay:.12s}.page.active > *:nth-child(4){animation-delay:.17s}
+.page.active > *:nth-child(5){animation-delay:.22s}.page.active > *:nth-child(6){animation-delay:.27s}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* ── Frosted top nav on mobile ── */
+@media(max-width:768px){
+  nav{background:rgba(22,42,32,.85);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  html[data-theme="dark"] nav{background:rgba(13,21,15,.85)}
+}
+
+/* ── Theme toggle button ── */
+#theme-toggle{width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.12);
+  border:none;border-radius:8px;cursor:pointer;color:#fff;flex-shrink:0;transition:transform .3s}
+#theme-toggle:active{transform:rotate(40deg) scale(.9)}
+#theme-toggle [data-lucide]{width:15px;height:15px;pointer-events:none}
+
+/* ── Impact ring card ── */
+.impact-card{display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+.impact-ring{position:relative;width:130px;height:130px;flex-shrink:0}
+.impact-ring svg{transform:rotate(-90deg)}
+.impact-ring .track{stroke:var(--gp)}
+.impact-ring .arc{stroke:url(#ringGrad);stroke-linecap:round;transition:stroke-dashoffset 1.6s cubic-bezier(.25,.8,.3,1)}
+.impact-ring .center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.impact-ring .center .ring-val{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.25rem;color:var(--gm)}
+.impact-ring .center .ring-lbl{font-size:.6rem;color:var(--tm);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.equiv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;flex:1;min-width:220px}
+.equiv{background:var(--gp);border-radius:12px;padding:12px 14px}
+.equiv .ev{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.15rem;color:var(--gd);font-variant-numeric:tabular-nums}
+.equiv .el{font-size:.7rem;color:var(--tm);margin-top:2px}
+html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
+
+/* ── Bottom sheet (mobile detail + More menu) ── */
+#sheet-overlay{position:fixed;inset:0;background:rgba(10,18,12,.5);z-index:200;opacity:0;pointer-events:none;transition:opacity .25s;backdrop-filter:blur(2px)}
+#sheet-overlay.show{opacity:1;pointer-events:auto}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:201;background:var(--sf);border-radius:20px 20px 0 0;
+  padding:14px 20px calc(22px + env(safe-area-inset-bottom));transform:translateY(105%);
+  transition:transform .32s cubic-bezier(.2,.8,.25,1);box-shadow:0 -12px 44px rgba(0,0,0,.3);
+  max-height:72vh;overflow-y:auto;max-width:520px;margin:0 auto}
+#sheet.show{transform:none}
+#sheet .grab{width:42px;height:4px;border-radius:2px;background:var(--br);margin:0 auto 14px}
+.sheet-item{display:flex;align-items:center;gap:12px;width:100%;padding:13px 10px;border:none;background:none;
+  border-radius:12px;font-family:inherit;font-size:.95rem;font-weight:600;color:var(--tx);cursor:pointer;text-align:left}
+.sheet-item:hover{background:var(--gp)}
+.sheet-item [data-lucide]{width:19px;height:19px;color:var(--gm)}
+
+/* ── Bottom tab bar (phones) ── */
+.bottom-nav{display:none}
+@media(max-width:480px){
+  .nav-mobile-select{display:none !important}
+  nav{flex-wrap:nowrap;height:var(--nh);padding:0 14px}
+  body{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
+  .bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:150;display:flex;justify-content:space-around;
+    background:rgba(22,42,32,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    padding:8px 6px calc(8px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,.09)}
+  html[data-theme="dark"] .bottom-nav{background:rgba(13,21,15,.92)}
+  .bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;
+    color:rgba(216,243,220,.55);font-size:.6rem;font-weight:700;font-family:inherit;padding:4px 2px;cursor:pointer;border-radius:12px;transition:color .2s}
+  .bnav-btn [data-lucide]{width:21px;height:21px}
+  .bnav-btn.active{color:#fff}
+  .bnav-btn.active [data-lucide]{filter:drop-shadow(0 0 6px rgba(127,181,132,.9))}
+  #toast{bottom:calc(80px + env(safe-area-inset-bottom));right:16px;left:16px}
+}
+
+/* ── Confetti ── */
+.confetti{position:fixed;top:-14px;z-index:300;width:8px;height:13px;border-radius:2px;pointer-events:none;
+  animation:confettiFall linear forwards}
+@keyframes confettiFall{to{transform:translateY(108vh) rotate(720deg)}}
+
+/* ── Reduced motion: calm everything down ── */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}
+}
 </style>
 </head>
 <body>
@@ -323,6 +462,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <option value="test">🧪 Test</option>
   </select>
   <div id="nav-admin-bar" style="position:relative;display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
+    <button id="theme-toggle" onclick="toggleTheme()" title="Light / dark mode"><i data-lucide="moon"></i></button>
     <button id="nav-admin-toggle" onclick="toggleAdminKeyPopover(event)" title="Admin unlock" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.12);border:none;border-radius:8px;cursor:pointer;color:#fff;flex-shrink:0">
       <i data-lucide="key-round" style="width:15px;height:15px;pointer-events:none"></i>
     </button>
@@ -334,12 +474,26 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   </div>
 </nav>
 
+<!-- Bottom tab bar (phones ≤480px — replaces the dropdown, 9 Jul 2026) -->
+<div class="bottom-nav" id="bottom-nav">
+  <button class="bnav-btn active" data-page="overview" onclick="navigateTo('overview')"><i data-lucide="home"></i>Home</button>
+  <button class="bnav-btn" data-page="energy" onclick="navigateTo('energy')"><i data-lucide="zap"></i>Energy</button>
+  <button class="bnav-btn" data-page="recycling" onclick="navigateTo('recycling')"><i data-lucide="recycle"></i>W2R</button>
+  <button class="bnav-btn" data-page="comms" onclick="navigateTo('comms')"><i data-lucide="megaphone"></i>Comms</button>
+  <button class="bnav-btn" data-page="roster" onclick="navigateTo('roster')"><i data-lucide="calendar-days"></i>Roster</button>
+  <button class="bnav-btn" id="bnav-more" onclick="openMoreSheet()"><i data-lucide="ellipsis"></i>More</button>
+</div>
+
+<!-- Bottom sheet (slot details on mobile + "More" nav) -->
+<div id="sheet-overlay" onclick="closeSheet()"></div>
+<div id="sheet"><div class="grab"></div><div id="sheet-content"></div></div>
+
 <div class="page-wrap">
 
 <!-- ═══ OVERVIEW ════════════════════════════════════════════════════════════ -->
 <div class="page active" id="page-overview">
   <div class="hero">
-    <h1>Ministry at a Glance</h1>
+    <h1 id="hero-greeting">Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
       <div class="hero-stat" id="ov-cardboard-wrap"><div class="val" id="ov-cardboard">—</div><div class="lbl">📦 Cardboard — <span id="ov-cardboard-month">this month</span> <span class="trend" id="ov-cardboard-trend"></span></div></div>
@@ -350,7 +504,27 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   </div>
 
   <div class="section-title"><i data-lucide="bell-ring"></i> Needs your attention</div>
-  <div class="attn-grid" id="attn-cards"><div class="loading">Loading…</div></div>
+  <div class="attn-grid" id="attn-cards"><div class="skel" style="grid-column:1/-1"><div class="sk"></div></div></div>
+
+  <div class="section-title"><i data-lucide="globe"></i> Our Impact — all time</div>
+  <div class="card impact-card" id="impact-card">
+    <div class="impact-ring">
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#7FB584"/><stop offset="100%" stop-color="#3A6B50"/>
+        </linearGradient></defs>
+        <circle class="track" cx="65" cy="65" r="56" fill="none" stroke-width="11"/>
+        <circle class="arc" id="impact-arc" cx="65" cy="65" r="56" fill="none" stroke-width="11"
+          stroke-dasharray="351.9" stroke-dashoffset="351.9"/>
+      </svg>
+      <div class="center"><div class="ring-val" id="impact-co2">—</div><div class="ring-lbl">kg CO₂e avoided</div></div>
+    </div>
+    <div class="equiv-grid">
+      <div class="equiv"><div class="ev" id="impact-trees">—</div><div class="el">🌳 trees saved</div></div>
+      <div class="equiv"><div class="ev" id="impact-km">—</div><div class="el">🚗 km of driving offset</div></div>
+      <div class="equiv"><div class="ev" id="impact-bottles">—</div><div class="el">🍶 bottles kept from landfill</div></div>
+    </div>
+  </div>
 
   <div class="card-grid">
     <div class="card">
@@ -363,7 +537,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     </div>
   </div>
   <div class="section-title">📢 Upcoming Posts</div>
-  <div class="cal-grid" id="ov-cal"><div class="loading">Loading…</div></div>
+  <div class="cal-grid" id="ov-cal"><div class="skel"><div class="sk"></div><div class="sk"></div></div></div>
 </div>
 
 <!-- ═══ ENERGY ═══════════════════════════════════════════════════════════════ -->
@@ -923,7 +1097,7 @@ function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
   if (!valEl) return;
 
   const shown = curVal !== null && curVal !== undefined ? curVal : 0;
-  valEl.textContent = `${shown}${unit === 'kg' ? ' kg' : ''}`;
+  animateNumber(valEl, shown, unit === 'kg' ? ' kg' : ''); // count-up (beautify pass)
 
   if (trendEl) {
     if (prevVal === null || prevVal === undefined || prevVal === 0) {
@@ -1055,6 +1229,10 @@ function navigateTo(pageId) {
   if (page) page.classList.add('active');
   const mobileSelect = document.getElementById('nav-mobile-select');
   if (mobileSelect) mobileSelect.value = pageId;
+  // Bottom tab bar sync (phones)
+  document.querySelectorAll('.bnav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.page === pageId));
+  if (typeof closeSheet === 'function') closeSheet();
   location.hash = pageId;
   refreshIcons();
   // Reveal editor panels if admin mode is already unlocked
@@ -1086,6 +1264,144 @@ document.querySelectorAll('.nav-tab').forEach(t => {
   if (hash && valid.includes(hash)) navigateTo(hash);
   if (hash === 'comms' && idStr && /^\d+$/.test(idStr)) pendingCommsPostId = Number(idStr);
 })();
+
+// ═══ THEME (dark mode) ═══════════════════════════════════════════════════════
+// Persisted in localStorage('sustyTheme'); defaults to system preference.
+function currentTheme(){ return document.documentElement.getAttribute('data-theme') || 'light'; }
+function applyTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('sustyTheme', t); } catch(e){}
+  const btn = document.querySelector('#theme-toggle i');
+  if (btn) { btn.setAttribute('data-lucide', t === 'dark' ? 'sun' : 'moon'); refreshIcons(); }
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === 'dark' ? '#0E1711' : '#1E3A2E';
+  if (window.Chart) Chart.defaults.color = t === 'dark' ? '#93A18D' : '#666';
+  rethemeCharts();
+}
+function toggleTheme(){ applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
+(function initTheme(){
+  let t = null;
+  try { t = localStorage.getItem('sustyTheme'); } catch(e){}
+  if (!t) t = (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  applyTheme(t);
+})();
+function chartGridColor(){ return currentTheme() === 'dark' ? 'rgba(255,255,255,.07)' : '#E8F5E9'; }
+function chartTickColor(){ return currentTheme() === 'dark' ? '#93A18D' : '#666'; }
+function rethemeCharts(){
+  let built;
+  try { built = chartsBuilt; } catch(e){ return; } // chartsBuilt declared later (TDZ) on first paint
+  if (!built) return;
+  Object.values(built).forEach(ch => {
+    if (!ch || !ch.options) return;
+    ['x','y'].forEach(ax => {
+      const s = ch.options.scales && ch.options.scales[ax];
+      if (!s) return;
+      s.grid = Object.assign(s.grid || {}, { color: ax === 'y' ? chartGridColor() : undefined, display: s.grid ? s.grid.display : true });
+      s.ticks = Object.assign(s.ticks || {}, { color: chartTickColor() });
+    });
+    if (ch.options.plugins && ch.options.plugins.legend)
+      ch.options.plugins.legend.labels = Object.assign(ch.options.plugins.legend.labels || {}, { color: chartTickColor() });
+    ch.update('none');
+  });
+}
+
+// ═══ GREETING (time of day, hero) ════════════════════════════════════════════
+(function setGreeting(){
+  const el = document.getElementById('hero-greeting');
+  if (!el) return;
+  const h = new Date().getHours();
+  el.textContent = h < 5 ? 'Burning the midnight oil 🌙' :
+                   h < 12 ? 'Good morning ☀️' :
+                   h < 18 ? 'Good afternoon 🌤️' : 'Good evening 🌙';
+})();
+
+// ═══ COUNT-UP NUMBERS ════════════════════════════════════════════════════════
+function animateNumber(el, target, suffix=''){
+  target = Number(target) || 0;
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const decimals = (String(target).split('.')[1] || '').length > 0 ? 1 : 0;
+  if (reduced || target === 0) { el.textContent = target.toFixed(decimals).replace(/\.0$/,'') + suffix; return; }
+  const dur = 950, t0 = performance.now();
+  function tick(now){
+    const p = Math.min((now - t0) / dur, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = (target * eased).toFixed(decimals) + suffix;
+    if (p < 1) requestAnimationFrame(tick);
+    else el.textContent = target.toFixed(decimals).replace(/\.0$/,'') + suffix;
+  }
+  requestAnimationFrame(tick);
+}
+
+// ═══ BOTTOM SHEET (mobile slot details + "More" nav) ═════════════════════════
+function openSheet(html){
+  document.getElementById('sheet-content').innerHTML = html;
+  document.getElementById('sheet-overlay').classList.add('show');
+  document.getElementById('sheet').classList.add('show');
+  refreshIcons();
+}
+function closeSheet(){
+  const ov = document.getElementById('sheet-overlay');
+  if (!ov) return;
+  ov.classList.remove('show');
+  document.getElementById('sheet').classList.remove('show');
+}
+function openMoreSheet(){
+  const items = [];
+  if (isAdmin) items.push(`<button class="sheet-item" onclick="navigateTo('members')"><i data-lucide="users"></i>Members</button>`);
+  items.push(`<button class="sheet-item" onclick="navigateTo('faq')"><i data-lucide="book-open"></i>FAQ</button>`);
+  items.push(`<button class="sheet-item" onclick="navigateTo('test')"><i data-lucide="flask-conical"></i>Test</button>`);
+  items.push(`<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
+  openSheet(items.join(''));
+}
+function showSlotSheet(id){
+  const s = (rosterData || []).find(x => String(x.id) === String(id));
+  if (!s) return;
+  const d = new Date(s.date);
+  const dateStr = isNaN(d) ? s.date : d.toLocaleDateString('en-SG', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  openSheet(`
+    <div style="font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.05rem;margin-bottom:4px">${esc(dateStr)}</div>
+    <div style="margin-bottom:12px"><span class="badge badge-${(s.session||'').toLowerCase()}">${esc(s.session)}</span>
+      <span style="font-size:.75rem;color:var(--tm);margin-left:6px">${esc(s.week || '')}</span></div>
+    <div style="font-size:.85rem;margin-bottom:8px"><strong>Team:</strong> ${(s.team||[]).map(esc).join(', ') || '—'}</div>
+    ${s.kg !== null && s.kg !== undefined ? `<div style="font-size:.85rem;margin-bottom:8px"><strong>Collected:</strong> ${esc(String(s.kg))} kg</div>` : ''}
+    ${s.notes ? `<div style="font-size:.8rem;color:var(--tm)">📝 ${esc(s.notes)}</div>` : ''}
+  `);
+}
+
+// ═══ CONFETTI (new monthly record) ═══════════════════════════════════════════
+function launchConfetti(){
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const colors = ['#7FB584','#C79A55','#BE6A44','#3A6B50','#DEE8D4','#D08055'];
+  for (let i = 0; i < 55; i++){
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = Math.random() * 100 + 'vw';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = (2.4 + Math.random() * 1.8) + 's';
+    c.style.animationDelay = (Math.random() * 0.7) + 's';
+    c.style.transform = `rotate(${Math.random() * 360}deg)`;
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 5200);
+  }
+}
+
+// ═══ IMPACT RING (Overview — all-time CO₂e from /api/stats) ═════════════════
+async function loadImpact(){
+  try {
+    const res = await fetch(`${API}/stats`);
+    const { allTime } = await res.json();
+    if (!allTime) return;
+    animateNumber(document.getElementById('impact-co2'), Math.round(allTime.co2eKg));
+    animateNumber(document.getElementById('impact-trees'), allTime.treesEquiv);
+    animateNumber(document.getElementById('impact-km'), allTime.carKmEquiv);
+    animateNumber(document.getElementById('impact-bottles'), allTime.bottlesEquiv);
+    // Ring fills relative to a 2-tonne CO₂e milestone (caps at full)
+    const CIRC = 351.9, goal = 2000;
+    const frac = Math.min(allTime.co2eKg / goal, 1);
+    requestAnimationFrame(() =>
+      document.getElementById('impact-arc').style.strokeDashoffset = String(CIRC * (1 - frac)));
+  } catch(e){ /* card just stays at — */ }
+}
 
 // ═══ TOAST ═══════════════════════════════════════════════════════════════════
 function toast(msg, isError=false) {
@@ -1153,7 +1469,7 @@ document.addEventListener('click', (evt) => {
   if (bar && !bar.contains(evt.target)) closeAdminKeyPopover();
 });
 document.addEventListener('keydown', (evt) => {
-  if (evt.key === 'Escape') closeAdminKeyPopover();
+  if (evt.key === 'Escape') { closeAdminKeyPopover(); closeSheet(); }
 });
 
 // ═══ RECYCLING ═══════════════════════════════════════════════════════════════
@@ -1186,9 +1502,27 @@ async function loadRecycling() {
 
     buildRecyclingCharts();
     buildOverviewChart();
+    celebrateIfRecord();
   } catch(e) {
     document.getElementById('ov-cardboard').textContent = 'Error';
   }
+}
+
+// Confetti when the current month sets a new all-time monthly record
+// (cardboard + plastic combined). Fires once per month per browser.
+function celebrateIfRecord(){
+  try {
+    const curM = currentMonthLabel(0);
+    const totals = {};
+    [...cbData, ...plData].forEach(r => totals[r.month] = (totals[r.month] || 0) + (Number(r.kg) || 0));
+    const cur = totals[curM] || 0;
+    const prevBest = Math.max(0, ...Object.entries(totals).filter(([m]) => m !== curM).map(([,v]) => v));
+    if (cur > prevBest && cur > 0 && localStorage.getItem('sustyRecord') !== curM) {
+      localStorage.setItem('sustyRecord', curM);
+      launchConfetti();
+      toast(`🎉 New monthly record — ${cur.toFixed(0)} kg collected in ${curM}!`);
+    }
+  } catch(e){ /* celebration is optional */ }
 }
 
 // Sort recycling/energy data arrays by month string chronologically
@@ -1200,15 +1534,24 @@ function buildBar(id, labels, data, label, color, height=220, bgColors=null) {
   if (chartsBuilt[id]) chartsBuilt[id].destroy();
   const ctx = document.getElementById(id);
   if (!ctx) return;
+  // Gradient fill when no per-bar colors are given (beautify pass, 9 Jul 2026)
+  const gradientFill = (context) => {
+    const { ctx: c, chartArea } = context.chart;
+    if (!chartArea) return color + 'CC';
+    const g = c.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    g.addColorStop(0, color + '55'); g.addColorStop(1, color + 'E6');
+    return g;
+  };
   chartsBuilt[id] = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ label, data, backgroundColor: bgColors || color+'CC', borderColor: bgColors ? bgColors.map(c=>c.replace('CC','FF').replace('55','AA')) : color, borderWidth:1.5, borderRadius:6 }] },
+    data: { labels, datasets: [{ label, data, backgroundColor: bgColors || gradientFill, borderColor: bgColors ? bgColors.map(c=>c.replace('CC','FF').replace('55','AA')) : color, borderWidth:1.5, borderRadius:8, borderSkipped:false }] },
     options: {
       responsive:true, maintainAspectRatio:false,
+      animation:{ duration:900, easing:'easeOutQuart' },
       plugins:{ legend:{ display:false } },
       scales:{
-        y:{ beginAtZero:true, grid:{ color:'#E8F5E9' }, ticks:{ font:{size:11} } },
-        x:{ grid:{ display:false }, ticks:{ font:{size:10}, maxRotation:45 } }
+        y:{ beginAtZero:true, grid:{ color:chartGridColor() }, ticks:{ font:{size:11}, color:chartTickColor() } },
+        x:{ grid:{ display:false }, ticks:{ font:{size:10}, maxRotation:45, color:chartTickColor() } }
       }
     }
   });
@@ -2791,7 +3134,8 @@ function renderCalendarView() {
       const sess   = s.session.toLowerCase();
       const kgTag  = s.kg !== null ? `<span class="kg-tag">${s.kg}kg</span>` : '';
       const cls    = isAdmin ? ` editable` : '';
-      const click  = isAdmin ? `onclick="openEditSlot(${s.id})"` : '';
+      // Non-admins get a tap-for-details bottom sheet (slots are tiny on phones)
+      const click  = isAdmin ? `onclick="openEditSlot(${s.id})"` : `onclick="showSlotSheet(${s.id})" style="cursor:pointer"`;
       const editHint = isAdmin ? `<span style="float:right;opacity:.5;font-size:.6rem">✏️</span>` : '';
       return `<div class="cal-slot ${sess}${cls}" ${click}>${editHint}<strong>${s.session}</strong> ${s.team.join(' & ')}${kgTag}</div>`;
     }).join('');
@@ -2831,7 +3175,7 @@ async function testTelegram() {
 (async () => {
   renderManualChecklist();
   renderEventPills();
-  await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps()]);
+  await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps(), loadImpact()]);
   renderAttention();
   refreshIcons();
   if (pendingCommsPostId) {
