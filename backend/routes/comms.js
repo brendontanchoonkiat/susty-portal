@@ -17,6 +17,21 @@ const COMMS_FILE = path.join(__dirname, '../data/comms.json');
 // any time. See extend_comms_posts_for_planning.sql / extend_comms_posts_v2.sql.
 const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
 
+// Editorial-stage auto status (added 9 Jul 2026 per Brendon): while a post is
+// still pre-review, its status reflects how much content it actually has —
+// `planned` = bare entry (date/theme/tagged member, nothing written yet),
+// `draft` = someone's started on it (caption and/or image and/or details
+// present). Only applies while the status is still one of these two — never
+// overrides pending_review/needs_changes/approved/posted/archived, and an
+// explicit `status` in the request body always wins (e.g. manually reverting
+// something, or picking `idea`).
+const PRE_REVIEW_STATUSES = ['planned', 'draft'];
+function deriveEditorialStatus(currentStatus, content) {
+  if (currentStatus && !PRE_REVIEW_STATUSES.includes(currentStatus)) return currentStatus;
+  const hasContent = !!(content.caption || content.details || content.image_url);
+  return hasContent ? 'draft' : 'planned';
+}
+
 // Accepts common web image types plus iPhone's default HEIC/HEIF — most
 // members will be uploading straight from their phone's camera roll, and a
 // too-narrow allowlist here silently failed the upload with no clear reason
@@ -142,7 +157,9 @@ router.post('/',
       details:    details || '',
       created_by: createdBy || owner || '',
       assignees:  cleanAssignees,
-      status:     VALID_STATUS.includes(status) ? status : 'draft',
+      status:     status !== undefined && VALID_STATUS.includes(status)
+                    ? status
+                    : deriveEditorialStatus(null, { caption, details, image_url: null }),
     };
 
     const dbc = getClient();
@@ -190,7 +207,14 @@ router.post('/:id/image', (req, res, next) => {
   const imageUrl = await db.uploadImage(req.file.buffer, filename, req.file.mimetype, 'comms');
   if (!imageUrl) return res.status(502).json({ error: 'Image upload to storage failed' });
 
-  const { data, error } = await dbc.from('comms_posts').update({ image_url: imageUrl }).eq('id', id).select().single();
+  // An attached image always counts as "started on" — bump planned -> draft
+  // the same way adding a caption/details does (deriveEditorialStatus is a
+  // no-op once the post is past the pre-review stage).
+  const { data: existing } = await dbc.from('comms_posts').select('status').eq('id', id).single();
+  const patch = { image_url: imageUrl };
+  if (existing) patch.status = deriveEditorialStatus(existing.status, { image_url: imageUrl });
+
+  const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
   if (error) return res.status(404).json({ error: 'Post not found' });
   res.json(fromDbRow(data));
 });
@@ -236,12 +260,30 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
+  const dbcEarly = getClient();
+  // Content is changing and the caller didn't explicitly set a status —
+  // recompute planned/draft from the merged (existing + incoming) content so
+  // editing a bare entry's caption/details correctly bumps it to "draft".
+  let derivedStatus;
+  if (status === undefined && (caption !== undefined || details !== undefined) && dbcEarly) {
+    const { data: existing } = await dbcEarly.from('comms_posts').select('status, caption, details, image_url').eq('id', id).single();
+    if (existing) {
+      derivedStatus = deriveEditorialStatus(existing.status, {
+        caption: caption !== undefined ? caption : existing.caption,
+        details: details !== undefined ? details : existing.details,
+        image_url: existing.image_url,
+      });
+    }
+  }
+
   const patch = {};
   if (status !== undefined) {
     patch.status = status;
     // Only stamp posted_at when newly marking as posted; clear it on revert
     // so a reverted post doesn't carry a stale "posted" timestamp.
     patch.posted_at = status === 'posted' ? new Date().toISOString() : null;
+  } else if (derivedStatus !== undefined) {
+    patch.status = derivedStatus;
   }
   if (theme     !== undefined) patch.theme     = theme;
   if (owner     !== undefined) patch.owner     = owner;

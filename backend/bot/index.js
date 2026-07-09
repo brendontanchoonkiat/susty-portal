@@ -898,6 +898,10 @@ function backToCommsKb() {
   return new InlineKeyboard().text('← Back', 'menu:comms');
 }
 
+function commsCancelKb() {
+  return new InlineKeyboard().text('✖️ Cancel', 'comms:cancelflow');
+}
+
 function commsStatusLabel(status) {
   return (status || '').replace(/_/g, ' ');
 }
@@ -1072,24 +1076,23 @@ bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
 
   commsNotify.notifyAssigneesApproved(p).catch(() => {});
 
-  // If it's already the post's date, offer to post right now instead of
-  // waiting for a reminder; otherwise it just sits as approved and the daily
-  // digest (or a TL-scheduled time) will prompt on the day.
-  if (isPostDateTodaySGT(p.date)) {
-    const doneMsg = `✅ Approved by ${name}. It's scheduled for today — post it whenever you're ready.`;
-    const kb = new InlineKeyboard().text('▶️ Post Now', `comms:postnow:${p.id}`);
-    await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
-      .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
-      .catch(() => {});
-    await ctx.reply('When it\'s live:', { reply_markup: kb });
-  } else {
-    const doneMsg = `✅ Approved by ${name}. You'll get a reminder closer to ${fmtDateShort(p.date)} to post it — or tap below to pick an exact time now.`;
-    const kb = new InlineKeyboard().text('⏰ Schedule Reminder Time', `comms:schedule:${p.id}`);
-    await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
-      .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
-      .catch(() => ctx.reply(doneMsg));
-    await ctx.reply('Want a specific reminder time?', { reply_markup: kb }).catch(() => {});
-  }
+  // Always offer both options together — post right now, or pick an exact
+  // reminder time — regardless of whether the post's date is today. (Used to
+  // only show one or the other based on date, which read as a missing
+  // button when a TL approved something scheduled for today but still
+  // wanted to set a specific time later. Simpler and more predictable to
+  // just always show both.)
+  const doneMsg = isPostDateTodaySGT(p.date)
+    ? `✅ Approved by ${name}. It's scheduled for today — post it whenever you're ready.`
+    : `✅ Approved by ${name}. You'll get a reminder closer to ${fmtDateShort(p.date)} — or pick an exact time now.`;
+  await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
+    .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
+    .catch(() => ctx.reply(doneMsg));
+
+  const kb = new InlineKeyboard()
+    .text('▶️ Post Now', `comms:postnow:${p.id}`).row()
+    .text('⏰ Schedule Reminder Time', `comms:schedule:${p.id}`);
+  await ctx.reply('When you\'re ready:', { reply_markup: kb }).catch(() => {});
 });
 
 bot.callbackQuery(/^comms:requestchanges:(\d+)$/, async (ctx) => {
@@ -1097,7 +1100,10 @@ bot.callbackQuery(/^comms:requestchanges:(\d+)$/, async (ctx) => {
   if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   ctx.session.awaitingCommsReject = id;
-  await ctx.reply('💬 What should change? Type your feedback — this gets sent straight to whoever\'s tagged on it, and the post stays linked so they can just edit and re-send (no need to start over).');
+  await ctx.reply(
+    '💬 What should change? Type your feedback — this gets sent straight to whoever\'s tagged on it, and the post stays linked so they can just edit and re-send (no need to start over).',
+    { reply_markup: commsCancelKb() }
+  );
 });
 
 bot.callbackQuery(/^comms:schedule:(\d+)$/, async (ctx) => {
@@ -1105,9 +1111,35 @@ bot.callbackQuery(/^comms:schedule:(\d+)$/, async (ctx) => {
   if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
   const id = Number(ctx.match[1]);
   ctx.session.awaitingCommsScheduleTime = id;
-  await ctx.reply('⏰ What time should I remind you to post this (Singapore time)? e.g. <code>6:30pm</code> or <code>18:30</code>.', { parse_mode: 'HTML' });
+  await ctx.reply(
+    '⏰ What time should I remind you to post this (Singapore time)? e.g. <code>6:30pm</code> or <code>18:30</code>.',
+    { parse_mode: 'HTML', reply_markup: commsCancelKb() }
+  );
 });
 
+// Cancel button attached to the Request Changes / Schedule Time text
+// prompts — clears whichever "awaiting" flag is set. Typing cancel/stop
+// still works too (see the message:text handler's cancel block).
+bot.callbackQuery('comms:cancelflow', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (ctx.session.awaitingCommsReject) {
+    ctx.session.awaitingCommsReject = null;
+    return ctx.editMessageText('Cancelled — post left as-is.').catch(() => ctx.reply('Cancelled — post left as-is.'));
+  }
+  if (ctx.session.awaitingCommsScheduleTime) {
+    ctx.session.awaitingCommsScheduleTime = null;
+    return ctx.editMessageText('Cancelled — no reminder time set.').catch(() => ctx.reply('Cancelled — no reminder time set.'));
+  }
+  return ctx.editMessageText('Nothing to cancel.').catch(() => {});
+});
+
+// Tapping this now does two things when a channel is configured
+// (COMMS_CHANNEL_ID): actually publishes the image+caption there, THEN marks
+// the post as posted — one tap instead of copy-pasting out to the channel
+// manually. If publishing fails (bot not an admin there, wrong ID, etc.), the
+// post is deliberately NOT marked posted, so a failed publish never shows as
+// "done." Falls back to the original reminder-only behavior (just marks
+// posted, TL already published it themselves elsewhere) if no channel is set.
 bot.callbackQuery(/^comms:(?:markposted|postnow):(\d+)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   if (!(await isCommsTL(ctx))) return ctx.reply('⚠️ TL only.');
@@ -1116,12 +1148,27 @@ bot.callbackQuery(/^comms:(?:markposted|postnow):(\d+)$/, async (ctx) => {
   const supa = db.getClient();
   if (!supa) return ctx.reply('⚠️ Supabase not configured.');
 
+  const { data: post } = await supa.from('comms_posts').select('*').eq('id', id).single();
+  if (!post) return ctx.reply('⚠️ Post not found — it may have been edited or deleted.');
+
+  let publishNote = '';
+  const result = await commsNotify.publishToCommsChannel(post);
+  if (!result.skipped) {
+    if (!result.ok) {
+      return ctx.reply(
+        `⚠️ Couldn't publish to the channel: ${result.error}\n\n` +
+        `Nothing was marked posted. Fix the issue (bot needs to be an admin in the channel — check COMMS_CHANNEL_ID) and try again.`
+      );
+    }
+    publishNote = result.link ? `\n🔗 ${result.link}` : '\n📮 Sent to the channel.';
+  }
+
   const { data: p, error } = await supa.from('comms_posts')
     .update({ status: 'posted', posted_by: name, posted_at: new Date().toISOString() })
     .eq('id', id).select().single();
-  if (error || !p) return ctx.reply('⚠️ Could not update — post may no longer exist.');
+  if (error || !p) return ctx.reply('⚠️ Published, but could not update the post status — check the portal.');
 
-  const doneMsg = `📮 Marked as posted by ${name}. Nice work! 🌿`;
+  const doneMsg = `📮 Marked as posted by ${name}. Nice work! 🌿${publishNote}`;
   await ctx.editMessageCaption({ caption: doneMsg, parse_mode: 'HTML' })
     .catch(() => ctx.editMessageText(doneMsg, { parse_mode: 'HTML' }))
     .catch(() => ctx.reply(doneMsg));

@@ -10,23 +10,50 @@ const db = require('./supabase');
 
 // Comms has its own, smaller cast than the full W2R roster — deliberately
 // separate from bot/index.js's ministry-wide TL_NAMES (Brendon/Judy/Wee
-// Shing), which is roster/duty-only. Judy runs comms; Brendon stays on as
-// admin/overseer across everything per his instruction, so he's included
-// here too even though he's not the day-to-day comms TL. Wee Shing is not
-// involved in comms and deliberately excluded. Both configurable via env
-// vars (comma-separated) without a redeploy.
+// Shing), which is roster/duty-only. Wee Shing is not involved in comms and
+// deliberately excluded from both lists below. Configurable via env vars
+// (comma-separated) without a redeploy.
+//
+// Two different lists on purpose (split 9 Jul 2026 per Brendon):
+// - COMMS_TL_NAMES: who has TL-level ACCESS in the bot (approve/request
+//   changes/post/delete, and can browse Pending Approvals / Ready to Post).
+//   Includes Brendon — he stays admin/overseer across everything and wants
+//   to be able to check in and act if needed, he just doesn't want to be
+//   pushed a DM for every event.
+// - COMMS_NOTIFY_NAMES: who actually gets proactively DMed (new submission,
+//   delete request, daily digest, etc.) — Judy only. Brendon can still see
+//   everything by opening the bot's 📢 Comms menu himself (pull, not push).
 const COMMS_TL_NAMES = (process.env.COMMS_TL_NAMES || 'Judy,Brendon').split(',').map(n => n.trim());
+const COMMS_NOTIFY_NAMES = (process.env.COMMS_NOTIFY_NAMES || 'Judy').split(',').map(n => n.trim());
 const COMMS_MEMBER_NAMES = (process.env.COMMS_MEMBER_NAMES || 'Alan,Esther,Elaine,Matthew,Berry').split(',').map(n => n.trim());
+
+// Public portal URL — included in DMs to assignees so they can jump straight
+// to the Comms tab to make edits. Same origin the frontend/API are served
+// from (server.js serves the static frontend and /api from one Express app).
+const PORTAL_URL = process.env.PORTAL_URL || 'https://susty-portal-production.up.railway.app';
+
+// The external Telegram channel finished posts actually get published to
+// (added 9 Jul 2026). Not set until Brendon adds the bot as an admin to that
+// channel and provides its chat ID — every call site checks for this and
+// falls back to the old "TL posts manually, just confirms" behavior when
+// it's missing, so nothing breaks before that setup is done.
+// COMMS_CHANNEL_USERNAME is optional (public channels only, no leading @) —
+// used only to build a t.me link back to the published post in confirmations.
+const COMMS_CHANNEL_ID = process.env.COMMS_CHANNEL_ID || null;
+const COMMS_CHANNEL_USERNAME = process.env.COMMS_CHANNEL_USERNAME || null;
 
 function getBot() {
   try { return require('../bot/index').bot; } catch { return null; }
 }
 
+// Notification recipients (push) — currently just Judy. Separate from
+// isCommsTL() in bot/index.js, which gates who can SEE/ACT on comms TL
+// screens (Judy + Brendon).
 async function getTLTelegramIds() {
   const supa = db.getClient();
   if (!supa) return [];
   const ids = [];
-  for (const name of COMMS_TL_NAMES) {
+  for (const name of COMMS_NOTIFY_NAMES) {
     const { data } = await supa.from('members').select('telegram_id').ilike('name', name).single();
     if (data?.telegram_id) ids.push({ name, telegram_id: data.telegram_id });
   }
@@ -74,7 +101,7 @@ async function notifyAssigneesTagged(post) {
   const msg =
     `📌 <b>You've been tagged on a comms post</b>\n\n` +
     `📅 <b>${fmtDate(post.date)}</b>\n📝 <b>${post.theme}</b>\n\n` +
-    `Fill in the caption, notes and image in the portal Comms tab, then tap Submit for Review when it's ready.`;
+    `Fill in the caption, notes and image, then tap Submit for Review when it's ready.\n👉 ${PORTAL_URL}`;
   await dmNames(post.assignees, msg);
 }
 
@@ -123,7 +150,7 @@ async function notifyAssigneesChangesRequested(post, comment) {
   const msg =
     `💬 <b>Changes requested on your post</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${post.theme}\n\n` +
     (comment ? `"${comment}"\n\n` : '') +
-    `Update it in the portal Comms tab, then tap Submit for Review again — no need to start over.`;
+    `Update it here, then tap Submit for Review again — no need to start over.\n👉 ${PORTAL_URL}`;
   await dmNames(recipientNames(post), msg);
 }
 
@@ -148,9 +175,38 @@ async function notifyTLsDeleteRequested(post) {
   }
 }
 
+// Publishes a post's image+caption straight to the external Telegram channel
+// (COMMS_CHANNEL_ID). Returns { ok, skipped, error, link }:
+// - skipped: true when no channel is configured yet — callers should fall
+//   back to the old manual-post behavior rather than treating this as failure.
+// - ok: false + error: something went wrong (bot not an admin there, wrong
+//   ID, etc.) — callers should NOT mark the post as posted in this case, so
+//   a failed publish never silently shows as "done."
+async function publishToCommsChannel(post) {
+  if (!COMMS_CHANNEL_ID) return { ok: false, skipped: true };
+  const bot = getBot();
+  if (!bot) return { ok: false, error: 'Bot not available' };
+
+  const caption = post.caption || post.theme || '';
+  try {
+    let sent;
+    if (post.image_url) {
+      sent = await bot.api.sendPhoto(COMMS_CHANNEL_ID, post.image_url, caption ? { caption } : {});
+    } else {
+      sent = await bot.api.sendMessage(COMMS_CHANNEL_ID, caption || post.theme);
+    }
+    const link = (COMMS_CHANNEL_USERNAME && sent?.message_id)
+      ? `https://t.me/${COMMS_CHANNEL_USERNAME}/${sent.message_id}` : null;
+    return { ok: true, link };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
 module.exports = {
-  COMMS_TL_NAMES, COMMS_MEMBER_NAMES, getTLTelegramIds, getTelegramIdForName, recipientNames,
+  COMMS_TL_NAMES, COMMS_NOTIFY_NAMES, COMMS_MEMBER_NAMES, PORTAL_URL, COMMS_CHANNEL_ID,
+  getTLTelegramIds, getTelegramIdForName, recipientNames,
   notifyAssigneesTagged, notifyTLsSubmitted, notifyAssigneesApproved, notifyAssigneesChangesRequested,
-  notifyTLsDeleteRequested,
+  notifyTLsDeleteRequested, publishToCommsChannel,
   fmtDate,
 };

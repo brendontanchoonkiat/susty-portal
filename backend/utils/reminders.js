@@ -344,8 +344,9 @@ async function sendCommsReminders(bot) {
  * scheduled time has passed in the last 10 minutes and hasn't been pinged
  * yet (scheduled_reminder_sent guards against re-firing every tick).
  * DMs whoever approved the post (falls back to all TLs) with a one-tap
- * "✅ Mark as Posted" button — the bot never auto-publishes to social media,
- * this is purely the reminder + confirmation step.
+ * "▶️ Post Now" button — same `comms:postnow` callback bot/index.js uses
+ * elsewhere, which publishes straight to COMMS_CHANNEL_ID when configured
+ * (added 9 Jul 2026) and falls back to reminder-only if it isn't.
  */
 async function checkScheduledCommsPosts(bot) {
   const supa = db.getClient();
@@ -365,10 +366,12 @@ async function checkScheduledCommsPosts(bot) {
   if (!due?.length) return;
 
   for (const p of due) {
-    const kb = new InlineKeyboard().text('✅ Mark as Posted', `comms:markposted:${p.id}`);
+    const kb = new InlineKeyboard().text('▶️ Post Now', `comms:postnow:${p.id}`);
     const msg =
       `🔔 <b>Time to post!</b>\n\n📅 ${commsNotify.fmtDate(p.date)}\n📝 ${p.theme}\n\n` +
-      `Publish it now, then tap the button below once it's live.`;
+      (commsNotify.COMMS_CHANNEL_ID
+        ? `Tap below and I'll post it to the channel and mark it done.`
+        : `Publish it now, then tap the button below once it's live.`);
 
     const approverName = p.approved_by;
     const recipients = approverName ? [approverName] : (await commsNotify.getTLTelegramIds()).map(t => t.name);
