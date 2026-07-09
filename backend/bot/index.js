@@ -2112,14 +2112,14 @@ bot.callbackQuery('admin:gpccheckin', async (ctx) => {
     .text(`📤 Send to ${names.length} members`, 'admin:gpccheckin:send').row()
     .text('📋 View Responses So Far', 'admin:gpccheckin:responses').row()
     .text('← Cancel', 'admin:menu');
-  await ctx.editMessageText(
+  const t1 =
     `📋 <b>GPC W2R Check-in</b>\n\n` +
     `This will DM <b>${names.length}</b> members (everyone on the Jul 23–27 GPC roster, including TLs) with a reminder of their slot(s) plus two quick questions:\n` +
     `1️⃣ W2R only, or also another ministry that day?\n` +
     `2️⃣ There the whole day, or just a short while?\n\n` +
-    `Recipients: ${names.join(', ')}`,
-    { parse_mode: 'HTML', reply_markup: kb }
-  );
+    `Recipients: ${names.join(', ')}`;
+  const o1 = { parse_mode: 'HTML', reply_markup: kb };
+  await ctx.editMessageText(t1, o1).catch(() => ctx.reply(t1, o1));
 });
 
 bot.callbackQuery('admin:gpccheckin:send', async (ctx) => {
@@ -2145,7 +2145,8 @@ bot.callbackQuery('admin:gpccheckin:send', async (ctx) => {
   const summary =
     `✅ Sent to ${sent.length}: ${sent.join(', ') || '—'}` +
     (failed.length ? `\n⚠️ Couldn't reach (not registered on the bot?): ${failed.join(', ')}` : '');
-  await ctx.editMessageText(summary, { parse_mode: 'HTML', reply_markup: backToAdmin() });
+  const oSummary = { parse_mode: 'HTML', reply_markup: backToAdmin() };
+  await ctx.editMessageText(summary, oSummary).catch(() => ctx.reply(summary, oSummary));
 });
 
 bot.callbackQuery('admin:gpccheckin:responses', async (ctx) => {
@@ -2164,46 +2165,60 @@ bot.callbackQuery('admin:gpccheckin:responses', async (ctx) => {
     const dur = r.duration ? (durationLabel[r.duration] || r.duration) + (r.arrival_note ? ` (${escapeHtml(r.arrival_note)})` : '') : '—';
     return `${i + 1}. <b>${r.member_name}</b> — ${ms} · ${dur}`;
   }).join('\n');
-  await ctx.editMessageText(
-    `📋 <b>GPC Check-in Responses (${rows.length})</b>\n\n${lines}`,
-    { parse_mode: 'HTML', reply_markup: backToAdmin() }
-  );
+  const tResp = `📋 <b>GPC Check-in Responses (${rows.length})</b>\n\n${lines}`;
+  const oResp = { parse_mode: 'HTML', reply_markup: backToAdmin() };
+  await ctx.editMessageText(tResp, oResp).catch(() => ctx.reply(tResp, oResp));
 });
 
 bot.callbackQuery(/^gpc:q1:(w2ronly|other|unsure)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   const status = ctx.match[1];
   const name = await resolveName(ctx);
-  if (!name) return;
+  // Previously: silent `return` here left the member staring at the same
+  // message with no feedback if resolveName() ever came back empty (found
+  // 9 Jul 2026 — "selected 'also another ministry', not directed to any
+  // page"). Now tells them what to do instead of doing nothing.
+  if (!name) {
+    return ctx.reply(`⚠️ Couldn't find your registration. Please tap /start first, then try the check-in link again.`);
+  }
   if (status === 'other') {
     ctx.session.pendingGpcCheckin = { ministry_status: 'other_ministry' };
     ctx.session.awaitingGpcOtherMinistry = true;
-    return ctx.editMessageText(`🙏 Which other ministry are you serving that day?`, { parse_mode: 'HTML' });
+    const t = `🙏 Which other ministry are you serving that day?`;
+    const o = { parse_mode: 'HTML' };
+    return ctx.editMessageText(t, o).catch(() => ctx.reply(t, o));
   }
   ctx.session.pendingGpcCheckin = { ministry_status: status };
-  await ctx.editMessageText(
-    `Got it! One more thing — will you be there for the <b>whole day</b>, or just a <b>short while</b>?`,
-    { parse_mode: 'HTML', reply_markup: gpcQ2Kb() }
-  );
+  const t2 = `Got it! One more thing — will you be there for the <b>whole day</b>, or just a <b>short while</b>?`;
+  const o2 = { parse_mode: 'HTML', reply_markup: gpcQ2Kb() };
+  await ctx.editMessageText(t2, o2).catch(() => ctx.reply(t2, o2));
 });
 
 bot.callbackQuery(/^gpc:q2:(full|short)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   const duration = ctx.match[1];
   const name = await resolveName(ctx);
-  if (!name || !ctx.session.pendingGpcCheckin) return;
+  if (!name) {
+    return ctx.reply(`⚠️ Couldn't find your registration. Please tap /start first, then try the check-in link again.`);
+  }
+  if (!ctx.session.pendingGpcCheckin) {
+    // Session was reset (e.g. bot restarted between steps) — recover
+    // gracefully instead of leaving the tap looking like it did nothing.
+    return ctx.reply(`⚠️ That check-in step expired (the bot may have restarted). Please ask your Team Lead to resend the GPC W2R Check-in.`);
+  }
   if (duration === 'short') {
     ctx.session.pendingGpcCheckin.duration = 'short_while';
     ctx.session.awaitingGpcArrivalNote = true;
-    return ctx.editMessageText(
-      `⏱ Roughly when will you come down / for how long? <i>(e.g. "after 10am service, ~1 hour")</i>`,
-      { parse_mode: 'HTML' }
-    );
+    const t = `⏱ Roughly when will you come down / for how long? <i>(e.g. "after 10am service, ~1 hour")</i>`;
+    const o = { parse_mode: 'HTML' };
+    return ctx.editMessageText(t, o).catch(() => ctx.reply(t, o));
   }
   ctx.session.pendingGpcCheckin.duration = 'full_day';
   await db.saveGpcCheckin(name, ctx.session.pendingGpcCheckin);
   ctx.session.pendingGpcCheckin = null;
-  await ctx.editMessageText(`✅ Thanks, ${name}! Got your answer — see you at GPC 🌿`, { parse_mode: 'HTML' });
+  const t3 = `✅ Thanks, ${name}! Got your answer — see you at GPC 🌿`;
+  const o3 = { parse_mode: 'HTML' };
+  await ctx.editMessageText(t3, o3).catch(() => ctx.reply(t3, o3));
 });
 
 // ─── Admin: generic feature-toggle handler ─────────────────────────────────
