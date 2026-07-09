@@ -410,6 +410,45 @@ router.patch('/:id', validateCommsPatch, async (req, res) => {
   }
 });
 
+// POST /:id/duplicate — copies a post's content (theme, caption, details,
+// images, assignees) into a brand-new post so a TL can reuse an archived
+// idea/photo another time (added 9 Jul 2026, per Brendon). Date is left
+// blank and status reset to planned/draft (re-derived from the copied
+// content) — it's a fresh post from here, not linked back to the original.
+router.post('/:id/duplicate', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+
+    const dbc = getClient();
+    if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+
+    const { data: original, error: fetchErr } = await dbc.from('comms_posts').select('*').eq('id', id).single();
+    if (fetchErr || !original) return res.status(404).json({ error: 'Post not found' });
+
+    const copy = {
+      date: '',
+      theme: original.theme,
+      owner: original.owner || '',
+      notes: original.notes || '',
+      caption: original.caption || '',
+      details: original.details || '',
+      image_url: original.image_url || null,
+      image_urls: original.image_urls || [],
+      assignees: [],
+      created_by: '',
+      status: deriveEditorialStatus(null, { caption: original.caption, details: original.details, image_urls: original.image_urls }),
+    };
+
+    const { data, error } = await dbc.from('comms_posts').insert(copy).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(201).json(fromDbRow(data));
+  } catch (err) {
+    console.error('[Comms] POST /:id/duplicate failed:', err.stack || err.message);
+    res.status(500).json({ error: `Duplicate failed: ${err.message}` });
+  }
+});
+
 // POST /:id/request-delete — a member flags a post for deletion instead of
 // deleting it outright. Notifies the comms TLs (Judy/Brendon) with
 // Confirm/Keep buttons via the bot — nothing is actually removed until a TL
@@ -444,6 +483,15 @@ router.post('/:id/request-delete', async (req, res) => {
 // no auth required, same open-creation philosophy as the rest of this route.
 // See create_comms_comments_table.sql.
 
+// Comments only open up once a post has actually gone to the TL for review
+// (added 9 Jul 2026, per Brendon) — before that it's still a private draft
+// the assignee is working on, so there's nothing to comment on yet.
+const COMMENTABLE_STATUSES = ['pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
+
+function mapComment(c) {
+  return { id: c.id, postId: c.post_id, author: c.author_name, comment: c.comment, resolved: !!c.resolved, createdAt: c.created_at };
+}
+
 // GET /:id/comments — list, oldest first
 router.get('/:id/comments', async (req, res) => {
   const id = Number(req.params.id);
@@ -452,10 +500,11 @@ router.get('/:id/comments', async (req, res) => {
   if (!dbc) return res.json([]); // no Supabase configured — comments simply unavailable, not an error
   const { data, error } = await dbc.from('comms_comments').select('*').eq('post_id', id).order('created_at', { ascending: true });
   if (error) return res.status(500).json({ error: error.message });
-  res.json((data || []).map(c => ({ id: c.id, postId: c.post_id, author: c.author_name, comment: c.comment, createdAt: c.created_at })));
+  res.json((data || []).map(mapComment));
 });
 
-// POST /:id/comments — add a comment { author, comment }
+// POST /:id/comments — add a comment { author, comment }. Only allowed once
+// the post has been submitted for review — see COMMENTABLE_STATUSES above.
 router.post('/:id/comments', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -470,6 +519,9 @@ router.post('/:id/comments', async (req, res) => {
 
     const { data: post } = await dbc.from('comms_posts').select('*').eq('id', id).single();
     if (!post) return res.status(404).json({ error: 'Post not found' });
+    if (!COMMENTABLE_STATUSES.includes(post.status)) {
+      return res.status(400).json({ error: 'Comments open up once this post is submitted for review.' });
+    }
 
     const { data, error } = await dbc.from('comms_comments')
       .insert({ post_id: id, author_name: author, comment }).select().single();
@@ -482,11 +534,26 @@ router.post('/:id/comments', async (req, res) => {
       console.warn('[Comms] Failed to notify on new comment:', err.message);
     }
 
-    res.status(201).json({ id: data.id, postId: data.post_id, author: data.author_name, comment: data.comment, createdAt: data.created_at });
+    res.status(201).json(mapComment(data));
   } catch (err) {
     console.error('[Comms] POST /:id/comments failed:', err.stack || err.message);
     res.status(500).json({ error: `Comment failed: ${err.message}` });
   }
+});
+
+// PATCH /:id/comments/:commentId — toggle resolved { resolved: true|false }.
+// No auth required (same open philosophy as the rest of comms) — anyone
+// (assignee or TL) can mark feedback addressed. Drives the reminder logic
+// in reminders.js: unresolved comments on a draft keep nudging the assignee.
+router.patch('/:id/comments/:commentId', async (req, res) => {
+  const commentId = Number(req.params.commentId);
+  if (!Number.isInteger(commentId) || commentId <= 0) return res.status(400).json({ error: 'Invalid comment ID' });
+  if (typeof req.body?.resolved !== 'boolean') return res.status(400).json({ error: 'resolved (boolean) is required' });
+  const dbc = getClient();
+  if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+  const { data, error } = await dbc.from('comms_comments').update({ resolved: req.body.resolved }).eq('id', commentId).select().single();
+  if (error || !data) return res.status(404).json({ error: error?.message || 'Comment not found' });
+  res.json(mapComment(data));
 });
 
 // DELETE /:id/comments/:commentId — TL-only moderation (admin key required,

@@ -271,25 +271,44 @@ async function sendCommsReminders(bot) {
     .gte('date', fmt(today));
   if (!posts?.length) return;
 
-  // 1. Assignee nudge — post is due in 5 days OR tomorrow and still hasn't
-  // been pushed to the TLs (idea/draft/planned), or is sitting in
-  // needs_changes waiting on the member to edit and re-submit. Mirrors the
-  // duty reminder's 5-day/1-day pattern. Widened from 2-day/1-day to
-  // 5-day/1-day (9 Jul 2026, per Brendon) for more leeway/time to edit.
-  const needsAction = posts.filter(p =>
-    (p.date === fmt(tomorrow) || p.date === fmt(in5Days)) &&
-    ['idea', 'draft', 'planned', 'needs_changes'].includes(p.status)
+  // 1. Assignee nudge — post is due in 5 days OR tomorrow. Two reasons to
+  // nudge (9 Jul 2026, per Brendon — a post that's actually been worked on
+  // shouldn't keep nagging just because it hasn't been submitted yet):
+  //  - Not started at all: idea/planned (bare, nothing written) or
+  //    needs_changes (TL sent it back, always worth a nudge).
+  //  - Has been worked on (draft/pending_review/approved) but has an
+  //    unresolved comment waiting on a reply — comms_comments.resolved=false.
+  // A draft that's simply "not submitted yet" but has no open comments is
+  // left alone — it's been worked on, no need to nag.
+  const upcoming = posts.filter(p => p.date === fmt(tomorrow) || p.date === fmt(in5Days));
+  let unresolvedCommentPostIds = new Set();
+  if (upcoming.length) {
+    const { data: unresolved } = await supa.from('comms_comments')
+      .select('post_id').eq('resolved', false).in('post_id', upcoming.map(p => p.id));
+    unresolvedCommentPostIds = new Set((unresolved || []).map(c => c.post_id));
+  }
+
+  const NOT_STARTED_STATUSES = ['idea', 'planned'];
+  const needsAction = upcoming.filter(p =>
+    p.status === 'needs_changes' ||
+    NOT_STARTED_STATUSES.includes(p.status) ||
+    unresolvedCommentPostIds.has(p.id)
   );
   for (const p of needsAction) {
     const daysOut = p.date === fmt(tomorrow) ? 1 : 5;
     const names = commsNotify.recipientNames(p);
+    const hasUnresolvedComments = unresolvedCommentPostIds.has(p.id);
     const action = p.status === 'needs_changes'
       ? `still has TL feedback to address${p.rejected_reason ? ` — "${p.rejected_reason}"` : ''}`
-      : `hasn't been submitted for review yet`;
+      : hasUnresolvedComments
+        ? `has a comment waiting on a reply`
+        : `hasn't been started yet`;
     const msg =
       `⏰ <b>Comms reminder — ${daysOut} day${daysOut > 1 ? 's' : ''} to go!</b>\n\n` +
       `📅 "${p.theme}" is scheduled for ${commsNotify.fmtDate(p.date)} but ${action}.\n\n` +
-      `Finish it up in the portal Comms tab and tap Submit for Review.`;
+      (hasUnresolvedComments
+        ? `Check the comments in the portal Comms tab and reply, or mark it resolved.`
+        : `Finish it up in the portal Comms tab and tap Submit for Review.`);
     for (const name of names) {
       const id = await commsNotify.getTelegramIdForName(name);
       if (!id) continue;

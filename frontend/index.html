@@ -540,13 +540,19 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-primary btn-sm" onclick="saveCommsPost()">💾 Save</button>
       <button class="btn btn-outline btn-sm" id="cm-submit-btn" onclick="submitCommsForReview()" style="display:none">📤 Submit for Review</button>
+      <button class="btn btn-outline btn-sm" id="cm-archive-btn" onclick="archiveCommsPost()" style="display:none">📦 Archive</button>
+      <button class="btn btn-outline btn-sm" id="cm-reuse-btn" onclick="duplicateCommsPost()" style="display:none">🔁 Reuse This Idea</button>
       <button class="btn btn-outline btn-sm" onclick="closeCommsEditor()">Cancel</button>
       <button class="btn btn-outline btn-sm" id="cm-delete-btn" onclick="deleteCommsPost()" style="display:none;margin-left:auto;color:#C62828;border-color:#E57373">🗑 Delete</button>
     </div>
 
     <!-- Comments (added 9 Jul 2026, per Esther's feedback — anyone should be
          able to leave visible feedback on a post, not just the TL privately.
-         Only shown once the post actually exists (has an id). -->
+         Only opens up once the post is submitted for review — see
+         COMMENTABLE_STATUSES in openCommsEditor(). -->
+    <div id="cm-comments-hint" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--br);font-size:.78rem;color:var(--tm)">
+      💬 Comments open up once this post is submitted for review.
+    </div>
     <div id="cm-comments-section" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--br)">
       <h4 style="font-size:.85rem;margin-bottom:10px">💬 Comments</h4>
       <div id="cm-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
@@ -1729,6 +1735,8 @@ function openCommsEditor(id, dateStr) {
   const info = document.getElementById('cm-status-info');
   const submitBtn = document.getElementById('cm-submit-btn');
   const deleteBtn = document.getElementById('cm-delete-btn');
+  const archiveBtn = document.getElementById('cm-archive-btn');
+  const reuseBtn = document.getElementById('cm-reuse-btn');
   if (post) {
     let statusMsg = `Status: <b>${esc((post.status||'').replace(/_/g,' '))}</b>`;
     if (post.rejectedReason && post.status === 'needs_changes') statusMsg += ` — 💬 TL feedback: ${esc(post.rejectedReason)}`;
@@ -1737,19 +1745,37 @@ function openCommsEditor(id, dateStr) {
     submitBtn.style.display = ['idea','draft','planned','needs_changes'].includes(post.status) ? 'inline-flex' : 'none';
     deleteBtn.style.display = 'inline-flex';
     deleteBtn.textContent = post.deleteRequested ? '🗑 Deletion pending…' : (isAdmin ? '🗑 Delete' : '🗑 Request Deletion');
+    // Archive/Reuse (added 9 Jul 2026, per Brendon) — a TL can shelve a post
+    // idea/photo instead of deleting it, then reuse its content later for a
+    // fresh post. Archive hidden once already archived or posted (posted
+    // items are handled by the existing Mark Posted/Revert flow instead).
+    archiveBtn.style.display = (post.status !== 'archived' && post.status !== 'posted') ? 'inline-flex' : 'none';
+    reuseBtn.style.display = post.status === 'archived' ? 'inline-flex' : 'none';
   } else {
     info.innerHTML = '';
     submitBtn.style.display = 'none';
     deleteBtn.style.display = 'none';
+    archiveBtn.style.display = 'none';
+    reuseBtn.style.display = 'none';
   }
 
+  // Comments only open up once the post has actually been submitted for
+  // review (added 9 Jul 2026, per Brendon) — before that it's a private
+  // draft, nothing to comment on yet.
+  const COMMENTABLE_STATUSES = ['pending_review', 'needs_changes', 'approved', 'posted', 'archived'];
   const commentsSection = document.getElementById('cm-comments-section');
-  if (post) {
+  const commentsHint = document.getElementById('cm-comments-hint');
+  if (post && COMMENTABLE_STATUSES.includes(post.status)) {
     commentsSection.style.display = 'block';
+    commentsHint.style.display = 'none';
     document.getElementById('cm-comment-author').value = localStorage.getItem('commsCommenterName') || '';
     loadCommsComments(post.id);
   } else {
     commentsSection.style.display = 'none';
+    // Still a private draft — say so instead of hiding silently, so it's
+    // clear comments aren't broken, just not open yet (skip for brand-new
+    // unsaved posts, which have nothing to say yet either way).
+    commentsHint.style.display = post ? 'block' : 'none';
   }
 
   document.getElementById('comms-editor').style.display = 'block';
@@ -1777,13 +1803,29 @@ function renderCommsComments(comments) {
   const list = document.getElementById('cm-comments-list');
   if (!comments.length) { list.innerHTML = '<div style="font-size:.78rem;color:var(--tm)">No comments yet — be the first to weigh in.</div>'; return; }
   list.innerHTML = comments.map(c => `
-    <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:8px 10px">
+    <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:8px 10px;${c.resolved ? 'opacity:.6' : ''}">
       <div style="display:flex;justify-content:space-between;gap:8px">
-        <span style="font-weight:700;font-size:.78rem">${esc(c.author)}</span>
+        <span style="font-weight:700;font-size:.78rem">${esc(c.author)}${c.resolved ? ' <span style="font-weight:400;color:var(--gs)">✓ resolved</span>' : ''}</span>
         <span style="font-size:.68rem;color:var(--tm)">${esc(fmtDateLikeBot(c.createdAt.split('T')[0]))}</span>
       </div>
-      <div style="font-size:.82rem;margin-top:2px;white-space:pre-wrap">${esc(c.comment)}</div>
+      <div style="font-size:.82rem;margin-top:2px;white-space:pre-wrap;${c.resolved ? 'text-decoration:line-through' : ''}">${esc(c.comment)}</div>
+      <button type="button" onclick="toggleCommsCommentResolved(${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.66rem;margin-top:6px">
+        ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
+      </button>
     </div>`).join('');
+}
+
+async function toggleCommsCommentResolved(commentId, resolved) {
+  if (!commsEditingId) return;
+  try {
+    const res = await fetch(`${API}/comms/${commsEditingId}/comments/${commentId}`, {
+      method: 'PATCH', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ resolved }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Could not update comment', true); return; }
+    await loadCommsComments(commsEditingId);
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
 }
 
 async function postCommsComment() {
@@ -1815,6 +1857,7 @@ function closeCommsEditor() {
   commsExistingImageUrls = [];
   commsAssigneeTags = [];
   document.getElementById('cm-comments-section').style.display = 'none';
+  document.getElementById('cm-comments-hint').style.display = 'none';
   document.getElementById('cm-comments-list').innerHTML = '';
 }
 
@@ -2004,27 +2047,74 @@ async function deleteCommsPost(id) {
   }
 }
 
+// Archive/Reuse (added 9 Jul 2026, per Brendon) — shelves a post idea/photo
+// instead of deleting it (status: archived), so it's off the active calendar
+// but its content is still there to reuse later via duplicateCommsPost().
+async function archiveCommsPost() {
+  const postId = commsEditingId;
+  if (!postId) return;
+  if (!confirm('Archive this post? It\'ll come off the active calendar, but the caption/photos stay saved for reuse later.')) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'archived' }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Archive failed', true); return; }
+    toast('📦 Post archived');
+    closeCommsEditor();
+    await loadComms();
+  } catch (e) {
+    toast('❌ Connection error', true);
+  }
+}
+
+// Copies an archived post's content into a brand-new post (fresh date, no
+// assignees) so a TL can reuse the idea/photo another time.
+async function duplicateCommsPost() {
+  const postId = commsEditingId;
+  if (!postId) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}/duplicate`, { method: 'POST' });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Reuse failed', true); return; }
+    const newPost = await res.json();
+    toast('🔁 Copied into a new post — pick a date and tag who\'s filling it in.');
+    await loadComms();
+    openCommsEditor(newPost.id);
+  } catch (e) {
+    toast('❌ Connection error', true);
+  }
+}
+
+// Shows both posted AND archived posts (extended 9 Jul 2026, per Brendon —
+// this section was already labelled "Posted / Archived" but only ever
+// rendered posted items; archived posts had nowhere to be seen or reused).
 function renderPostedComms() {
   const el = document.getElementById('comms-posted');
   if (!el) return;
-  const posted = calData.filter(e => e.status === 'posted');
+  const posted   = calData.filter(e => e.status === 'posted');
+  const archived = calData.filter(e => e.status === 'archived');
+  const combined = [...posted, ...archived];
 
-  // Update archive count badge
   const countEl = document.getElementById('comms-archive-count');
-  if (countEl) countEl.textContent = posted.length;
+  if (countEl) countEl.textContent = combined.length;
 
-  if (!posted.length) {
-    el.innerHTML = '<div class="loading" style="color:var(--tm)">No posted items yet. Use "Mark posted" on items above when they go live.</div>';
+  if (!combined.length) {
+    el.innerHTML = '<div class="loading" style="color:var(--tm)">Nothing posted or archived yet.</div>';
     return;
   }
-  el.innerHTML = posted.map(e => {
+  el.innerHTML = combined.map(e => {
+    const isArchived = e.status === 'archived';
     const d = new Date(e.date + 'T00:00:00');
-    return `<div class="cal-item" style="opacity:.65;border-left-color:#95D5A0">
-      <div class="cal-date"><strong>${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}</strong>${d.getFullYear()}</div>
-      <div><div class="cal-theme" style="text-decoration:line-through;color:var(--tm)">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)}</div></div>
+    const dateLabel = isNaN(d) ? '—' : `${d.getDate()} ${d.toLocaleDateString('en-SG',{month:'short'})}<br>${d.getFullYear()}`;
+    const statusTag = isArchived ? `<span class="status-tag" style="background:#E0DED4;color:#5B5A50">📦 archived</span>` : `<span class="status-tag badge-posted">✅ posted</span>`;
+    const actionBtn = isArchived
+      ? `<button class="action-btn" onclick="openCommsEditor(${e.id})" style="font-size:.7rem;white-space:nowrap">🔁 Reuse / Edit</button>`
+      : `<button class="action-btn" onclick="revertPosted(${e.id})" style="font-size:.7rem;white-space:nowrap">↩️ Revert</button>`;
+    return `<div class="cal-item" style="opacity:.65;border-left-color:${isArchived ? '#C9C6B8' : '#95D5A0'}">
+      <div class="cal-date"><strong>${dateLabel}</strong></div>
+      <div><div class="cal-theme" style="text-decoration:${isArchived ? 'none' : 'line-through'};color:var(--tm)">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(e.owner)}</div></div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
-        <span class="status-tag badge-posted">✅ posted</span>
-        <button class="action-btn" onclick="revertPosted(${e.id})" style="font-size:.7rem;white-space:nowrap">↩️ Revert</button>
+        ${statusTag}
+        ${actionBtn}
       </div>
     </div>`;
   }).join('');
