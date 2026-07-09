@@ -35,7 +35,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:      ["'self'"],
-      scriptSrc:       ["'self'", "https://cdnjs.cloudflare.com"],
+      scriptSrc:       ["'self'", "'unsafe-inline'", "https://cdnjs.cloudflare.com", "https://unpkg.com"],
       styleSrc:        ["'self'", "'unsafe-inline'"],
       imgSrc:          ["'self'", "data:", "https://*.supabase.co"],
       connectSrc:      ["'self'", "https://*.supabase.co"],
