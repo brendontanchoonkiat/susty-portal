@@ -1573,7 +1573,7 @@ async function loadComms() {
     if (postsWrap) postsWrap.title = `Planned: ${plannedCount} · Draft: ${draftCount} · Idea: ${ideaCount}`;
 
     // Comms page: full active list with post actions
-    renderCommsCalendar('all', 'comms-cal', { showActions: true });
+    await renderCommsCalendar('all', 'comms-cal', { showActions: true });
     renderPostedComms();
     renderCommsMonthGrid();
 
@@ -1585,7 +1585,7 @@ async function loadComms() {
 }
 
 // opts: { limit, dateFrom, showActions }
-function renderCommsCalendar(filter, containerId, opts={}) {
+async function renderCommsCalendar(filter, containerId, opts={}) {
   const el = document.getElementById(containerId);
   if (!el) return;
   const { limit, dateFrom, showActions } = opts;
@@ -1600,6 +1600,18 @@ function renderCommsCalendar(filter, containerId, opts={}) {
   if (limit) items = items.slice(0, limit);
 
   if (!items.length) { el.innerHTML = '<div class="loading">No posts found.</div>'; return; }
+
+  // Preload comment threads so they show inline without clicking into the
+  // post (added 9 Jul 2026, per Brendon). Only fetched for the full list
+  // (showActions) — the condensed overview mini-list skips this.
+  let commentsByPost = {};
+  if (showActions) {
+    const commentable = items.filter(e => COMMS_COMMENTABLE_STATUSES.includes(e.status));
+    const results = await Promise.all(commentable.map(e =>
+      fetch(`${API}/comms/${e.id}/comments`).then(r => r.ok ? r.json() : []).catch(() => [])
+    ));
+    commentable.forEach((e, i) => { commentsByPost[e.id] = results[i]; });
+  }
 
   const today = new Date().toISOString().split('T')[0];
   el.innerHTML = items.map(e => {
@@ -1638,8 +1650,12 @@ function renderCommsCalendar(filter, containerId, opts={}) {
            "${esc(captionText.length > 220 ? captionText.slice(0,220) + '…' : captionText)}"
          </div>`
       : '';
-    const quickComment = (showActions && COMMS_COMMENTABLE_STATUSES.includes(e.status))
-      ? `<div class="cal-quick-comment" style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:${captionText?'8px':'8px'}">
+    const isCommentable = showActions && COMMS_COMMENTABLE_STATUSES.includes(e.status);
+    const commentsBlock = isCommentable
+      ? `<div id="qc-comments-${e.id}" style="grid-column:1/-1;margin-top:${captionText?'8px':'8px'}">${renderQuickCommentsHtml(commentsByPost[e.id] || [], e.id)}</div>`
+      : '';
+    const quickComment = isCommentable
+      ? `<div class="cal-quick-comment" style="grid-column:1/-1;display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
            <input type="text" id="qc-author-${e.id}" placeholder="Your name" value="${esc(localStorage.getItem('commsCommenterName')||'')}"
              style="flex:1;min-width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--br);font-size:.76rem;font-family:inherit"/>
            <input type="text" id="qc-text-${e.id}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')quickPostComment(${e.id})"
@@ -1653,6 +1669,7 @@ function renderCommsCalendar(filter, containerId, opts={}) {
       <div>${thumb}<div class="cal-theme" style="display:inline-block">${esc(e.theme)}</div><div class="cal-meta">👤 ${esc(who)} · ${esc(e.notes||'')}</div>${rejected}</div>
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">${statusTag}<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">${btns}</div></div>
       ${captionPreview}
+      ${commentsBlock}
       ${quickComment}
     </div>`;
   }).join('');
@@ -1884,6 +1901,47 @@ async function postCommsComment() {
   if (ok) { textEl.value = ''; await loadCommsComments(commsEditingId); }
 }
 
+// Inline comment thread on the list row (added 9 Jul 2026, per Brendon —
+// members shouldn't need to click into a post just to read/leave feedback).
+// Shared HTML builder used both on initial render (renderCommsCalendar,
+// preloaded in bulk) and after a refresh (refreshQuickComments, one post).
+function renderQuickCommentsHtml(comments, postId) {
+  if (!comments.length) return `<div style="font-size:.75rem;color:var(--tm)">No comments yet — be the first to weigh in.</div>`;
+  return `<div style="display:flex;flex-direction:column;gap:6px">` + comments.map(c => `
+    <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:6px 8px;${c.resolved ? 'opacity:.6' : ''}">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <span style="font-weight:700;font-size:.74rem">${esc(c.author)}${c.resolved ? ' <span style="font-weight:400;color:var(--gs)">✓ resolved</span>' : ''}</span>
+        <span style="font-size:.66rem;color:var(--tm)">${esc(fmtDateLikeBot(c.createdAt.split('T')[0]))}</span>
+      </div>
+      <div style="font-size:.78rem;margin-top:2px;white-space:pre-wrap;${c.resolved ? 'text-decoration:line-through' : ''}">${esc(c.comment)}</div>
+      <button type="button" onclick="quickToggleCommentResolved(${postId}, ${c.id}, ${!c.resolved})" class="action-btn" style="font-size:.64rem;margin-top:4px">
+        ${c.resolved ? '↩️ Reopen' : '✅ Mark resolved'}
+      </button>
+    </div>`).join('') + `</div>`;
+}
+
+async function refreshQuickComments(postId) {
+  const container = document.getElementById(`qc-comments-${postId}`);
+  if (!container) return;
+  try {
+    const res = await fetch(`${API}/comms/${postId}/comments`);
+    const comments = res.ok ? await res.json() : [];
+    container.innerHTML = renderQuickCommentsHtml(comments, postId);
+  } catch (e) { /* leave existing content on failure */ }
+}
+
+async function quickToggleCommentResolved(postId, commentId, resolved) {
+  try {
+    const res = await fetch(`${API}/comms/${postId}/comments/${commentId}`, {
+      method: 'PATCH', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ resolved }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Could not update comment', true); return; }
+    await refreshQuickComments(postId);
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
 // Quick-comment box directly on the list row (added 9 Jul 2026, per Brendon
 // — members shouldn't need to open the full editor just to leave feedback).
 async function quickPostComment(postId) {
@@ -1894,6 +1952,7 @@ async function quickPostComment(postId) {
   if (ok) {
     textEl.value = '';
     toast('💬 Comment sent');
+    await refreshQuickComments(postId);
   }
 }
 
