@@ -1106,6 +1106,11 @@ function applyAdminMode() {
   renderCalendarView();
   // Pre-populate availability month select
   populateAvailMonths();
+  // Re-render Comms so already-visible comment threads pick up the 🗑
+  // Delete button (bug found 9 Jul 2026 — canDelete is baked into the HTML
+  // at render time, so unlocking admin mid-session didn't retroactively add
+  // it to comments already on screen until something happened to reload them).
+  if (typeof loadComms === 'function') loadComms();
 }
 
 function unlockAdmin() {

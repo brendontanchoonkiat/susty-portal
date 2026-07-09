@@ -179,7 +179,14 @@ async function notifyTLsSubmitted(post) {
     `📝 <b>${escHtml(post.theme)}</b>\n` +
     (post.caption ? `\n"${escHtml(post.caption)}"\n` : '') +
     (post.details ? `\n🗒 ${escHtml(post.details)}\n` : '') +
-    `\n👤 Tagged: ${assignees || escHtml(post.created_by || post.owner) || 'Unknown'}`;
+    `\n👤 Tagged: ${assignees || escHtml(post.created_by || post.owner) || 'Unknown'}` +
+    // Deep link straight to the portal's comment thread on this post (added
+    // 9 Jul 2026, per Brendon) — approve/request-changes stay quick actions
+    // right here in the bot, but reading/writing a comment thread is better
+    // suited to the portal (full-size photos, past comments, resolve
+    // toggles) than a linear chat reply, so this points there instead of
+    // building a separate bot comment flow.
+    `\n💬 <a href="${postLink(post)}">Comment on this post</a>`;
 
   const tls = await getTLTelegramIds();
   for (const tl of tls) {
