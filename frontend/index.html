@@ -264,14 +264,33 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
 #nav-admin-bar{ margin-left:0 !important; margin-top:auto; flex-wrap:wrap; }
 .page-wrap{ flex:1; min-width:0; height:100vh; overflow-y:auto; }
 
+.nav-mobile-select{ display:none; }
+
 @media(max-width:768px){
   body{ display:block; }
   nav{ position:sticky; flex-direction:row; align-items:center; width:auto; height:var(--nh); padding:0 12px; }
   .nav-logo{ margin-bottom:0; }
-  .nav-tabs{ flex-direction:row; overflow-x:auto; flex:1; }
-  .nav-tab{ width:auto; border-radius:20px; }
+  .nav-tabs{ flex-direction:row; overflow-x:auto; flex:1; -webkit-overflow-scrolling:touch; }
+  .nav-tab{ width:auto; border-radius:20px; font-size:.88rem; padding:8px 16px; }
   #nav-admin-bar{ margin-top:0; }
   .page-wrap{ height:auto; overflow-y:visible; }
+}
+
+/* Phones — swap the scrollable tab row for a full-width dropdown (added
+   9 Jul 2026, per Jonathan's feedback: tabs read too small/cramped to
+   scroll through on a phone). */
+@media(max-width:480px){
+  nav{ flex-wrap:wrap; height:auto; padding:10px 12px; gap:8px; }
+  .nav-logo{ font-size:.95rem; }
+  .nav-tabs{ display:none; }
+  .nav-mobile-select{
+    display:block; order:3; width:100%; flex-basis:100%;
+    padding:10px 12px; border-radius:10px; border:none;
+    background:rgba(255,255,255,.12); color:#fff; font-size:.9rem;
+    font-family:inherit; font-weight:600; -webkit-appearance:none; appearance:none;
+  }
+  .nav-mobile-select option{ color:#1a3328; }
+  #nav-admin-bar{ order:2; margin-left:auto; }
 }
 </style>
 </head>
@@ -290,10 +309,28 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
     <button class="nav-tab" data-page="faq"><i data-lucide="book-open"></i> FAQ</button>
     <button class="nav-tab" data-page="test"><i data-lucide="flask-conical"></i> Test</button>
   </div>
-  <div id="nav-admin-bar" style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
-    <input type="password" id="nav-admin-key" placeholder="Admin key" style="padding:5px 10px;border-radius:6px;border:none;font-size:.78rem;width:120px;background:rgba(255,255,255,.15);color:#fff;outline:none" onkeydown="if(event.key==='Enter')unlockAdminNav()">
-    <button onclick="unlockAdminNav()" style="padding:5px 12px;background:var(--gs);border:none;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:700;color:var(--gd)">🔓</button>
+  <!-- Mobile dropdown nav (added 9 Jul 2026, per Jonathan's feedback — the
+       scrollable tab row was cramped/small on phones). Shown in place of
+       .nav-tabs below ~480px; kept in sync with navigateTo(). -->
+  <select id="nav-mobile-select" class="nav-mobile-select" onchange="navigateTo(this.value)">
+    <option value="overview">🏠 Overview</option>
+    <option value="energy">⚡ Energy</option>
+    <option value="recycling">♻️ W2R</option>
+    <option value="comms">📣 Comms</option>
+    <option value="roster">📅 Roster</option>
+    <option value="members" class="admin-only" style="display:none">👥 Members</option>
+    <option value="faq">📖 FAQ</option>
+    <option value="test">🧪 Test</option>
+  </select>
+  <div id="nav-admin-bar" style="position:relative;display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
+    <button id="nav-admin-toggle" onclick="toggleAdminKeyPopover(event)" title="Admin unlock" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.12);border:none;border-radius:8px;cursor:pointer;color:#fff;flex-shrink:0">
+      <i data-lucide="key-round" style="width:15px;height:15px;pointer-events:none"></i>
+    </button>
     <span id="nav-admin-status" style="font-size:.72rem;color:var(--gs);display:none">✅ Admin</span>
+    <div id="nav-admin-popover" style="display:none;position:absolute;top:38px;right:0;background:#1a3328;border:1px solid rgba(255,255,255,.15);border-radius:10px;padding:10px;flex-direction:column;gap:6px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.35);min-width:170px">
+      <input type="password" id="nav-admin-key" placeholder="Admin key" style="padding:6px 10px;border-radius:6px;border:none;font-size:.78rem;width:100%;background:rgba(255,255,255,.15);color:#fff;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')unlockAdminNav()">
+      <button onclick="unlockAdminNav()" style="padding:6px 12px;background:var(--gs);border:none;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:700;color:var(--gd)">🔓 Unlock</button>
+    </div>
   </div>
 </nav>
 
@@ -495,9 +532,9 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
       <textarea id="cm-details" rows="2" placeholder="e.g. tag @sustyministry, use the vertical crop" style="width:100%;font-family:inherit;font-size:.85rem;padding:8px;border-radius:8px;border:1px solid var(--br);resize:vertical"></textarea>
     </div>
     <div class="form-field" style="margin-bottom:12px">
-      <label>Image</label>
-      <input type="file" id="cm-image-file" accept="image/*" onchange="previewCommsImage(event)"/>
-      <div id="cm-image-preview" style="margin-top:8px"></div>
+      <label>Images (you can pick more than one)</label>
+      <input type="file" id="cm-image-file" accept="image/*" multiple onchange="previewCommsImage(event)"/>
+      <div id="cm-image-preview" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"></div>
     </div>
     <div id="cm-status-info" style="font-size:.75rem;color:var(--tm);margin-bottom:12px"></div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -505,6 +542,19 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
       <button class="btn btn-outline btn-sm" id="cm-submit-btn" onclick="submitCommsForReview()" style="display:none">📤 Submit for Review</button>
       <button class="btn btn-outline btn-sm" onclick="closeCommsEditor()">Cancel</button>
       <button class="btn btn-outline btn-sm" id="cm-delete-btn" onclick="deleteCommsPost()" style="display:none;margin-left:auto;color:#C62828;border-color:#E57373">🗑 Delete</button>
+    </div>
+
+    <!-- Comments (added 9 Jul 2026, per Esther's feedback — anyone should be
+         able to leave visible feedback on a post, not just the TL privately.
+         Only shown once the post actually exists (has an id). -->
+    <div id="cm-comments-section" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--br)">
+      <h4 style="font-size:.85rem;margin-bottom:10px">💬 Comments</h4>
+      <div id="cm-comments-list" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="cm-comment-author" placeholder="Your name" style="flex:1;min-width:100px;padding:7px 10px;border-radius:8px;border:1px solid var(--br);font-size:.82rem;font-family:inherit"/>
+        <input type="text" id="cm-comment-text" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')postCommsComment()" style="flex:3;min-width:160px;padding:7px 10px;border-radius:8px;border:1px solid var(--br);font-size:.82rem;font-family:inherit"/>
+        <button class="btn btn-outline btn-sm" onclick="postCommsComment()">Send</button>
+      </div>
     </div>
   </div>
 
@@ -992,6 +1042,8 @@ function navigateTo(pageId) {
   const page = document.getElementById('page-' + pageId);
   if (tab)  tab.classList.add('active');
   if (page) page.classList.add('active');
+  const mobileSelect = document.getElementById('nav-mobile-select');
+  if (mobileSelect) mobileSelect.value = pageId;
   location.hash = pageId;
   refreshIcons();
   // Reveal editor panels if admin mode is already unlocked
@@ -1037,8 +1089,8 @@ function applyAdminMode() {
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = '');
   // Energy and W2R editors are revealed lazily when the user navigates to those tabs
   document.getElementById('nav-admin-status').style.display = '';
-  document.getElementById('nav-admin-bar').querySelector('input').style.display = 'none';
-  document.getElementById('nav-admin-bar').querySelector('button').style.display = 'none';
+  document.getElementById('nav-admin-toggle').style.display = 'none';
+  document.getElementById('nav-admin-popover').style.display = 'none';
   renderRoster(currentFilter);
   renderCalendarView();
   // Pre-populate availability month select
@@ -1063,8 +1115,30 @@ function unlockAdminNav() {
   const lockPanel = document.getElementById('admin-lock-panel');
   if (lockPanel) lockPanel.style.display = 'none';
   applyAdminMode();
+  closeAdminKeyPopover();
   toast('✅ Admin mode unlocked');
 }
+
+// Admin key input (added 9 Jul 2026, per Jonathan's feedback — the always-
+// visible key field/button took up nav space on every page). Tucked behind
+// a small key icon; click to reveal, click elsewhere or Escape to close.
+function toggleAdminKeyPopover(evt) {
+  if (evt) evt.stopPropagation();
+  const pop = document.getElementById('nav-admin-popover');
+  const opening = pop.style.display !== 'flex';
+  pop.style.display = opening ? 'flex' : 'none';
+  if (opening) document.getElementById('nav-admin-key').focus();
+}
+function closeAdminKeyPopover() {
+  document.getElementById('nav-admin-popover').style.display = 'none';
+}
+document.addEventListener('click', (evt) => {
+  const bar = document.getElementById('nav-admin-bar');
+  if (bar && !bar.contains(evt.target)) closeAdminKeyPopover();
+});
+document.addEventListener('keydown', (evt) => {
+  if (evt.key === 'Escape') closeAdminKeyPopover();
+});
 
 // ═══ RECYCLING ═══════════════════════════════════════════════════════════════
 let chartsBuilt = {};
@@ -1250,8 +1324,23 @@ function renderAttention() {
   const unscheduledPosts = calData.filter(e => e.status === 'draft' || e.status === 'idea').length;
 
   const cards = [];
-  if (myNextSlot) cards.push({ tag:'Next duty', icon:'calendar-check',
-    title:'Next up: '+esc(fmtDateLikeBot(myNextSlot.date)), body:esc(myNextSlot.session)+' · '+myNextSlot.team.map(esc).join(', '), cta:'View roster', go:'roster' });
+  if (myNextSlot) {
+    // Weekend view (added 9 Jul 2026, per Esther's feedback): if the nearest
+    // upcoming slot is a SAT/SUN duty, pull in the adjacent day too (within
+    // 1 day) so a Sat+Sun duty weekend shows together instead of just the
+    // earlier of the two days. GPC days (5 consecutive days, different flow)
+    // are left as a single-day card.
+    const weekendSlots = ['SAT','SUN'].includes(myNextSlot.session)
+      ? rosterData.filter(s => ['SAT','SUN'].includes(s.session) &&
+          Math.abs(Math.round((new Date(s.date) - new Date(myNextSlot.date)) / 86400000)) <= 1)
+          .sort((a,b) => new Date(a.date) - new Date(b.date))
+      : [myNextSlot];
+    const title = weekendSlots.length > 1
+      ? 'Next up: ' + weekendSlots.map(s => fmtDateLikeBot(s.date)).join(' & ')
+      : 'Next up: ' + fmtDateLikeBot(myNextSlot.date);
+    const body = weekendSlots.map(s => s.session + ' · ' + s.team.join(', ')).join('   |   ');
+    cards.push({ tag:'Next duty', icon:'calendar-check', title, body, cta:'View roster', go:'roster' });
+  }
   if (openSwaps > 0) cards.push({ tag:'Needs cover', icon:'repeat',
     title:openSwaps+' swap request'+(openSwaps>1?'s':'')+' open', body:'Someone needs their duty covered.', cta:'View swaps', go:'roster' });
   if (unscheduledPosts > 0) cards.push({ tag:'Comms', icon:'pencil-line',
@@ -1508,7 +1597,13 @@ function renderCommsCalendar(filter, containerId, opts={}) {
     const statusTag = isPast
       ? `<span class="status-tag badge-pending">⚠️ pending</span>`
       : `<span class="status-tag status-${esc(e.status)}">${esc((e.status||'').replace(/_/g,' '))}</span>`;
-    const thumb = e.imageUrl ? `<img src="${esc(e.imageUrl)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;margin-right:8px;vertical-align:middle"/>` : '';
+    const imgCount = Array.isArray(e.imageUrls) ? e.imageUrls.length : (e.imageUrl ? 1 : 0);
+    const thumb = e.imageUrl
+      ? `<span style="position:relative;display:inline-block;margin-right:8px;vertical-align:middle">
+           <img src="${esc(e.imageUrl)}" style="width:44px;height:44px;object-fit:cover;border-radius:6px;display:block"/>
+           ${imgCount > 1 ? `<span style="position:absolute;bottom:-4px;right:-4px;background:var(--gd);color:#fff;font-size:.6rem;font-weight:700;border-radius:8px;padding:1px 5px">${imgCount}</span>` : ''}
+         </span>`
+      : '';
     const rejected = (e.rejectedReason && e.status === 'needs_changes') ? `<div class="cal-meta" style="color:#C62828">💬 ${esc(e.rejectedReason)}</div>` : '';
     const canSubmit = showActions && ['idea','draft','planned','needs_changes'].includes(e.status);
     const who = (Array.isArray(e.assignees) && e.assignees.length) ? e.assignees.join(', ') : (e.owner||e.createdBy||'');
@@ -1604,14 +1699,20 @@ function renderCommsMonthGrid() {
 }
 
 let commsEditingId = null;
-let commsEditingImageFile = null;
+// Multi-photo state (added 9 Jul 2026): commsExistingImageUrls are photos
+// already uploaded/saved to this post (deletable immediately via the API);
+// commsPendingImageFiles are newly picked files not uploaded yet (uploaded
+// one-by-one when Save is pressed, removable locally before that).
+let commsExistingImageUrls = [];
+let commsPendingImageFiles = [];
 let commsAssigneeTags = [];
 
 // Pass an id to edit an existing post, or a dateStr (YYYY-MM-DD) to start a
 // new post pre-filled to that date, or neither for a blank new post.
 function openCommsEditor(id, dateStr) {
-  commsEditingImageFile = null;
+  commsPendingImageFiles = [];
   const post = id ? (calData||[]).find(e => e.id === id) : null;
+  commsExistingImageUrls = post && Array.isArray(post.imageUrls) ? [...post.imageUrls] : (post && post.imageUrl ? [post.imageUrl] : []);
   commsEditingId = post ? post.id : null;
   commsAssigneeTags = post && Array.isArray(post.assignees) ? [...post.assignees] : [];
   renderCommsAssigneeTags();
@@ -1623,9 +1724,7 @@ function openCommsEditor(id, dateStr) {
   document.getElementById('cm-caption').value = post ? (post.caption || '') : '';
   document.getElementById('cm-details').value = post ? (post.details || '') : '';
   document.getElementById('cm-image-file').value = '';
-
-  const preview = document.getElementById('cm-image-preview');
-  preview.innerHTML = post && post.imageUrl ? `<img src="${esc(post.imageUrl)}" style="max-width:160px;border-radius:8px"/>` : '';
+  renderCommsImagePreview();
 
   const info = document.getElementById('cm-status-info');
   const submitBtn = document.getElementById('cm-submit-btn');
@@ -1644,15 +1743,79 @@ function openCommsEditor(id, dateStr) {
     deleteBtn.style.display = 'none';
   }
 
+  const commentsSection = document.getElementById('cm-comments-section');
+  if (post) {
+    commentsSection.style.display = 'block';
+    document.getElementById('cm-comment-author').value = localStorage.getItem('commsCommenterName') || '';
+    loadCommsComments(post.id);
+  } else {
+    commentsSection.style.display = 'none';
+  }
+
   document.getElementById('comms-editor').style.display = 'block';
   document.getElementById('comms-editor').scrollIntoView({behavior:'smooth'});
+}
+
+// ═══ COMMENTS ════════════════════════════════════════════════════════════════
+// Visible comment thread on a post (added 9 Jul 2026, per Esther's feedback —
+// any member can leave feedback, not just the TL privately). No login system
+// in this app, so the commenter just types their name (remembered in
+// localStorage for next time) — same trust model as the rest of the portal.
+async function loadCommsComments(postId) {
+  const list = document.getElementById('cm-comments-list');
+  list.innerHTML = '<div class="loading" style="font-size:.78rem">Loading comments…</div>';
+  try {
+    const res = await fetch(`${API}/comms/${postId}/comments`);
+    const comments = res.ok ? await res.json() : [];
+    renderCommsComments(comments);
+  } catch (e) {
+    list.innerHTML = '';
+  }
+}
+
+function renderCommsComments(comments) {
+  const list = document.getElementById('cm-comments-list');
+  if (!comments.length) { list.innerHTML = '<div style="font-size:.78rem;color:var(--tm)">No comments yet — be the first to weigh in.</div>'; return; }
+  list.innerHTML = comments.map(c => `
+    <div style="background:var(--bg2, #F5F3EA);border-radius:8px;padding:8px 10px">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <span style="font-weight:700;font-size:.78rem">${esc(c.author)}</span>
+        <span style="font-size:.68rem;color:var(--tm)">${esc(fmtDateLikeBot(c.createdAt.split('T')[0]))}</span>
+      </div>
+      <div style="font-size:.82rem;margin-top:2px;white-space:pre-wrap">${esc(c.comment)}</div>
+    </div>`).join('');
+}
+
+async function postCommsComment() {
+  if (!commsEditingId) return;
+  const authorEl  = document.getElementById('cm-comment-author');
+  const textEl    = document.getElementById('cm-comment-text');
+  const author    = authorEl.value.trim();
+  const comment   = textEl.value.trim();
+  if (!author)  { toast('Enter your name', true); return; }
+  if (!comment) { toast('Comment cannot be empty', true); return; }
+
+  try {
+    const res = await fetch(`${API}/comms/${commsEditingId}/comments`, {
+      method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ author, comment }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Comment failed', true); return; }
+    localStorage.setItem('commsCommenterName', author);
+    textEl.value = '';
+    await loadCommsComments(commsEditingId);
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
 }
 
 function closeCommsEditor() {
   document.getElementById('comms-editor').style.display = 'none';
   commsEditingId = null;
-  commsEditingImageFile = null;
+  commsPendingImageFiles = [];
+  commsExistingImageUrls = [];
   commsAssigneeTags = [];
+  document.getElementById('cm-comments-section').style.display = 'none';
+  document.getElementById('cm-comments-list').innerHTML = '';
 }
 
 function handleCommsTagKey(e) {
@@ -1691,14 +1854,59 @@ function renderCommsAssigneeTags() {
   }
 }
 
+// Multi-photo picker (added 9 Jul 2026): each time files are chosen they're
+// ADDED to the pending list (not replaced), so picking photos across
+// multiple taps still keeps earlier ones — matches how the existing-image
+// thumbnails already accumulate.
 function previewCommsImage(evt) {
-  const file = evt.target.files[0];
-  commsEditingImageFile = file || null;
+  const files = Array.from(evt.target.files || []);
+  commsPendingImageFiles.push(...files);
+  evt.target.value = ''; // allow picking the same file again / keep input clean
+  renderCommsImagePreview();
+}
+
+function removeCommsPendingImage(idx) {
+  commsPendingImageFiles.splice(idx, 1);
+  renderCommsImagePreview();
+}
+
+// Existing (already-uploaded) images are removed immediately via the API —
+// there's no "unsaved" state for them since they're already persisted.
+async function removeCommsExistingImage(url) {
+  if (!commsEditingId) return;
+  try {
+    const res = await fetch(`${API}/comms/${commsEditingId}/image`, {
+      method: 'DELETE', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ url }),
+    });
+    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error || 'Could not remove image', true); return; }
+    const updated = await res.json();
+    commsExistingImageUrls = Array.isArray(updated.imageUrls) ? updated.imageUrls : [];
+    renderCommsImagePreview();
+    await loadComms();
+  } catch (e) {
+    toast('❌ Could not connect to server', true);
+  }
+}
+
+function renderCommsImagePreview() {
   const preview = document.getElementById('cm-image-preview');
-  if (!file) { preview.innerHTML = ''; return; }
-  const reader = new FileReader();
-  reader.onload = (e) => { preview.innerHTML = `<img src="${e.target.result}" style="max-width:160px;border-radius:8px"/>`; };
-  reader.readAsDataURL(file);
+  if (!preview) return;
+  const existingThumbs = commsExistingImageUrls.map(url => `
+    <span style="position:relative;display:inline-block">
+      <img src="${esc(url)}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;display:block"/>
+      <button type="button" onclick="removeCommsExistingImage('${esc(url).replace(/'/g,"\\'")}')"
+        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
+        border:none;background:#C62828;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">×</button>
+    </span>`).join('');
+  const pendingThumbs = commsPendingImageFiles.map((file, i) => `
+    <span style="position:relative;display:inline-block">
+      <img src="${URL.createObjectURL(file)}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;display:block;opacity:.85"/>
+      <span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.55);color:#fff;font-size:.6rem;padding:1px 4px;border-radius:4px">new</span>
+      <button type="button" onclick="removeCommsPendingImage(${i})"
+        title="Remove photo" style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;
+        border:none;background:#C62828;color:#fff;font-size:.7rem;line-height:1;cursor:pointer">×</button>
+    </span>`).join('');
+  preview.innerHTML = existingThumbs + pendingThumbs;
 }
 
 async function saveCommsPost() {
@@ -1720,14 +1928,19 @@ async function saveCommsPost() {
     const saved = await res.json();
     commsEditingId = saved.id;
 
-    if (commsEditingImageFile) {
-      const fd = new FormData();
-      fd.append('image', commsEditingImageFile);
-      const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
-      if (!imgRes.ok) {
-        const ie = await imgRes.json().catch(()=>({}));
-        toast('Post saved, but image upload failed: ' + (ie.error || 'unknown error'), true);
+    // Multi-photo (added 9 Jul 2026): the upload endpoint takes one image
+    // per call and appends it server-side, so pending files go up one at a
+    // time, in the order they were picked.
+    if (commsPendingImageFiles.length) {
+      let uploadFailures = 0;
+      for (const file of commsPendingImageFiles) {
+        const fd = new FormData();
+        fd.append('image', file);
+        const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
+        if (!imgRes.ok) uploadFailures++;
       }
+      if (uploadFailures) toast(`Post saved, but ${uploadFailures} image${uploadFailures>1?'s':''} failed to upload`, true);
+      commsPendingImageFiles = [];
     }
 
     toast(commsEditingId ? '✅ Post saved!' : '✅ Post added!');

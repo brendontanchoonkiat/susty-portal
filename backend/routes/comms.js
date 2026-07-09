@@ -28,7 +28,8 @@ const VALID_STATUS = ['planned', 'draft', 'idea', 'pending_review', 'needs_chang
 const PRE_REVIEW_STATUSES = ['planned', 'draft'];
 function deriveEditorialStatus(currentStatus, content) {
   if (currentStatus && !PRE_REVIEW_STATUSES.includes(currentStatus)) return currentStatus;
-  const hasContent = !!(content.caption || content.details || content.image_url);
+  const hasImage = !!content.image_url || (Array.isArray(content.image_urls) && content.image_urls.length > 0);
+  const hasContent = !!(content.caption || content.details || hasImage);
   return hasContent ? 'draft' : 'planned';
 }
 
@@ -91,6 +92,10 @@ function fromDbRow(row) {
     notes: row.notes, status: row.status,
     caption: row.caption || '', details: row.details || '',
     imageUrl: row.image_url || null,
+    // Multi-photo (added 9 Jul 2026, per Esther/Jonathan's feedback). Falls
+    // back to wrapping the legacy single image_url so older posts (and any
+    // code path that hasn't been updated to the array yet) still show a photo.
+    imageUrls: (Array.isArray(row.image_urls) && row.image_urls.length) ? row.image_urls : (row.image_url ? [row.image_url] : []),
     createdBy: row.created_by || '',
     assignees: row.assignees || [],
     rejectedReason: row.rejected_reason || null,
@@ -195,7 +200,11 @@ router.post('/',
   }
 );
 
-// POST /:id/image — upload/replace the post's image (multipart form field "image").
+// POST /:id/image — upload another image onto the post (multipart form field
+// "image"). Appends to image_urls (multi-photo, added 9 Jul 2026 per
+// Esther/Jonathan's feedback — most posts use 1-2 photos, occasionally more,
+// so this is additive rather than replace-only). image_url (legacy single
+// column) is kept in sync as image_urls[0] for any code still reading it.
 // Wraps multer's middleware manually (instead of passing it straight to the
 // router) so a fileFilter/size-limit rejection returns a clear 400 with the
 // real reason instead of falling through to the generic 500 handler in
@@ -219,12 +228,22 @@ router.post('/:id/image', (req, res, next) => {
     const imageUrl = await db.uploadImage(req.file.buffer, filename, req.file.mimetype, 'comms');
     if (!imageUrl) return res.status(502).json({ error: 'Image upload to storage failed' });
 
+    const { data: existing } = await dbc.from('comms_posts').select('status, image_urls, image_url').eq('id', id).single();
+    if (!existing) return res.status(404).json({ error: 'Post not found' });
+
+    const currentUrls = Array.isArray(existing.image_urls) && existing.image_urls.length
+      ? existing.image_urls
+      : (existing.image_url ? [existing.image_url] : []);
+    const newUrls = [...currentUrls, imageUrl];
+
     // An attached image always counts as "started on" — bump planned -> draft
     // the same way adding a caption/details does (deriveEditorialStatus is a
     // no-op once the post is past the pre-review stage).
-    const { data: existing } = await dbc.from('comms_posts').select('status').eq('id', id).single();
-    const patch = { image_url: imageUrl };
-    if (existing) patch.status = deriveEditorialStatus(existing.status, { image_url: imageUrl });
+    const patch = {
+      image_urls: newUrls,
+      image_url: newUrls[0], // legacy column, kept as "first photo" for back-compat
+      status: deriveEditorialStatus(existing.status, { image_urls: newUrls }),
+    };
 
     const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
     if (error) return res.status(404).json({ error: 'Post not found' });
@@ -235,6 +254,37 @@ router.post('/:id/image', (req, res, next) => {
     // becomes a silent hang instead of a response the frontend can show.
     console.error('[Comms] POST /:id/image failed:', err.stack || err.message);
     res.status(500).json({ error: `Image upload failed: ${err.message}` });
+  }
+});
+
+// DELETE /:id/image — removes one image from the post's image_urls by exact
+// URL (body: { url }). Added 9 Jul 2026 alongside multi-photo support so a
+// member can remove a wrongly-added photo without clearing all of them.
+router.delete('/:id/image', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+    const url = req.body?.url;
+    if (!url) return res.status(400).json({ error: 'url is required' });
+
+    const dbc = getClient();
+    if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+
+    const { data: existing } = await dbc.from('comms_posts').select('image_urls, image_url').eq('id', id).single();
+    if (!existing) return res.status(404).json({ error: 'Post not found' });
+
+    const currentUrls = Array.isArray(existing.image_urls) && existing.image_urls.length
+      ? existing.image_urls
+      : (existing.image_url ? [existing.image_url] : []);
+    const newUrls = currentUrls.filter(u => u !== url);
+
+    const patch = { image_urls: newUrls, image_url: newUrls[0] || null };
+    const { data, error } = await dbc.from('comms_posts').update(patch).eq('id', id).select().single();
+    if (error) return res.status(404).json({ error: 'Post not found' });
+    res.json(fromDbRow(data));
+  } catch (err) {
+    console.error('[Comms] DELETE /:id/image failed:', err.stack || err.message);
+    res.status(500).json({ error: `Image removal failed: ${err.message}` });
   }
 });
 
@@ -387,6 +437,72 @@ router.post('/:id/request-delete', async (req, res) => {
 
   res.json(fromDbRow(data));
 });
+
+// ─── Comments (added 9 Jul 2026, per Esther's feedback) ────────────────────
+// Right now only the TL's "Request Changes" note goes back to the assignee
+// privately. This gives any member a visible comment thread on a post —
+// no auth required, same open-creation philosophy as the rest of this route.
+// See create_comms_comments_table.sql.
+
+// GET /:id/comments — list, oldest first
+router.get('/:id/comments', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+  const dbc = getClient();
+  if (!dbc) return res.json([]); // no Supabase configured — comments simply unavailable, not an error
+  const { data, error } = await dbc.from('comms_comments').select('*').eq('post_id', id).order('created_at', { ascending: true });
+  if (error) return res.status(500).json({ error: error.message });
+  res.json((data || []).map(c => ({ id: c.id, postId: c.post_id, author: c.author_name, comment: c.comment, createdAt: c.created_at })));
+});
+
+// POST /:id/comments — add a comment { author, comment }
+router.post('/:id/comments', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
+    const author  = sanitise(req.body?.author || '').slice(0, 60);
+    const comment = sanitise(req.body?.comment || '').slice(0, 1000);
+    if (!author)  return res.status(400).json({ error: 'Your name is required' });
+    if (!comment) return res.status(400).json({ error: 'Comment cannot be empty' });
+
+    const dbc = getClient();
+    if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+
+    const { data: post } = await dbc.from('comms_posts').select('*').eq('id', id).single();
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const { data, error } = await dbc.from('comms_comments')
+      .insert({ post_id: id, author_name: author, comment }).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    try {
+      const { notifyOnNewComment } = require('../utils/commsNotify');
+      await notifyOnNewComment(post, author, comment);
+    } catch (err) {
+      console.warn('[Comms] Failed to notify on new comment:', err.message);
+    }
+
+    res.status(201).json({ id: data.id, postId: data.post_id, author: data.author_name, comment: data.comment, createdAt: data.created_at });
+  } catch (err) {
+    console.error('[Comms] POST /:id/comments failed:', err.stack || err.message);
+    res.status(500).json({ error: `Comment failed: ${err.message}` });
+  }
+});
+
+// DELETE /:id/comments/:commentId — TL-only moderation (admin key required,
+// same gate as the roster editor / post delete).
+router.delete('/:id/comments/:commentId',
+  (req, res, next) => req.app.get('requireApiKey')(req, res, next),
+  async (req, res) => {
+    const commentId = Number(req.params.commentId);
+    if (!Number.isInteger(commentId) || commentId <= 0) return res.status(400).json({ error: 'Invalid comment ID' });
+    const dbc = getClient();
+    if (!dbc) return res.status(503).json({ error: 'Requires Supabase (not configured)' });
+    const { error } = await dbc.from('comms_comments').delete().eq('id', commentId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  }
+);
 
 // DELETE /:id — TL-only immediate delete (admin key required, same gate the
 // roster editor uses). Members go through POST /:id/request-delete instead.

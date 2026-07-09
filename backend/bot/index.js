@@ -1039,11 +1039,21 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   const { data: p } = supa ? await supa.from('comms_posts').select('*').eq('id', id).single() : { data: null };
   if (!p) return ctx.reply('⚠️ Post not found — it may have been edited or deleted.');
 
+  // Comment count (added 9 Jul 2026, per Esther's feedback) — lets a TL
+  // glancing at this preview know feedback has been left, without needing
+  // to open the portal.
+  let commentCount = 0;
+  if (supa) {
+    const { count } = await supa.from('comms_comments').select('id', { count: 'exact', head: true }).eq('post_id', id);
+    commentCount = count || 0;
+  }
+
   const caption =
     `📅 <b>${fmtDateShort(p.date)}</b>\n📝 <b>${commsNotify.escHtml(p.theme)}</b>\n` +
     (p.caption ? `\n"${commsNotify.escHtml(p.caption)}"\n` : '') +
     (p.details ? `\n🗒 ${commsNotify.escHtml(p.details)}\n` : '') +
-    `\n${commsAssigneeLine(p)}\n📌 Status: ${commsStatusLabel(p.status)}`;
+    `\n${commsAssigneeLine(p)}\n📌 Status: ${commsStatusLabel(p.status)}` +
+    (commentCount ? `\n💬 ${commentCount} comment${commentCount > 1 ? 's' : ''} (see the portal to read them)` : '');
 
   let kb;
   if (p.status === 'pending_review') {
@@ -1059,11 +1069,7 @@ bot.callbackQuery(/^comms:view:(\d+)$/, async (ctx) => {
   // portal-side deletion request.
   kb.row().text('🗑 Delete Post', `comms:confirmdelete:${p.id}`);
 
-  if (p.image_url) {
-    await ctx.replyWithPhoto(p.image_url, { caption, parse_mode: 'HTML', reply_markup: kb });
-  } else {
-    await ctx.reply(caption, { parse_mode: 'HTML', reply_markup: kb });
-  }
+  await commsNotify.sendPostPreview(bot, ctx.chat.id, p, { caption, replyMarkup: kb });
 });
 
 bot.callbackQuery(/^comms:approve:(\d+)$/, async (ctx) => {
@@ -1362,7 +1368,18 @@ bot.callbackQuery('action:nextduty', async (ctx) => {
   const daysLeft = Math.ceil((new Date(next.date) - new Date()) / 86400000);
   const when     = daysLeft === 0 ? 'Today!' : daysLeft === 1 ? 'Tomorrow!' : `in ${daysLeft} days`;
 
-  const text = `⏭ <b>${name}'s Next Duty</b>\n\n${fmtSlot(next)}\n\n⏳ <b>${when}</b>`;
+  // Weekend view (added 9 Jul 2026, per Esther's feedback): if this member
+  // is also rostered the adjacent SAT/SUN day of the same duty weekend,
+  // show both together instead of just the earlier day.
+  const weekendSlots = ['SAT', 'SUN'].includes(next.session)
+    ? slots.filter(s => ['SAT', 'SUN'].includes(s.session) &&
+        Math.abs(Math.round((new Date(s.date) - new Date(next.date)) / 86400000)) <= 1)
+    : [next];
+  const body = weekendSlots.length > 1
+    ? weekendSlots.map(fmtSlot).join('\n\n')
+    : fmtSlot(next);
+
+  const text = `⏭ <b>${name}'s Next Duty</b>\n\n${body}\n\n⏳ <b>${when}</b>`;
   await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: backToRoster() })
     .catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: backToRoster() }));
 });

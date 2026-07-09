@@ -262,6 +262,7 @@ async function sendCommsReminders(bot) {
   const today     = new Date(); today.setHours(0, 0, 0, 0);
   const tomorrow  = new Date(today); tomorrow.setDate(today.getDate() + 1);
   const in2Days   = new Date(today); in2Days.setDate(today.getDate() + 2);
+  const in5Days   = new Date(today); in5Days.setDate(today.getDate() + 5);
   const fmt = (d) => d.toISOString().split('T')[0];
 
   const { data: posts } = await supa.from('comms_posts')
@@ -270,17 +271,17 @@ async function sendCommsReminders(bot) {
     .gte('date', fmt(today));
   if (!posts?.length) return;
 
-  // 1. Assignee nudge — post is due in 2 days OR tomorrow and still hasn't
+  // 1. Assignee nudge — post is due in 5 days OR tomorrow and still hasn't
   // been pushed to the TLs (idea/draft/planned), or is sitting in
   // needs_changes waiting on the member to edit and re-submit. Mirrors the
-  // duty reminder's 5-day/1-day pattern, compressed to 2-day/1-day since
-  // comms posts are usually planned closer to the date.
+  // duty reminder's 5-day/1-day pattern. Widened from 2-day/1-day to
+  // 5-day/1-day (9 Jul 2026, per Brendon) for more leeway/time to edit.
   const needsAction = posts.filter(p =>
-    (p.date === fmt(tomorrow) || p.date === fmt(in2Days)) &&
+    (p.date === fmt(tomorrow) || p.date === fmt(in5Days)) &&
     ['idea', 'draft', 'planned', 'needs_changes'].includes(p.status)
   );
   for (const p of needsAction) {
-    const daysOut = p.date === fmt(tomorrow) ? 1 : 2;
+    const daysOut = p.date === fmt(tomorrow) ? 1 : 5;
     const names = commsNotify.recipientNames(p);
     const action = p.status === 'needs_changes'
       ? `still has TL feedback to address${p.rejected_reason ? ` — "${p.rejected_reason}"` : ''}`

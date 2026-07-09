@@ -104,6 +104,41 @@ function fmtDate(dateStr) {
   } catch { return dateStr; }
 }
 
+// Returns a post's image URLs as an array, whichever column populated it —
+// image_urls (new, multi-photo, added 9 Jul 2026) or the legacy single
+// image_url (older posts / anything that only ever set the old column).
+function postImageUrls(post) {
+  if (Array.isArray(post.image_urls) && post.image_urls.length) return post.image_urls;
+  return post.image_url ? [post.image_url] : [];
+}
+
+// Sends a post's photo(s) + caption to a chat, with an optional inline
+// keyboard. Handles all three cases Telegram treats differently:
+//  - 0 images  → plain text message (caption + keyboard)
+//  - 1 image   → sendPhoto (caption + keyboard both supported directly)
+//  - 2+ images → sendMediaGroup (caption goes on the first photo, but
+//    Telegram does NOT support reply_markup on media groups at all) —
+//    followed by a small separate message carrying the keyboard, if one
+//    was requested, so Approve/Request Changes etc. still work.
+// Added 9 Jul 2026 for multi-photo comms posts (per Esther's feedback that
+// most posts use 1-2 photos, occasionally more).
+async function sendPostPreview(bot, chatId, post, { caption = '', replyMarkup } = {}) {
+  const images = postImageUrls(post);
+  if (images.length >= 2) {
+    const { InputMediaBuilder } = require('grammy');
+    const media = images.map((url, i) =>
+      i === 0 ? InputMediaBuilder.photo(url, { caption, parse_mode: 'HTML' }) : InputMediaBuilder.photo(url)
+    );
+    await bot.api.sendMediaGroup(chatId, media);
+    if (replyMarkup) await bot.api.sendMessage(chatId, '⬆️ Actions for the post above:', { reply_markup: replyMarkup });
+    return;
+  }
+  if (images.length === 1) {
+    return bot.api.sendPhoto(chatId, images[0], { caption, parse_mode: 'HTML', reply_markup: replyMarkup });
+  }
+  return bot.api.sendMessage(chatId, caption, { parse_mode: 'HTML', reply_markup: replyMarkup });
+}
+
 async function dmNames(names, msg, opts = {}) {
   const bot = getBot();
   if (!bot) return;
@@ -149,11 +184,7 @@ async function notifyTLsSubmitted(post) {
   const tls = await getTLTelegramIds();
   for (const tl of tls) {
     try {
-      if (post.image_url) {
-        await bot.api.sendPhoto(tl.telegram_id, post.image_url, { caption, parse_mode: 'HTML', reply_markup: kb });
-      } else {
-        await bot.api.sendMessage(tl.telegram_id, caption, { parse_mode: 'HTML', reply_markup: kb });
-      }
+      await sendPostPreview(bot, tl.telegram_id, post, { caption, replyMarkup: kb });
     } catch (err) {
       console.warn(`[CommsNotify] Failed to notify TL ${tl.name}:`, err.message);
     }
@@ -174,6 +205,20 @@ async function notifyAssigneesChangesRequested(post, comment) {
     (comment ? `"${escHtml(comment)}"\n\n` : '') +
     `Update it here, then tap Submit for Review again — no need to start over.\n👉 ${postLink(post)}`;
   await dmNames(recipientNames(post), msg);
+}
+
+// A member left a comment on a post (added 9 Jul 2026, per Esther's
+// feedback — anyone should be able to leave visible feedback, not just the
+// TL's private "Request Changes" note). DMs the assignees (whoever's
+// actually working on the post) so they see it without having to poll the
+// portal; skips DMing the commenter back to themselves.
+async function notifyOnNewComment(post, authorName, commentText) {
+  const names = recipientNames(post).filter(n => n.toLowerCase() !== (authorName || '').toLowerCase());
+  if (!names.length) return;
+  const msg =
+    `💬 <b>New comment on your post</b>\n\n📅 ${fmtDate(post.date)}\n📝 ${escHtml(post.theme)}\n\n` +
+    `<b>${escHtml(authorName)}:</b> "${escHtml(commentText)}"\n\n👉 ${postLink(post)}`;
+  await dmNames(names, msg);
 }
 
 // A member tapped "Request Deletion" in the portal — nothing is removed yet.
@@ -211,9 +256,15 @@ async function publishToCommsChannel(post) {
 
   const caption = post.caption || post.theme || '';
   try {
+    const images = postImageUrls(post);
     let sent;
-    if (post.image_url) {
-      sent = await bot.api.sendPhoto(COMMS_CHANNEL_ID, post.image_url, caption ? { caption } : {});
+    if (images.length >= 2) {
+      const { InputMediaBuilder } = require('grammy');
+      const media = images.map((url, i) => i === 0 ? InputMediaBuilder.photo(url, caption ? { caption } : {}) : InputMediaBuilder.photo(url));
+      const sentGroup = await bot.api.sendMediaGroup(COMMS_CHANNEL_ID, media);
+      sent = sentGroup?.[0];
+    } else if (images.length === 1) {
+      sent = await bot.api.sendPhoto(COMMS_CHANNEL_ID, images[0], caption ? { caption } : {});
     } else {
       sent = await bot.api.sendMessage(COMMS_CHANNEL_ID, caption || post.theme);
     }
@@ -229,6 +280,6 @@ module.exports = {
   COMMS_TL_NAMES, COMMS_NOTIFY_NAMES, COMMS_MEMBER_NAMES, PORTAL_URL, COMMS_CHANNEL_ID,
   getTLTelegramIds, getTelegramIdForName, recipientNames,
   notifyAssigneesTagged, notifyTLsSubmitted, notifyAssigneesApproved, notifyAssigneesChangesRequested,
-  notifyTLsDeleteRequested, publishToCommsChannel,
-  fmtDate, escHtml, postLink,
+  notifyTLsDeleteRequested, publishToCommsChannel, notifyOnNewComment,
+  fmtDate, escHtml, postLink, postImageUrls, sendPostPreview,
 };
