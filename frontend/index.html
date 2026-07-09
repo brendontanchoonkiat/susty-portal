@@ -900,13 +900,26 @@ let w2rTypeFilter  = 'all';   // 'all' | 'cardboard' | 'plastic'
 let w2rYearFilter  = 'all';   // 'all' | '2025' | '2026'
 let w2rEventFilter = null;    // event id or null
 
+// Kept in sync with ENERGY_EVENTS below (same source: IM Utility For ESG Team) so every
+// material event tracked by the Energy team is also highlighted here — not just GPC/UR Camp/
+// Youth Camp. Descriptions are reworded for a W2R (recycling volume) angle rather than energy.
 const W2R_EVENTS = [
   { id: 'gpc',        name: 'GPC',        emoji: '⛪', months: ['Jul 2024', 'Jul 2025', 'Jul 2026'],
     description: 'GenerationS Pastors\' Conference – annual week-long congregation gathering driving significantly elevated recycling volumes. Bulk mid-week cardboard collected and sent to GHS recycling partner. GPC 2026: 23–27 Jul — prepare extra bins and additional W2R manpower.' },
+  { id: 'youth_camp', name: 'Youth Camp', emoji: '🏕️', months: ['Jun 2024', 'Nov 2024', 'Jun 2025', 'Nov 2025'],
+    description: 'Youth Camp – biannual overnight events in Jun & Nov seasons, incl. Water Baptism where they coincide. Multi-day footfall drives sustained elevated recycling across cardboard and plastic.' },
+  { id: 'easter',    name: 'Easter',        emoji: '✝️', months: ['Mar 2024', 'Apr 2024', 'Apr 2025'],
+    description: 'Easter period – Big Day services, POLITE Camp, hangouts, retention events & rehearsals. Elevated attendance across multiple weeks drives higher cardboard/plastic volumes.' },
+  { id: 'christmas', name: 'Christmas & NYE', emoji: '🎄', months: ['Dec 2024', 'Dec 2025'],
+    description: 'Christmas services and New Year\'s Countdown – extended evening events across multiple weekends of December, with corresponding recycling volume from decor/packaging and refreshments.' },
   { id: 'ur_camp',    name: 'UR Camp',    emoji: '🏔️', months: ['Aug 2025'],
     description: 'UR Camp – large-scale young adults overnight camp combined with GPC Volunteer Night and Chinese Gold Services, generating high multi-day recycling volumes.' },
-  { id: 'youth_camp', name: 'Youth Camp', emoji: '🏕️', months: ['Jun 2024', 'Nov 2024', 'Nov 2025'],
-    description: 'Youth Camp – biannual overnight events in Jun & Nov seasons. Multi-event months with elevated footfall and sustained recycling across cardboard and plastic.' },
+  { id: 'ae_wknd',   name: 'AE Weekend',    emoji: '🎤', months: ['Aug 2024'],
+    description: 'All Ears Weekend – special guest speaker event with extended large-congregation sessions, driving above-average recycling volumes for the month.' },
+  { id: 'water_bap', name: 'Water Baptism', emoji: '💧', months: ['Jun 2024', 'Apr 2025'],
+    description: 'Water Baptism events – high attendance drives a bump in cardboard/plastic. Jun 2024 coincided with Youth Camp for a compounded effect.' },
+  { id: 'cny',       name: 'CNY Break',     emoji: '🧧', months: ['Feb 2024', 'Feb 2025'],
+    description: 'Chinese New Year break – reduced church activity; typically among the lowest recycling-volume months of the year. Useful as a low baseline for comparison.' },
 ];
 
 // Energy filters

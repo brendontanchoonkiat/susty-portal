@@ -2755,14 +2755,47 @@ bot.callbackQuery('action:mystats', async (ctx) => {
       .catch(() => ctx.reply(noSupaText, { reply_markup: backToMain() }));
   }
 
-  const { data: logs }     = await supa.from('data_logs').select('*').eq('logged_by', name);
   const { data: attended } = await supa.from('attendance')
     .select('*, roster_slots(date, session)').eq('member_name', name);
 
-  const myCb    = (logs || []).filter(l => l.type === 'cardboard').reduce((s, l) => s + Number(l.kg), 0);
-  const myPl    = (logs || []).filter(l => l.type === 'plastic').reduce((s, l) => s + Number(l.kg), 0);
+  // Credit-splitting (added per Brendon, 9 Jul 2026): whoever taps "Log Cardboard/Plastic" was
+  // just the one holding the phone — everyone rostered on roster_slots.team for that date did
+  // the actual duty, so kg logged for a date is split evenly across that date's whole team
+  // rather than 100% going to the logger. Own solo logs on dates with no matching roster_slots
+  // row (ad hoc/backdated entries) still get full credit — nothing to split against.
+  const { data: myRosterSlots } = await supa.from('roster_slots').select('date, team').contains('team', [name]);
+  const rosterDates = [...new Set((myRosterSlots || []).map(s => s.date))];
+
+  const { data: allSlotsForDates } = rosterDates.length
+    ? await supa.from('roster_slots').select('date, team').in('date', rosterDates)
+    : { data: [] };
+  const teamByDate = {};
+  (allSlotsForDates || []).forEach(s => {
+    const set = teamByDate[s.date] || new Set();
+    (s.team || []).forEach(n => set.add(n));
+    teamByDate[s.date] = set;
+  });
+
+  const { data: logsOnRosterDates } = rosterDates.length
+    ? await supa.from('data_logs').select('*').in('session_date', rosterDates)
+    : { data: [] };
+  const { data: ownLogs } = await supa.from('data_logs').select('*').eq('logged_by', name);
+
+  let myCb = 0, myPl = 0;
+  (logsOnRosterDates || []).forEach(l => {
+    const teamSize = teamByDate[l.session_date]?.size || 1;
+    const share = Number(l.kg) / teamSize;
+    if (l.type === 'cardboard') myCb += share;
+    else if (l.type === 'plastic') myPl += share;
+  });
+  (ownLogs || []).forEach(l => {
+    if (rosterDates.includes(l.session_date)) return; // already credited (split) above
+    if (l.type === 'cardboard') myCb += Number(l.kg);
+    else if (l.type === 'plastic') myPl += Number(l.kg);
+  });
+
   const impact  = carbon.calcCO2e(myCb, myPl);
-  const sessions = attended?.length || (logs || []).length;
+  const sessions = attended?.length || rosterDates.length || (ownLogs || []).length;
 
   const text =
     `🌿 <b>${name}'s Personal Impact</b>\n\n` +
