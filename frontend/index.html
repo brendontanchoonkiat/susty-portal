@@ -487,28 +487,21 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 #ov-cal .loading,#ov-cal .skel{flex:1}
 @media(max-width:600px){ #ov-body{padding-bottom:calc(84px + env(safe-area-inset-bottom))} }
 
-/* ── Growth tree: fixed to the viewport's right edge, ABOVE the sheet, so it's
-   visible from the hero onward. Gentle idle sway via the `rotate` property
-   (doesn't clash with the JS-driven transforms on its leaves). ── */
-#growth-tree{position:fixed;right:22px;bottom:8px;height:min(38vh,340px);z-index:4;
-  pointer-events:none;opacity:.95;transform-origin:50% 100%;animation:treeSway 8s ease-in-out infinite;
-  filter:drop-shadow(0 16px 22px rgba(18,32,20,.3))}
-@keyframes treeSway{0%,100%{rotate:.7deg}50%{rotate:-.7deg}}
-#growth-tree circle{transform-box:fill-box;transform-origin:center}
-/* Falling blossom petals — only drift once the tree has bloomed (JS adds
-   .bloomed at g>=.82), so they read as a payoff rather than clutter while
-   the tree is still filling out. Each petal carries its own --drift/
-   duration/delay inline for organic variation. Looping via CSS only. */
-#growth-tree .petal{opacity:0}
-#growth-tree.bloomed .petal{animation-name:petalFall;animation-timing-function:ease-in;animation-iteration-count:infinite}
-@keyframes petalFall{
-  0%{transform:translate(0,0) rotate(0deg);opacity:0}
-  10%{opacity:.85}
-  80%{opacity:.55}
-  100%{transform:translate(var(--drift,20px),230px) rotate(210deg);opacity:0}
-}
-@media(max-width:768px){ #growth-tree{display:none} } /* hidden on mobile — covered content */
-@media (prefers-reduced-motion:reduce){ #growth-tree{opacity:.6} #growth-tree.bloomed .petal{animation:none} }
+/* ── Hero background video (Phase 2, 10 Jul 2026) — a generated tree-growth
+   timelapse (procedural, rendered frame-by-frame and encoded to mp4 — see
+   PROJECT_STATE.md) fills the entire hero as its background, replacing the
+   small corner SVG tree. Scroll-scrubbed: JS sets video.currentTime directly
+   from scroll progress (0 = bare ground, 1 = full bloom) instead of letting
+   it autoplay — see setTreeVideoProgress() in cinematicOverview(). The whole
+   .hero (video + scrim + text) fades/scales together on scroll, so the video
+   fades out with everything else once the dashboard sheet takes over. */
+.hero-stage .hero > *{position:relative;z-index:2}
+.hero-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;
+  max-width:none;margin:0;object-fit:cover;pointer-events:none}
+.hero-scrim{position:absolute;inset:0;z-index:1;max-width:none;margin:0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(20,32,22,.32),rgba(18,30,20,.42) 55%,rgba(14,24,16,.68))}
+html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,9,.45),rgba(8,14,9,.55) 55%,rgba(6,10,7,.78))}
+@media (prefers-reduced-motion:reduce){ .hero-bg-video{display:none} } /* falls back to the hero's own animated gradient background */
 
 /* ── Up Next strip ("next match" style) ── */
 .upnext-wrap{margin:0 0 14px}
@@ -633,6 +626,14 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
        sheet below slides up OVER it on scroll while the hero scales/fades. -->
   <section class="hero-stage" id="hero-stage">
   <div class="hero">
+    <!-- Generated tree-growth timelapse (procedural, rendered + encoded — see
+         PROJECT_STATE.md), scroll-scrubbed by setTreeVideoProgress() below:
+         currentTime is driven directly by scroll progress, never autoplays. -->
+    <video class="hero-bg-video" id="hero-tree-video" muted playsinline preload="auto"
+           poster="/assets/tree-growth-poster.jpg" aria-hidden="true">
+      <source src="/assets/tree-growth.mp4" type="video/mp4">
+    </video>
+    <div class="hero-scrim"></div>
     <h1 id="hero-greeting">Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
@@ -646,75 +647,6 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <span>scroll</span><i data-lucide="chevron-down"></i>
   </button>
   </section>
-
-  <!-- Growth tree: FIXED to the right edge of the viewport, above the sheet
-       (z-index 4) so it's visible from the hero onward — a young sapling on the
-       hero that blooms continuously as you scroll and lands beside the dashboard.
-       Grown/bloomed by scroll progress (setTreeGrowth in cinematicOverview). -->
-  <svg id="growth-tree" viewBox="0 0 300 340" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <defs>
-      <!-- Soft radial gradients so canopy circles read as leafy volume, not flat clip-art dots -->
-      <radialGradient id="tgA" cx="35%" cy="28%" r="75%">
-        <stop offset="0%" stop-color="#A9D3A0"/><stop offset="100%" stop-color="#4E7D57"/>
-      </radialGradient>
-      <radialGradient id="tgB" cx="35%" cy="28%" r="75%">
-        <stop offset="0%" stop-color="#C9E6B8"/><stop offset="100%" stop-color="#6C9569"/>
-      </radialGradient>
-      <radialGradient id="tgC" cx="35%" cy="28%" r="75%">
-        <stop offset="0%" stop-color="#B9DDB0"/><stop offset="100%" stop-color="#7EAE87"/>
-      </radialGradient>
-      <radialGradient id="tgBloom" cx="35%" cy="28%" r="75%">
-        <stop offset="0%" stop-color="#F0D9A0"/><stop offset="100%" stop-color="#C79A55"/>
-      </radialGradient>
-    </defs>
-    <!-- ground shadow, grounds the trunk so it doesn't float -->
-    <ellipse cx="150" cy="333" rx="50" ry="9" fill="rgba(16,26,16,.22)"/>
-    <!-- trunk + branches -->
-    <path data-from="0"    data-to="0.40" d="M150 335 C147 300 144 275 150 240 C154 215 150 200 149 185" stroke="#7A5C3E" stroke-width="13" stroke-linecap="round"/>
-    <path data-from="0.25" data-to="0.50" d="M150 250 C128 235 112 228 96 210"  stroke="#7A5C3E" stroke-width="7" stroke-linecap="round"/>
-    <path data-from="0.30" data-to="0.55" d="M150 240 C172 225 188 218 205 198" stroke="#7A5C3E" stroke-width="7" stroke-linecap="round"/>
-    <path data-from="0.35" data-to="0.60" d="M149 210 C132 195 122 190 110 172" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
-    <path data-from="0.40" data-to="0.62" d="M149 200 C168 185 178 178 192 160" stroke="#7A5C3E" stroke-width="5" stroke-linecap="round"/>
-    <path data-from="0.42" data-to="0.65" d="M149 185 C149 165 148 155 149 140" stroke="#7A5C3E" stroke-width="6" stroke-linecap="round"/>
-    <!-- canopy — base layer -->
-    <circle data-from="0.50" data-to="0.70" cx="96"  cy="205" r="30" fill="url(#tgA)"/>
-    <circle data-from="0.52" data-to="0.72" cx="205" cy="193" r="30" fill="url(#tgA)"/>
-    <circle data-from="0.54" data-to="0.74" cx="150" cy="170" r="34" fill="url(#tgB)"/>
-    <circle data-from="0.55" data-to="0.75" cx="110" cy="168" r="28" fill="url(#tgB)"/>
-    <circle data-from="0.56" data-to="0.76" cx="192" cy="156" r="28" fill="url(#tgA)"/>
-    <circle data-from="0.58" data-to="0.78" cx="150" cy="188" r="22" fill="url(#tgA)"/>
-    <!-- canopy — mid layer -->
-    <circle data-from="0.58" data-to="0.78" cx="75"  cy="180" r="24" fill="url(#tgC)"/>
-    <circle data-from="0.60" data-to="0.80" cx="225" cy="168" r="24" fill="url(#tgC)"/>
-    <circle data-from="0.62" data-to="0.82" cx="130" cy="140" r="26" fill="url(#tgA)"/>
-    <circle data-from="0.64" data-to="0.84" cx="172" cy="132" r="26" fill="url(#tgB)"/>
-    <circle data-from="0.63" data-to="0.83" cx="62"  cy="158" r="18" fill="url(#tgB)"/>
-    <circle data-from="0.65" data-to="0.85" cx="238" cy="146" r="18" fill="url(#tgA)"/>
-    <!-- canopy — top layer -->
-    <circle data-from="0.66" data-to="0.86" cx="105" cy="128" r="22" fill="url(#tgC)"/>
-    <circle data-from="0.66" data-to="0.86" cx="85"  cy="145" r="15" fill="url(#tgC)"/>
-    <circle data-from="0.68" data-to="0.88" cx="195" cy="116" r="22" fill="url(#tgC)"/>
-    <circle data-from="0.68" data-to="0.88" cx="216" cy="132" r="15" fill="url(#tgB)"/>
-    <circle data-from="0.70" data-to="0.90" cx="150" cy="112" r="28" fill="url(#tgA)"/>
-    <circle data-from="0.72" data-to="0.92" cx="122" cy="98"  r="20" fill="url(#tgB)"/>
-    <circle data-from="0.74" data-to="0.94" cx="178" cy="92"  r="20" fill="url(#tgA)"/>
-    <circle data-from="0.76" data-to="0.96" cx="150" cy="72"  r="24" fill="url(#tgB)"/>
-    <!-- blossoms -->
-    <circle data-from="0.85" data-to="1" cx="76"  cy="160" r="6" fill="url(#tgBloom)"/>
-    <circle data-from="0.88" data-to="1" cx="150" cy="58"  r="7" fill="url(#tgBloom)"/>
-    <circle data-from="0.90" data-to="1" cx="234" cy="138" r="6" fill="url(#tgBloom)"/>
-    <circle data-from="0.92" data-to="1" cx="112" cy="92"  r="5" fill="url(#tgBloom)"/>
-    <circle data-from="0.94" data-to="1" cx="188" cy="82"  r="5" fill="url(#tgBloom)"/>
-    <circle data-from="0.96" data-to="1" cx="140" cy="146" r="5" fill="url(#tgBloom)"/>
-    <!-- falling petals — dormant until #growth-tree.bloomed (JS, g>=.82), then loop via CSS only -->
-    <circle class="petal" cx="90"  cy="130" r="3.6" fill="#EAB9C9" style="--drift:26px;animation-duration:5.6s;animation-delay:.1s"/>
-    <circle class="petal" cx="150" cy="70"  r="3.2" fill="#EAB9C9" style="--drift:-20px;animation-duration:6.4s;animation-delay:1.3s"/>
-    <circle class="petal" cx="200" cy="110" r="3.4" fill="#EAB9C9" style="--drift:18px;animation-duration:5.1s;animation-delay:2.1s"/>
-    <circle class="petal" cx="120" cy="95"  r="3"   fill="#EAB9C9" style="--drift:-14px;animation-duration:6.8s;animation-delay:.7s"/>
-    <circle class="petal" cx="178" cy="88"  r="3.4" fill="#EAB9C9" style="--drift:22px;animation-duration:5.9s;animation-delay:2.8s"/>
-    <circle class="petal" cx="76"  cy="158" r="3"   fill="#EAB9C9" style="--drift:-24px;animation-duration:6.2s;animation-delay:1.9s"/>
-    <circle class="petal" cx="234" cy="136" r="3.2" fill="#EAB9C9" style="--drift:16px;animation-duration:5.4s;animation-delay:3.4s"/>
-  </svg>
 
   <div class="ov-body" id="ov-body">
   <!-- Up Next strip (9 Jul 2026): replaces "Needs your attention". -->
@@ -1480,14 +1412,24 @@ document.querySelectorAll('.nav-tab').forEach(t => {
   if (hash === 'comms' && idStr && /^\d+$/.test(idStr)) pendingCommsPostId = Number(idStr);
 })();
 
-// ═══ SIDEBAR REVEAL ON FIRST SCROLL (Phase 2, 10 Jul 2026) ═══════════════════
+// ═══ SIDEBAR REVEAL ON FIRST SCROLL (Phase 2, 10 Jul 2026 — fixed same day) ══
 // body.nav-precroll (set in the HTML) hides the sidebar so the hero is fully
-// edge-to-edge on first paint. First scroll/wheel/touch gesture slides the
+// edge-to-edge on first paint. A genuine user scroll gesture slides the
 // sidebar in (see the CSS width transition on `nav`). Only wired up when the
 // visitor actually landed on the Overview hero — a deep link to another tab
-// shouldn't hide the nav they need to get around. A short timeout is a safety
-// net so nobody's ever permanently stuck without navigation (e.g. content
-// that's already shorter than the viewport, so no scroll ever happens).
+// shouldn't hide the nav they need to get around. A timeout is a safety net
+// so nobody's ever permanently stuck without navigation.
+//
+// BUG FIXED: the first version listened for a raw 'scroll' event, which also
+// fires from things that aren't the visitor scrolling on purpose — the
+// browser restoring a previous scroll position on reload, or a scroll-snap
+// correction settling the layout right after paint. Either one fired
+// instantly, so the sidebar "still appeared on first load" as reported.
+// Fixed by (1) forcing scroll position to the very top and disabling the
+// browser's automatic scroll restoration before anything else runs, and
+// (2) only treating 'wheel'/'touchstart'/an intentional scroll key as a real
+// gesture — a bare 'scroll' event alone no longer reveals the sidebar.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 (function revealNavOnScroll(){
   const pg = document.getElementById('page-overview');
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1495,23 +1437,29 @@ document.querySelectorAll('.nav-tab').forEach(t => {
     document.body.classList.remove('nav-precroll');
     return;
   }
-  let revealed = false;
   const wrap = document.querySelector('.page-wrap');
+  // Reload/back-forward can land with a non-zero scroll offset already
+  // restored by the browser before our JS even runs — snap it back to the
+  // very top so the hero is genuinely the only thing visible on arrival.
+  window.scrollTo(0, 0);
+  if (wrap) wrap.scrollTop = 0;
+
+  let revealed = false;
+  const SCROLL_KEYS = new Set(['ArrowDown','ArrowUp','PageDown','PageUp',' ','Spacebar']);
   function reveal(){
     if (revealed) return;
     revealed = true;
     document.body.classList.remove('nav-precroll');
     clearTimeout(fallback);
-    window.removeEventListener('scroll', reveal);
     window.removeEventListener('wheel', reveal);
-    window.removeEventListener('touchmove', reveal);
-    if (wrap) wrap.removeEventListener('scroll', reveal);
+    window.removeEventListener('touchstart', reveal);
+    window.removeEventListener('keydown', onKey);
   }
-  const fallback = setTimeout(reveal, 4000);
-  window.addEventListener('scroll', reveal, { passive:true });
+  function onKey(e){ if (SCROLL_KEYS.has(e.key)) reveal(); }
+  const fallback = setTimeout(reveal, 6000);
   window.addEventListener('wheel', reveal, { passive:true });
-  window.addEventListener('touchmove', reveal, { passive:true });
-  if (wrap) wrap.addEventListener('scroll', reveal, { passive:true });
+  window.addEventListener('touchstart', reveal, { passive:true });
+  window.addEventListener('keydown', onKey);
 })();
 
 // ═══ THEME (dark mode) ═══════════════════════════════════════════════════════
@@ -1684,31 +1632,28 @@ function scrollToOvBody(){
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   let ticking = false;
 
-  // ── Growth tree: drawn + bloomed by scroll progress. If reduced motion,
-  // we never init it, so the SVG stays fully grown (its natural state).
-  const tree = document.getElementById('growth-tree');
-  let treeParts = null;
-  function initTree(){
-    if (treeParts || !tree || reduced) return;
-    treeParts = [...tree.querySelectorAll('[data-from]')].map(el => {
-      const isPath = el.tagName.toLowerCase() === 'path';
-      let len = 0;
-      if (isPath){ len = el.getTotalLength(); el.style.strokeDasharray = String(len); el.style.strokeDashoffset = String(len); }
-      else el.style.transform = 'scale(0)';
-      return { el, isPath, len, from: +el.dataset.from, to: +el.dataset.to };
-    });
+  // ── Hero background video: a generated tree-growth timelapse, scrubbed
+  // directly by scroll progress (0 = bare ground, 1 = full bloom) instead of
+  // autoplaying — the video never calls .play() and just stay parked at
+  // whatever frame the scroll position maps to. Reduced motion never touches
+  // currentTime at all, so the poster frame (also frame 0) stays static —
+  // display:none is applied in CSS instead so the animated hero gradient
+  // shows through as the fallback.
+  const treeVideo = document.getElementById('hero-tree-video');
+  let videoReady = false;
+  if (treeVideo && !reduced){
+    // iOS Safari needs a play()+pause() cycle before currentTime seeks work
+    // reliably without a user gesture having started playback.
+    const arm = () => { videoReady = true; treeVideo.removeEventListener('loadedmetadata', arm); };
+    treeVideo.addEventListener('loadedmetadata', arm);
+    const p = treeVideo.play();
+    if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
+    else treeVideo.pause();
   }
-  function setTreeGrowth(g){
-    if (!treeParts) return;
-    treeParts.forEach(pt => {
-      const t = Math.min(Math.max((g - pt.from) / (pt.to - pt.from), 0), 1);
-      if (pt.isPath) pt.el.style.strokeDashoffset = String(pt.len * (1 - t));
-      else pt.el.style.transform = `scale(${(1 - Math.pow(1 - t, 3)).toFixed(3)})`;
-    });
-    // Falling petals kick in once the tree is substantially bloomed (matches
-    // the blossom circles' own 0.85+ growth window) — a payoff near the end
-    // of the scroll rather than distraction throughout.
-    if (tree) tree.classList.toggle('bloomed', g >= 0.82);
+  function setTreeVideoProgress(g){
+    if (!treeVideo || reduced || !videoReady) return;
+    const dur = treeVideo.duration || 4;
+    treeVideo.currentTime = Math.min(Math.max(g, 0), 1) * dur;
   }
 
   function fx(){
@@ -1726,10 +1671,10 @@ function scrollToOvBody(){
     hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
     hero.style.opacity = String(1 - p * .65);
     if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
-    initTree();          // lazy — measures path lengths once the page is visible
-    // Young tree on the hero (g=.55: trunk, branches + first canopy circles),
-    // fills out and blooms as the dashboard locks in.
-    setTreeGrowth(0.55 + 0.45 * p);
+    // Tree video starts empty at rest (p=0) and reaches full bloom exactly as
+    // the dashboard sheet finishes covering the hero (p=1) — literally
+    // "empty to full leaf growth" tied to the scroll position.
+    setTreeVideoProgress(p);
   }
   function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
   window.addEventListener('scroll', onScroll, { passive:true });
@@ -1741,7 +1686,7 @@ function scrollToOvBody(){
   const io = new IntersectionObserver(entries => entries.forEach(e => {
     if (e.isIntersecting){ e.target.classList.add('inview'); io.unobserve(e.target); }
   }), { threshold: .12 });
-  [...body.children].filter(el => el.id !== 'growth-tree').forEach((el, i) => {
+  [...body.children].forEach((el, i) => {
     el.classList.add('reveal');
     el.style.transitionDelay = Math.min(i * 55, 220) + 'ms';
     io.observe(el);
