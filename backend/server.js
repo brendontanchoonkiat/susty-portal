@@ -179,8 +179,15 @@ app.post('/unlock', (req, res) => {
   res.json({ ok: true });
 });
 
+// BUG FIXED 10 Jul 2026: this gate ran in front of express.static too, so
+// /assets/* (images, the hero background video, PWA icons, etc.) got the
+// lock page's HTML instead of the actual file whenever isUnlocked() failed —
+// which silently breaks a <video>/<img> tag (it just shows nothing, no
+// error), exactly what caused the hero video to render as a flat fallback
+// background. Static assets are pure resources, not "pages" — they should
+// never be gated, only the real page routes the lock was designed for.
 app.use((req, res, next) => {
-  if (req.method !== 'GET' || req.path.startsWith('/api/')) return next();
+  if (req.method !== 'GET' || req.path.startsWith('/api/') || req.path.startsWith('/assets/')) return next();
   if (isUnlocked(req)) return next();
   res.status(200).send(lockPageHtml(req.query.wrong ? 'Wrong passphrase — try again.' : ''));
 });
