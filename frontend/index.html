@@ -447,10 +447,13 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
    Overview page, so every other tab scrolls normally) */
 .page-wrap{scroll-snap-type:y mandatory}
 @media(max-width:768px){ html{scroll-snap-type:y mandatory} }
-.hero-stage{position:sticky;top:0;z-index:0;height:100vh;height:100dvh;
+.hero-stage{position:sticky;top:0;z-index:2;height:100vh;height:100dvh;
   min-height:480px;overflow:hidden}
+/* .hero itself is transparent now that the video is a separate fixed layer
+   behind it (see .hero-bg-video below) — the gradient only comes back as a
+   fallback for reduced-motion / no-video (media query further down). */
 .hero-stage .hero{height:100%;margin:0;border-radius:0;display:flex;flex-direction:column;justify-content:center;
-  padding:60px clamp(24px,6vw,90px);will-change:transform,opacity;transform-origin:center center}
+  padding:60px clamp(24px,6vw,90px);will-change:transform,opacity;transform-origin:center center;background:transparent}
 .hero-stage .hero > *{width:100%;max-width:1060px;margin-left:auto;margin-right:auto}
 .hero-stage .hero h1{font-size:clamp(2.2rem,5vw,3.6rem);letter-spacing:-.02em;text-shadow:0 2px 16px rgba(0,0,0,.45)}
 .hero-stage .hero p{font-size:clamp(.95rem,1.6vw,1.1rem);margin-bottom:36px;text-shadow:0 1px 10px rgba(0,0,0,.4)}
@@ -470,10 +473,18 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   letter-spacing:.14em;text-transform:uppercase;animation:cueBob 2.2s ease-in-out infinite;padding:8px;z-index:3}
 .scroll-cue [data-lucide]{width:20px;height:20px}
 @keyframes cueBob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,8px)}}
-.ov-body{position:relative;z-index:2;background:var(--bg);border-radius:30px 30px 0 0;
+/* Translucent + frosted instead of solid var(--bg) (10 Jul 2026, per Brendon —
+   "hold the background even in the next scroll page") — the tree video now
+   sits fixed behind the ENTIRE page (hero + dashboard), so the sheet lets it
+   show through instead of covering it outright. Individual cards/strips
+   inside (.card, .upnext, chart-wrap etc.) already have their own solid-ish
+   backgrounds, so legibility inside them is unaffected — this only changes
+   the gaps between cards, which now show the bloomed tree instead of flat bg. */
+.ov-body{position:relative;z-index:3;background:rgba(236,227,211,.88);border-radius:30px 30px 0 0;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
   margin:0;padding:22px max(24px,calc((100% - 1100px)/2)) 14px;box-shadow:0 -18px 50px rgba(30,58,46,.22);
   height:100vh;height:100dvh;overflow-y:auto;scroll-snap-align:start;scroll-snap-stop:always}
-html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
+html[data-theme="dark"] .ov-body{background:rgba(20,27,21,.86);box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 /* Reveal-on-scroll (class added by JS only — no-JS stays fully visible) */
 .reveal{opacity:0;transform:translateY(28px);transition:opacity .65s cubic-bezier(.2,.7,.3,1),transform .65s cubic-bezier(.2,.7,.3,1)}
 .reveal.inview{opacity:1;transform:none}
@@ -494,27 +505,29 @@ html[data-theme="dark"] .ov-body{box-shadow:0 -18px 50px rgba(0,0,0,.55)}
 #ov-cal .loading,#ov-cal .skel{flex:1}
 @media(max-width:600px){ #ov-body{padding-bottom:calc(84px + env(safe-area-inset-bottom))} }
 
-/* ── Hero background video (Phase 2, 10 Jul 2026) — a generated tree-growth
-   timelapse (procedural, rendered frame-by-frame and encoded to mp4 — see
-   PROJECT_STATE.md) fills the entire hero as its background, replacing the
-   small corner SVG tree. Scroll-scrubbed: JS sets video.currentTime directly
-   from scroll progress (0 = bare ground, 1 = full bloom) instead of letting
-   it autoplay — see setTreeVideoProgress() in cinematicOverview(). The whole
-   .hero (video + scrim + text) fades/scales together on scroll, so the video
-   fades out with everything else once the dashboard sheet takes over. */
-.hero-stage .hero > *{position:relative;z-index:2}
-/* BUG FIXED 10 Jul 2026: these two need to beat `.hero-stage .hero > *`'s
-   width:100%/max-width:1060px/margin:auto (specificity 0,2,0) — the original
-   unscoped `.hero-bg-video{...}` (0,1,0) lost that fight, so the video
-   rendered as a normal constrained inline block ABOVE the text instead of an
-   absolutely-positioned full-bleed background behind it. Re-scoped under
-   `.hero-stage .hero` (0,3,0) so these declarations always win. */
-.hero-stage .hero .hero-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;
-  max-width:none;margin:0;object-fit:cover;pointer-events:none}
-.hero-stage .hero .hero-scrim{position:absolute;inset:0;z-index:1;max-width:none;margin:0;pointer-events:none;
+/* ── Persistent tree-video backdrop (Phase 2, 10 Jul 2026, restructured same
+   day per Brendon — "hold the background even in the next scroll page") ──
+   A real macro timelapse (Pixabay, royalty-free — see PROJECT_STATE.md),
+   scroll-scrubbed: JS sets video.currentTime directly from scroll progress
+   (0 = bare ground, holds at full bloom past BLOOM_COMPLETE_AT) instead of
+   letting it autoplay — see setTreeVideoProgress() in cinematicOverview().
+   Previously nested inside .hero and faded away with it once the dashboard
+   sheet covered the hero. Now `position:fixed` and a direct child of
+   #page-overview (not .hero), so it's a constant backdrop behind BOTH the
+   hero AND the dashboard sheet — completely decoupled from .hero's own
+   scale/opacity fade, which now only affects the hero's text. #page-overview
+   itself is display:none when inactive, so this still disappears on other
+   tabs with no extra guard needed. */
+.hero-bg-video{position:fixed;inset:0;z-index:0;width:100%;height:100%;
+  object-fit:cover;pointer-events:none}
+.hero-scrim{position:fixed;inset:0;z-index:1;pointer-events:none;
   background:linear-gradient(180deg,rgba(14,22,15,.45),rgba(14,24,16,.5) 45%,rgba(10,18,12,.78))}
-html[data-theme="dark"] .hero-stage .hero .hero-scrim{background:linear-gradient(180deg,rgba(8,14,9,.55),rgba(8,14,9,.62) 45%,rgba(6,10,7,.85))}
-@media (prefers-reduced-motion:reduce){ .hero-stage .hero .hero-bg-video{display:none} } /* falls back to the hero's own animated gradient background */
+html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,9,.55),rgba(8,14,9,.62) 45%,rgba(6,10,7,.85))}
+@media (prefers-reduced-motion:reduce){
+  .hero-bg-video{display:none}
+  /* No video → hero needs its own background back as a fallback backdrop */
+  .hero-stage .hero{background:linear-gradient(120deg,#1E3A2E,#3A6B50,#2C5E46,#1E3A2E)}
+}
 
 /* ── Up Next strip ("next match" style) ── */
 .upnext-wrap{margin:0 0 14px}
@@ -637,18 +650,24 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
 <div class="page active" id="page-overview">
   <!-- Cinematic pinned hero (9 Jul 2026): fills the viewport; the .ov-body
        sheet below slides up OVER it on scroll while the hero scales/fades. -->
+  <!-- Tree video + scrim (moved out of .hero 10 Jul 2026, per Brendon — "hold
+       the background even in the next scroll page"): position:fixed to the
+       viewport and a direct child of #page-overview, so it's a constant
+       backdrop for BOTH the hero and the dashboard sheet below, completely
+       decoupled from .hero's own scale/opacity/fade transform (which now
+       only affects the hero's text). Real macro timelapse (Pixabay,
+       royalty-free, no attribution required — "Maple Leaf, Sprout, Spring,
+       Grow, Growth", re-encoded — see PROJECT_STATE.md). Scroll-scrubbed by
+       setTreeVideoProgress() below: currentTime is driven directly by scroll
+       progress, never autoplays, and holds on the fully-bloomed frame past
+       BLOOM_COMPLETE_AT — including all the way through the dashboard scroll. -->
+  <video class="hero-bg-video" id="hero-tree-video" muted playsinline preload="auto"
+         poster="/assets/tree-growth-real-poster.jpg" aria-hidden="true">
+    <source src="/assets/tree-growth-real.mp4" type="video/mp4">
+  </video>
+  <div class="hero-scrim"></div>
   <section class="hero-stage" id="hero-stage">
   <div class="hero">
-    <!-- Real macro timelapse (Pixabay, royalty-free, no attribution required —
-         "Maple Leaf, Sprout, Spring, Grow, Growth", re-encoded all-intra for
-         instant scrubbing — see PROJECT_STATE.md), scroll-scrubbed by
-         setTreeVideoProgress() below: currentTime is driven directly by
-         scroll progress, never autoplays. -->
-    <video class="hero-bg-video" id="hero-tree-video" muted playsinline preload="auto"
-           poster="/assets/tree-growth-real-poster.jpg" aria-hidden="true">
-      <source src="/assets/tree-growth-real.mp4" type="video/mp4">
-    </video>
-    <div class="hero-scrim"></div>
     <h1 id="hero-greeting">Ministry at a Glance</h1>
     <p>Live data · Energy · W2R · Comms</p>
     <div class="hero-stats">
