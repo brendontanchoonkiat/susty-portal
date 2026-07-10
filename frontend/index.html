@@ -1321,7 +1321,8 @@ function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
   if (!valEl) return;
 
   const shown = curVal !== null && curVal !== undefined ? curVal : 0;
-  animateNumber(valEl, shown, unit === 'kg' ? ' kg' : ''); // count-up (beautify pass)
+  const suffix = unit === 'kg' ? ' kg' : unit === 'kwh-k' ? 'k kWh' : '';
+  animateNumber(valEl, shown, suffix); // count-up (beautify pass)
 
   if (trendEl) {
     if (prevVal === null || prevVal === undefined || prevVal === 0) {
@@ -1337,8 +1338,8 @@ function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
 
   if (wrapEl) {
     const parts = [];
-    if (allTimeTotal !== null && allTimeTotal !== undefined) parts.push(`All-time: ${allTimeTotal}${unit === 'kg' ? ' kg' : ''}`);
-    if (prevVal !== null && prevVal !== undefined) parts.push(`Last month: ${prevVal}${unit === 'kg' ? ' kg' : ''}`);
+    if (allTimeTotal !== null && allTimeTotal !== undefined) parts.push(`All-time: ${allTimeTotal}${suffix}`);
+    if (prevVal !== null && prevVal !== undefined) parts.push(`Last month: ${prevVal}${suffix}`);
     wrapEl.title = parts.join(' · ') || 'No prior data yet';
   }
 }
@@ -2157,8 +2158,19 @@ async function loadEnergy() {
 
     const monthEl = document.getElementById('ov-energy-month');
     if (curRow) {
-      renderHeroStat('ov-energy', Math.round(curRow.kwh), prevRow ? Math.round(prevRow.kwh) : null, allTimeAvg, 'num');
-      document.getElementById('ov-energy').textContent = `${(curRow.kwh/1000).toFixed(1)}k kWh`;
+      // BUG FIXED 10 Jul 2026 — electricity showed no units in the hero.
+      // renderHeroStat's animateNumber() count-up runs over ~950ms via
+      // requestAnimationFrame; the line that used to sit here (setting
+      // textContent to "90.8k kWh" as a one-off override right after calling
+      // renderHeroStat) got raced and overwritten by the still-running
+      // animation on every subsequent frame, so by the time it finished the
+      // suffix was gone — just the bare number. Fixed by passing the
+      // pre-scaled value straight into renderHeroStat with a real unit
+      // ('kwh-k') so the animation itself carries the "k kWh" suffix the
+      // whole time, instead of fighting a separate DOM write after the fact.
+      const kwhK = Math.round(curRow.kwh / 100) / 10; // one decimal, e.g. 90827 -> 90.8
+      const prevKwhK = prevRow ? Math.round(prevRow.kwh / 100) / 10 : null;
+      renderHeroStat('ov-energy', kwhK, prevKwhK, allTimeAvg ? Math.round(allTimeAvg / 100) / 10 : null, 'kwh-k');
       // Electricity data lags behind W2R (it's manually entered from a monthly
       // utility sheet, not logged live) — label honestly instead of claiming
       // "this month" when we're actually showing the latest month that HAS data.
