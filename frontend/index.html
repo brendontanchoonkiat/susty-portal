@@ -438,6 +438,16 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   .nav-menu-btn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
     background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;flex-shrink:0}
   .nav-menu-btn [data-lucide]{width:19px;height:19px;pointer-events:none}
+  /* Dark mode + admin unlock moved INTO the dropdown menu (10 Jul 2026, per
+     Brendon) — the nav bar on phones now shows only the single menu button,
+     nothing else competing for the top-right corner. Both controls are
+     re-added as sheet items by openMobileNavSheet() in the script. */
+  #theme-toggle, #nav-admin-toggle, #nav-admin-status{display:none}
+  /* !important needed — the popover's positioning is set via inline style
+     attribute in the markup, which otherwise always beats an external
+     stylesheet rule regardless of media query specificity. */
+  #nav-admin-popover{position:fixed !important;top:auto !important;
+    bottom:16px !important;left:16px !important;right:16px !important;min-width:auto !important}
 }
 
 /* ── Confetti ── */
@@ -452,7 +462,12 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 /* One-scroll lock: hero page ↔ dashboard page (snap areas only exist on the
    Overview page, so every other tab scrolls normally) */
 .page-wrap{scroll-snap-type:y mandatory}
-@media(max-width:768px){ html{scroll-snap-type:y mandatory} }
+/* Scroll-snap DISABLED on phones (10 Jul 2026) — see the "Mobile scroll
+   overhaul" block further down for the full explanation. Desktop (>768px)
+   keeps the cinematic pinned-hero/snap effect via .page-wrap's own
+   scroll-snap-type above; this just stops it from also applying to the
+   document itself on narrow viewports. */
+@media(max-width:768px){ html{scroll-snap-type:none} }
 .hero-stage{position:sticky;top:0;z-index:2;height:100vh;height:100dvh;
   min-height:480px;overflow:hidden}
 /* .hero itself is transparent now that the video is a separate fixed layer
@@ -527,7 +542,30 @@ html[data-theme="dark"] #ov-body .card{background:rgba(29,41,32,.75)}
 #ov-cal{display:flex;overflow-x:auto;gap:12px;padding-bottom:6px;-webkit-overflow-scrolling:touch}
 #ov-cal .cal-item{flex:0 0 235px;display:flex;flex-direction:column;align-items:flex-start;gap:5px}
 #ov-cal .loading,#ov-cal .skel{flex:1}
-@media(max-width:600px){ #ov-body{padding-bottom:calc(84px + env(safe-area-inset-bottom))} }
+
+/* ── De-cramp the mobile dashboard (10 Jul 2026, per Brendon — "cards are
+   too crammed... optimise mobile for much better UI"). The compact rules
+   right above this were tuned tight specifically to force the whole
+   dashboard onto one 100dvh scroll-snap page. Mobile no longer snaps or
+   pins (see the scroll-overhaul block further down), so the dashboard is
+   now a normal scrolling page and can breathe again — override back up
+   to comfortable sizing for phones. */
+@media(max-width:768px){
+  #ov-body .section-title{font-size:1rem;margin-bottom:14px;padding-bottom:9px}
+  #ov-body .impact-card{padding:20px;gap:18px;margin-bottom:20px}
+  #ov-body .impact-ring{width:126px;height:126px}
+  #ov-body .impact-ring .center .ring-lbl{font-size:.64rem;letter-spacing:.03em;max-width:90px;line-height:1.3}
+  #ov-body .impact-ring .center .ring-val{font-size:1.3rem}
+  #ov-body .equiv{padding:14px 16px}
+  #ov-body .equiv .ev{font-size:1.25rem}
+  #ov-body .card-grid{gap:16px;margin-bottom:20px}
+  #ov-body .card{padding:18px;margin-bottom:0}
+  #ov-body .chart-wrap{height:230px}
+  .upnext{padding:18px 20px;gap:16px}
+  /* Old bottom-nav clearance removed 10 Jul 2026 (bar itself was already
+     removed in the previous pass) — normal small bottom padding now. */
+  #ov-body{padding-bottom:calc(28px + env(safe-area-inset-bottom))}
+}
 
 /* ── Persistent tree-video backdrop (Phase 2, 10 Jul 2026, restructured same
    day per Brendon — "hold the background even in the next scroll page") ──
@@ -578,12 +616,28 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
   .upnext{padding:14px 16px;gap:12px}
 }
 @media(max-width:768px){
-  /* Tuck the hero UNDER the frosted sticky nav for a true full-screen first view */
-  .hero-stage{margin-top:calc(-1 * var(--nh));height:100vh;height:100dvh}
+  /* ── Mobile scroll overhaul (10 Jul 2026) ──
+     The desktop "cinematic" hero uses position:sticky + scroll-snap + a
+     JS-driven scale/opacity/video-scrub effect (see fx() in the script) to
+     pin the hero in place while a dashboard sheet slides over it. On phones
+     this read as jittery / "not locked in": 100vh vs 100dvh keeps
+     recalculating as Safari's address bar shows/hides mid-scroll, which
+     constantly shifts the snap stop out from under the gesture, and having
+     two scroll containers (the document's own snap, plus .ov-body's own
+     overflow:auto) left it ambiguous which one a given touch belonged to.
+     Mobile now just scrolls like a normal page: hero is a plain (non-sticky,
+     non-pinned) section sized to most of the first screen, and the
+     dashboard flows underneath it in ordinary document flow — one scroll
+     container, no snap, no fighting recalculations. fx()/setTreeVideoProgress
+     in the script both no-op under this breakpoint (matchMedia check), and
+     the tree video just plays/loops normally as ambient background instead
+     of being scroll-scrubbed. Desktop (>768px) is completely unaffected. */
+  .hero-stage{position:relative;margin-top:calc(-1 * var(--nh));
+    height:92vh;height:92svh;min-height:560px;overflow:hidden}
   .hero-stage .hero{padding-top:calc(var(--nh) + 30px)}
-  /* Sticky nav overlays the sheet when snapped — pad the dashboard's top so
-     the Up Next strip isn't cut off underneath it */
-  .ov-body{padding-top:calc(var(--nh) + 16px)}
+  .ov-body{position:static;height:auto;overflow-y:visible;
+    scroll-snap-align:none;scroll-snap-stop:normal;
+    padding-top:calc(var(--nh) + 16px)}
 }
 /* Big monitors: let the hero breathe — larger type, wider content column */
 @media(min-width:1600px){
@@ -1646,7 +1700,14 @@ function openMobileNavSheet(){
     `<button class="sheet-item${id === currentId ? ' sheet-item-active' : ''}" onclick="navigateTo('${id}')">
        <i data-lucide="${icon}"></i>${label}${id === currentId ? '<i data-lucide="check" style="margin-left:auto;width:16px;height:16px"></i>' : ''}
      </button>`).join('');
-  openSheet(items + `<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
+  // Dark mode + admin unlock live here now too (10 Jul 2026) — the nav bar's
+  // top-right corner shows only the menu button on phones, so both controls
+  // that used to sit next to it moved into this same menu.
+  const themeItem = `<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`;
+  const adminItem = isAdmin
+    ? `<div class="sheet-item" style="cursor:default;color:var(--gs)"><i data-lucide="shield-check"></i>Admin mode active</div>`
+    : `<button class="sheet-item" onclick="closeSheet();toggleAdminKeyPopover(event)"><i data-lucide="key-round"></i>Admin unlock</button>`;
+  openSheet(items + themeItem + adminItem);
 }
 function showSlotSheet(id){
   const s = (rosterData || []).find(x => String(x.id) === String(id));
@@ -1737,16 +1798,28 @@ function scrollToOvBody(){
   // currentTime at all, so the poster frame (also frame 0) stays static —
   // display:none is applied in CSS instead so the animated hero gradient
   // shows through as the fallback.
+  // Mobile (≤768px) no longer pins/scroll-scrubs the hero — see the CSS
+  // "Mobile scroll overhaul" comment. Checked live (not cached) since a
+  // phone can rotate/resize without a page reload.
+  const isMobileFlow = () => window.matchMedia('(max-width:768px)').matches;
   const treeVideo = document.getElementById('hero-tree-video');
   let videoReady = false;
   if (treeVideo && !reduced){
-    // iOS Safari needs a play()+pause() cycle before currentTime seeks work
-    // reliably without a user gesture having started playback.
-    const arm = () => { videoReady = true; treeVideo.removeEventListener('loadedmetadata', arm); };
-    treeVideo.addEventListener('loadedmetadata', arm);
-    const p = treeVideo.play();
-    if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
-    else treeVideo.pause();
+    if (isMobileFlow()){
+      // No scroll-scrub on phones — just let it play/loop softly as ambient
+      // background instead of parking on a scroll-driven frame.
+      treeVideo.loop = true;
+      const p = treeVideo.play();
+      if (p && p.catch) p.catch(() => {}); // autoplay can be blocked pre-interaction; harmless, poster frame shows instead
+    } else {
+      // iOS Safari needs a play()+pause() cycle before currentTime seeks work
+      // reliably without a user gesture having started playback.
+      const arm = () => { videoReady = true; treeVideo.removeEventListener('loadedmetadata', arm); };
+      treeVideo.addEventListener('loadedmetadata', arm);
+      const p = treeVideo.play();
+      if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
+      else treeVideo.pause();
+    }
   }
   // Full bloom lands at this fraction of the hero-to-sheet scroll range
   // instead of at the very end (1.0) — tune this down for even sooner bloom,
@@ -1771,6 +1844,7 @@ function scrollToOvBody(){
   function fx(){
     ticking = false;
     if (reduced) return;
+    if (isMobileFlow()) return; // hero isn't pinned on phones — nothing to scrub, video just loops ambiently
     try {
       const pg = document.getElementById('page-overview');
       if (!pg || !pg.classList.contains('active')) return;
