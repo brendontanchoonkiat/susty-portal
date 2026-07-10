@@ -243,7 +243,12 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 
 /* Session badges → earthier tones */
 .badge-sat,.cal-slot.sat{ background:#F3E3CA; color:#8B5A22; border-color:#E8C79A; }
-.badge-sun,.cal-slot.sun{ background:#DDE8D4; color:#356540; border-color:#B5CDA6; }
+/* BUG FIXED 10 Jul 2026: #DDE8D4 was nearly identical to var(--gp) (#DEE8D4),
+   the member-tag chip background — the SUN day-badge and the name chips next
+   to it were basically the same color, hard to tell apart at a glance.
+   Switched to a distinct blue-green so the day badge always reads separately
+   from whoever's rostered next to it. */
+.badge-sun,.cal-slot.sun{ background:#C8E2E6; color:#1D5F68; border-color:#9FC7CD; }
 .badge-gpc,.cal-slot.gpc{ background:#EBD9E6; color:#7C3B73; border-color:#D6B4CF; }
 
 /* Lucide icon sizing inline in nav */
@@ -498,7 +503,15 @@ html[data-theme="dark"] .ov-body{background:rgba(20,27,21,.86);box-shadow:0 -18p
 #ov-body .impact-ring .center .ring-val{font-size:1.1rem}
 #ov-body .equiv{padding:9px 12px}
 #ov-body .card-grid{gap:12px;margin-bottom:14px}
-#ov-body .card{padding:14px;margin-bottom:0}
+/* Frosted instead of solid var(--sf) (10 Jul 2026, per Brendon — "cards kind
+   of block out most of the background so it's not very visible") — cards
+   still read fine (blur keeps text/chart contrast high) but now let a hint
+   of the video tint through instead of fully opaque-ing over it, especially
+   on mobile where stacked full-width cards otherwise cover nearly the whole
+   screen. */
+#ov-body .card{padding:14px;margin-bottom:0;background:rgba(252,250,244,.75);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+html[data-theme="dark"] #ov-body .card{background:rgba(29,41,32,.75)}
 #ov-body .chart-wrap{height:min(23vh,210px)}
 #ov-cal{display:flex;overflow-x:auto;gap:12px;padding-bottom:6px;-webkit-overflow-scrolling:touch}
 #ov-cal .cal-item{flex:0 0 235px;display:flex;flex-direction:column;align-items:flex-start;gap:5px}
@@ -530,7 +543,16 @@ html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,
 }
 
 /* ── Up Next strip ("next match" style) ── */
-.upnext-wrap{margin:0 0 14px}
+/* Sticky within .ov-body's own scroll area (10 Jul 2026, per Brendon — "next
+   duty is hidden when I scroll") — stays pinned at the top of the dashboard
+   as everything else (Impact, charts, Upcoming Posts) scrolls underneath it,
+   instead of scrolling away with the rest of the content. Sits above the
+   card content (z-index 4, below the sticky nav at 100) and keeps its own
+   frosted background since things now scroll behind it. */
+.upnext-wrap{margin:0 0 14px;position:sticky;top:0;z-index:4;
+  background:rgba(236,227,211,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  padding-top:6px;margin-top:-6px}
+html[data-theme="dark"] .upnext-wrap{background:rgba(20,27,21,.86)}
 .upnext{position:relative;z-index:3;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
   background:rgba(252,250,244,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border:1px solid var(--br);border-radius:20px;box-shadow:var(--sh2);padding:18px 22px}
