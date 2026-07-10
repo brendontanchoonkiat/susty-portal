@@ -420,23 +420,24 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   border-radius:12px;font-family:inherit;font-size:.95rem;font-weight:600;color:var(--tx);cursor:pointer;text-align:left}
 .sheet-item:hover{background:var(--gp)}
 .sheet-item [data-lucide]{width:19px;height:19px;color:var(--gm)}
+.sheet-item-active{background:var(--gp);color:var(--gd)}
 
-/* ── Bottom tab bar (phones) ── */
+/* ── Mobile nav menu (phones) ──
+   REPLACED 10 Jul 2026: the fixed bottom tab bar ate ~68px of permanent
+   screen height on every page and its own safe-area padding fought with
+   scroll-snap on the hero→dashboard transition (the perceived "jerkiness").
+   Swapped for a single menu button at the top-right of the nav bar that
+   opens the existing bottom-sheet component (same one "More" used to use)
+   with all destinations listed — no persistent chrome, full page height
+   back on mobile. */
 .bottom-nav{display:none}
+.nav-menu-btn{display:none}
 @media(max-width:480px){
   .nav-mobile-select{display:none !important}
   nav{flex-wrap:nowrap;height:var(--nh);padding:0 14px}
-  body{padding-bottom:calc(68px + env(safe-area-inset-bottom))}
-  .bottom-nav{position:fixed;bottom:0;left:0;right:0;z-index:150;display:flex;justify-content:space-around;
-    background:rgba(22,42,32,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-    padding:8px 6px calc(8px + env(safe-area-inset-bottom));border-top:1px solid rgba(255,255,255,.09)}
-  html[data-theme="dark"] .bottom-nav{background:rgba(13,21,15,.92)}
-  .bnav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;
-    color:rgba(216,243,220,.55);font-size:.6rem;font-weight:700;font-family:inherit;padding:4px 2px;cursor:pointer;border-radius:12px;transition:color .2s}
-  .bnav-btn [data-lucide]{width:21px;height:21px}
-  .bnav-btn.active{color:#fff}
-  .bnav-btn.active [data-lucide]{filter:drop-shadow(0 0 6px rgba(127,181,132,.9))}
-  #toast{bottom:calc(80px + env(safe-area-inset-bottom));right:16px;left:16px}
+  .nav-menu-btn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+    background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;flex-shrink:0}
+  .nav-menu-btn [data-lucide]{width:19px;height:19px;pointer-events:none}
 }
 
 /* ── Confetti ── */
@@ -612,10 +613,6 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
      on arrival at the dashboard. Split out so top keeps the nav-height offset. */
   .ov-body{padding-top:calc(var(--nh) + 16px);padding-left:14px;padding-right:14px;padding-bottom:8px;border-radius:24px 24px 0 0}
 }
-@media(max-width:480px){
-  /* Leave room for the fixed bottom tab bar so the scroll cue stays visible */
-  .hero-stage{height:calc(100vh - 68px);height:calc(100dvh - 68px - env(safe-area-inset-bottom))}
-}
 
 /* ── Reduced motion: calm everything down ── */
 @media (prefers-reduced-motion:reduce){
@@ -652,6 +649,7 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <option value="test">🧪 Test</option>
   </select>
   <div id="nav-admin-bar" style="position:relative;display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
+    <button id="nav-menu-toggle" class="nav-menu-btn" onclick="openMobileNavSheet()" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
     <button id="theme-toggle" onclick="toggleTheme()" title="Light / dark mode"><i data-lucide="moon"></i></button>
     <button id="nav-admin-toggle" onclick="toggleAdminKeyPopover(event)" title="Admin unlock" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.12);border:none;border-radius:8px;cursor:pointer;color:#fff;flex-shrink:0">
       <i data-lucide="key-round" style="width:15px;height:15px;pointer-events:none"></i>
@@ -663,16 +661,6 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     </div>
   </div>
 </nav>
-
-<!-- Bottom tab bar (phones ≤480px — replaces the dropdown, 9 Jul 2026) -->
-<div class="bottom-nav" id="bottom-nav">
-  <button class="bnav-btn active" data-page="overview" onclick="navigateTo('overview')"><i data-lucide="home"></i>Home</button>
-  <button class="bnav-btn" data-page="energy" onclick="navigateTo('energy')"><i data-lucide="zap"></i>Energy</button>
-  <button class="bnav-btn" data-page="recycling" onclick="navigateTo('recycling')"><i data-lucide="recycle"></i>W2R</button>
-  <button class="bnav-btn" data-page="comms" onclick="navigateTo('comms')"><i data-lucide="megaphone"></i>Comms</button>
-  <button class="bnav-btn" data-page="roster" onclick="navigateTo('roster')"><i data-lucide="calendar-days"></i>Roster</button>
-  <button class="bnav-btn" id="bnav-more" onclick="openMoreSheet()"><i data-lucide="ellipsis"></i>More</button>
-</div>
 
 <!-- Bottom sheet (slot details on mobile + "More" nav) -->
 <div id="sheet-overlay" onclick="closeSheet()"></div>
@@ -1454,9 +1442,6 @@ function navigateTo(pageId) {
   if (page) page.classList.add('active');
   const mobileSelect = document.getElementById('nav-mobile-select');
   if (mobileSelect) mobileSelect.value = pageId;
-  // Bottom tab bar sync (phones)
-  document.querySelectorAll('.bnav-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.page === pageId));
   if (typeof closeSheet === 'function') closeSheet();
   location.hash = pageId;
   refreshIcons();
@@ -1640,6 +1625,28 @@ function openMoreSheet(){
   items.push(`<button class="sheet-item" onclick="navigateTo('test')"><i data-lucide="flask-conical"></i>Test</button>`);
   items.push(`<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
   openSheet(items.join(''));
+}
+// Mobile top-right menu (replaces the old fixed bottom tab bar, 10 Jul 2026).
+// Lists every destination in the same bottom-sheet component "More" already
+// used, so there's no persistent nav chrome eating screen height on phones.
+function openMobileNavSheet(){
+  const current = document.querySelector('.page.active');
+  const currentId = current ? current.id.replace('page-', '') : 'overview';
+  const dest = [
+    ['overview', 'home', 'Overview'],
+    ['energy', 'zap', 'Energy'],
+    ['recycling', 'recycle', 'W2R'],
+    ['comms', 'megaphone', 'Comms'],
+    ['roster', 'calendar-days', 'Roster'],
+  ];
+  if (isAdmin) dest.push(['members', 'users', 'Members']);
+  dest.push(['faq', 'book-open', 'FAQ']);
+  dest.push(['test', 'flask-conical', 'Test']);
+  const items = dest.map(([id, icon, label]) =>
+    `<button class="sheet-item${id === currentId ? ' sheet-item-active' : ''}" onclick="navigateTo('${id}')">
+       <i data-lucide="${icon}"></i>${label}${id === currentId ? '<i data-lucide="check" style="margin-left:auto;width:16px;height:16px"></i>' : ''}
+     </button>`).join('');
+  openSheet(items + `<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
 }
 function showSlotSheet(id){
   const s = (rosterData || []).find(x => String(x.id) === String(id));
