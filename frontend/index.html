@@ -1672,6 +1672,10 @@ function scrollToOvBody(){
     if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
     else treeVideo.pause();
   }
+  // Full bloom lands at this fraction of the hero-to-sheet scroll range
+  // instead of at the very end (1.0) — tune this down for even sooner bloom,
+  // up (max 1.0) to spread the growth back out over the whole scroll.
+  const BLOOM_COMPLETE_AT = 0.5;
   function setTreeVideoProgress(g){
     if (!treeVideo || reduced || !videoReady) return;
     const dur = treeVideo.duration || 4;
@@ -1693,10 +1697,15 @@ function scrollToOvBody(){
     hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
     hero.style.opacity = String(1 - p * .65);
     if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
-    // Tree video starts empty at rest (p=0) and reaches full bloom exactly as
-    // the dashboard sheet finishes covering the hero (p=1) — literally
-    // "empty to full leaf growth" tied to the scroll position.
-    setTreeVideoProgress(p);
+    // Tree video starts empty at rest (p=0). It used to reach full bloom
+    // exactly as the sheet finished covering the hero (p=1) — Brendon wanted
+    // it sooner, not right as the page disappears, so growth is front-loaded
+    // into the first BLOOM_COMPLETE_AT of the scroll and then holds on the
+    // fully-bloomed frame for the rest — plenty of scroll room to actually
+    // see it in bloom before the dashboard takes over. This is a mapping
+    // change, not a video edit: currentTime is always driven by this ratio,
+    // so the same file just gets "played back" faster relative to scroll.
+    setTreeVideoProgress(p / BLOOM_COMPLETE_AT);
   }
   function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
   window.addEventListener('scroll', onScroll, { passive:true });
