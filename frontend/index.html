@@ -1234,6 +1234,15 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
   </div>
 
   <div class="card" style="margin-top:16px">
+    <div class="section-title">🌀 Scroll &amp; Video Stress Test</div>
+    <p style="font-size:.82rem;color:var(--tm);margin-bottom:12px">Repeatedly scrolls the Overview page between the hero and dashboard many times fast, then checks whether the hero stat numbers and the background video survived intact — built 10 Jul 2026 after Brendon found that heavy repeated scrolling could make the numbers disappear.</p>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <label style="font-size:.82rem;color:var(--tm)">Cycles: <input type="number" id="stress-cycles" value="40" min="5" max="500" style="width:70px;padding:6px 8px;border:1.5px solid var(--br);border-radius:8px;font-size:.85rem"/></label>
+      <button class="btn btn-primary btn-sm" onclick="runScrollStressTest()">▶ Run Stress Test</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
     <div class="section-title">📨 Telegram Bot Test</div>
     <p style="font-size:.82rem;color:var(--tm);margin-bottom:12px">Send a test ping to the Telegram group. Requires your admin API key.</p>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
@@ -1589,17 +1598,23 @@ function rethemeCharts(){
 
 // ═══ COUNT-UP NUMBERS ════════════════════════════════════════════════════════
 function animateNumber(el, target, suffix=''){
+  if (!el) return; // defensive — never throw into a caller over a missing element
   target = Number(target) || 0;
   const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const decimals = (String(target).split('.')[1] || '').length > 0 ? 1 : 0;
-  if (reduced || target === 0) { el.textContent = target.toFixed(decimals).replace(/\.0$/,'') + suffix; return; }
+  const finalText = () => target.toFixed(decimals).replace(/\.0$/,'') + suffix;
+  if (reduced || target === 0) { el.textContent = finalText(); return; }
   const dur = 950, t0 = performance.now();
   function tick(now){
+    // Defensive (10 Jul 2026, stress-test hardening): if the element's been
+    // detached mid-animation (tab switch, re-render) just stop quietly
+    // instead of writing to a dead node or throwing.
+    if (!el.isConnected) return;
     const p = Math.min((now - t0) / dur, 1);
     const eased = 1 - Math.pow(1 - p, 3);
     el.textContent = (target * eased).toFixed(decimals) + suffix;
     if (p < 1) requestAnimationFrame(tick);
-    else el.textContent = target.toFixed(decimals).replace(/\.0$/,'') + suffix;
+    else el.textContent = finalText();
   }
   requestAnimationFrame(tick);
 }
@@ -1729,36 +1744,51 @@ function scrollToOvBody(){
   // instead of at the very end (1.0) — tune this down for even sooner bloom,
   // up (max 1.0) to spread the growth back out over the whole scroll.
   const BLOOM_COMPLETE_AT = 0.5;
+  // Hardened 10 Jul 2026 (Brendon's stress-test report — "scroll through the
+  // hero to the main page too many times and the numbers fail to show"):
+  // rapid back-and-forth scrolling means video.currentTime gets seeked very
+  // fast and very often. Some browsers can throw (InvalidStateError, or a
+  // decode error) if a seek lands while the previous one hasn't settled —
+  // wrapped in try/catch so a single bad seek can never throw up into fx()'s
+  // caller and (worst case) wedge the rAF scroll-handling loop.
   function setTreeVideoProgress(g){
     if (!treeVideo || reduced || !videoReady) return;
-    const dur = treeVideo.duration || 4;
-    treeVideo.currentTime = Math.min(Math.max(g, 0), 1) * dur;
+    try {
+      const dur = treeVideo.duration;
+      if (!dur || !isFinite(dur)) return; // don't seek against a bogus/未-ready duration
+      treeVideo.currentTime = Math.min(Math.max(g, 0), 1) * dur;
+    } catch (e) { /* transient seek failure — next scroll tick will just retry */ }
   }
 
   function fx(){
     ticking = false;
     if (reduced) return;
-    const pg = document.getElementById('page-overview');
-    if (!pg || !pg.classList.contains('active')) return;
-    // Progress 0→1 = how far the sheet has slid over the pinned hero.
-    // Rect-based, so it works with both scrollers (.page-wrap on desktop, window on mobile).
-    const sr = stage.getBoundingClientRect(), br = body.getBoundingClientRect();
-    const h = sr.height || 1;
-    const p = Math.min(Math.max(1 - (br.top - sr.top) / h, 0), 1);
-    // Apple-style zoom-out: full-bleed hero shrinks + gains rounded corners as the sheet covers it
-    hero.style.transform = `scale(${(1 - p * .1).toFixed(4)}) translateY(${(-p * 20).toFixed(1)}px)`;
-    hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
-    hero.style.opacity = String(1 - p * .65);
-    if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
-    // Tree video starts empty at rest (p=0). It used to reach full bloom
-    // exactly as the sheet finished covering the hero (p=1) — Brendon wanted
-    // it sooner, not right as the page disappears, so growth is front-loaded
-    // into the first BLOOM_COMPLETE_AT of the scroll and then holds on the
-    // fully-bloomed frame for the rest — plenty of scroll room to actually
-    // see it in bloom before the dashboard takes over. This is a mapping
-    // change, not a video edit: currentTime is always driven by this ratio,
-    // so the same file just gets "played back" faster relative to scroll.
-    setTreeVideoProgress(p / BLOOM_COMPLETE_AT);
+    try {
+      const pg = document.getElementById('page-overview');
+      if (!pg || !pg.classList.contains('active')) return;
+      if (!stage || !body || !hero) return; // defensive — DOM refs should never actually go stale, but don't let it throw if they do
+      // Progress 0→1 = how far the sheet has slid over the pinned hero.
+      // Rect-based, so it works with both scrollers (.page-wrap on desktop, window on mobile).
+      const sr = stage.getBoundingClientRect(), br = body.getBoundingClientRect();
+      const h = sr.height || 1;
+      const p = Math.min(Math.max(1 - (br.top - sr.top) / h, 0), 1);
+      // Apple-style zoom-out: full-bleed hero shrinks + gains rounded corners as the sheet covers it
+      hero.style.transform = `scale(${(1 - p * .1).toFixed(4)}) translateY(${(-p * 20).toFixed(1)}px)`;
+      hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
+      hero.style.opacity = String(1 - p * .65);
+      if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
+      // Tree video starts empty at rest (p=0). It used to reach full bloom
+      // exactly as the sheet finished covering the hero (p=1) — Brendon wanted
+      // it sooner, not right as the page disappears, so growth is front-loaded
+      // into the first BLOOM_COMPLETE_AT of the scroll and then holds on the
+      // fully-bloomed frame for the rest — plenty of scroll room to actually
+      // see it in bloom before the dashboard takes over. This is a mapping
+      // change, not a video edit: currentTime is always driven by this ratio,
+      // so the same file just gets "played back" faster relative to scroll.
+      setTreeVideoProgress(p / BLOOM_COMPLETE_AT);
+    } catch (e) {
+      console.warn('[cinematicOverview] fx() error (non-fatal, scroll handling continues):', e);
+    }
   }
   function onScroll(){ if (!ticking){ ticking = true; requestAnimationFrame(fx); } }
   window.addEventListener('scroll', onScroll, { passive:true });
@@ -3311,6 +3341,82 @@ async function volunteerSwap(id) {
     if (res.ok) { toast('🎉 Swap matched! Both parties notified.'); loadSwaps(); }
     else { const e = await res.json(); toast(e.error||'Match failed', true); }
   } catch(e) { toast('❌ Connection error', true); }
+}
+
+// ═══ SCROLL & VIDEO STRESS TEST (10 Jul 2026) ════════════════════════════════
+// Brendon found that scrolling from the hero into the dashboard "too many
+// times" made the hero stat numbers stop showing. Couldn't be reproduced with
+// a headless browser in this environment (no network access to install one),
+// so instead of guessing blind, this simulates the same rapid scroll-cycling
+// directly in the real browser and reports whether anything actually broke —
+// runnable any time from the Test tab, in production, on any device.
+async function runScrollStressTest(){
+  const cyclesInput = document.getElementById('stress-cycles');
+  const cycles = Math.max(5, Math.min(500, parseInt(cyclesInput?.value, 10) || 40));
+  log('─────────────────────────────', 'info');
+  log(`[ Scroll & Video Stress Test — ${cycles} cycles ]`, 'info');
+
+  navigateTo('overview');
+  await new Promise(r => setTimeout(r, 300)); // let the tab switch + any pending render settle
+
+  const statIds = ['ov-cardboard','ov-plastic','ov-energy','ov-posts'];
+  const baseline = {};
+  statIds.forEach(id => { baseline[id] = document.getElementById(id)?.textContent; });
+
+  const missingBaseline = statIds.filter(id => !baseline[id] || baseline[id] === '—');
+  if (missingBaseline.length) {
+    log(`Stats not loaded yet (${missingBaseline.join(', ')} still "—") — open Overview and wait for data before running this`, 'warn');
+  }
+
+  const wrap = document.querySelector('.page-wrap');
+  const usesWindow = !wrap || getComputedStyle(document.body).display !== 'flex'; // mobile layout scrolls window, not .page-wrap
+  const scroller = usesWindow ? window : wrap;
+  const getMax = () => usesWindow
+    ? Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight
+    : wrap.scrollHeight - wrap.clientHeight;
+
+  let caughtError = null;
+  const onErr = (e) => { caughtError = (e && (e.message || e.error?.message)) || String(e); };
+  window.addEventListener('error', onErr);
+
+  const t0 = performance.now();
+  for (let i = 0; i < cycles; i++) {
+    const target = (i % 2 === 0) ? getMax() : 0;
+    if (usesWindow) window.scrollTo(0, target); else scroller.scrollTop = target;
+    scroller.dispatchEvent(new Event('scroll'));
+    // a couple rAF ticks so fx()'s requestAnimationFrame-throttled work actually runs,
+    // same as it would under real (fast, but not infinitely fast) user scrolling
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  }
+  const elapsedMs = Math.round(performance.now() - t0);
+  window.removeEventListener('error', onErr);
+  await new Promise(r => setTimeout(r, 250)); // let any last rAF-queued work finish
+
+  if (caughtError) log(`Uncaught JS error during stress cycles: ${caughtError}`, 'fail');
+  else log(`${cycles} rapid scroll cycles completed in ${elapsedMs}ms with no uncaught errors`, 'pass');
+
+  let anyBroken = false;
+  statIds.forEach(id => {
+    const el = document.getElementById(id);
+    const now = el?.textContent;
+    const looksBroken = !now || now === '—' || now === 'Error' || /NaN/i.test(now);
+    if (looksBroken && baseline[id] && baseline[id] !== '—') {
+      anyBroken = true;
+      log(`#${id} went from "${baseline[id]}" to "${now}" after stress cycles — FAILED`, 'fail');
+    }
+  });
+  if (!anyBroken) log('All hero stat numbers still populated after stress cycles', 'pass');
+
+  const video = document.getElementById('hero-tree-video');
+  if (video) {
+    if (video.error) log(`Video element entered an error state: ${video.error.message || video.error.code}`, 'fail');
+    else log('Video element has no error state after stress cycles', 'pass');
+  }
+
+  // Leave the page back at the top of the hero, not wherever the last cycle landed
+  if (usesWindow) window.scrollTo(0, 0); else if (scroller) scroller.scrollTop = 0;
+
+  log('─────────────────────────────', 'info');
 }
 
 // ═══ TEST SUITE ══════════════════════════════════════════════════════════════
