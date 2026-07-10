@@ -426,28 +426,51 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
    REPLACED 10 Jul 2026: the fixed bottom tab bar ate ~68px of permanent
    screen height on every page and its own safe-area padding fought with
    scroll-snap on the hero→dashboard transition (the perceived "jerkiness").
-   Swapped for a single menu button at the top-right of the nav bar that
-   opens the existing bottom-sheet component (same one "More" used to use)
-   with all destinations listed — no persistent chrome, full page height
-   back on mobile. */
+   Swapped for a single menu button pinned to the top-right of the viewport.
+   ROUND 2 (same day, per Brendon's follow-up):
+   - Breakpoint widened 480px→768px so this is consistently "the" mobile nav
+     behaviour across the whole phone range, not split awkwardly between two
+     breakpoints (nav-tabs used to still show as a horizontal scroll row
+     between 481–768px, with no menu button at all in that band).
+   - Button is `position:fixed` (not flex/margin-auto positioned) so it can
+     never be pushed around by sibling width/overflow inside <nav> — it's
+     always pinned to the actual top-right corner of the viewport.
+   - Menu is now a small anchored dropdown panel under the button
+     (`#mobile-nav-dropdown`), not the full-width bottom sheet — Brendon
+     expected it to drop down from the button, not slide up from the bottom.
+     See openMobileNavMenu()/closeMobileNavMenu() in the script. */
 .bottom-nav{display:none}
 .nav-menu-btn{display:none}
-@media(max-width:480px){
+@media(max-width:768px){
   .nav-mobile-select{display:none !important}
-  nav{flex-wrap:nowrap;height:var(--nh);padding:0 14px}
-  .nav-menu-btn{display:flex;align-items:center;justify-content:center;width:34px;height:34px;
-    background:rgba(255,255,255,.12);border:none;border-radius:9px;cursor:pointer;color:#fff;flex-shrink:0}
+  .nav-tabs{display:none}
+  nav{flex-wrap:nowrap}
+  .nav-menu-btn{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
+    position:fixed;top:calc((var(--nh) - 38px) / 2);right:14px;z-index:120;
+    background:rgba(255,255,255,.14);border:none;border-radius:9px;cursor:pointer;color:#fff;flex-shrink:0}
   .nav-menu-btn [data-lucide]{width:19px;height:19px;pointer-events:none}
   /* Dark mode + admin unlock moved INTO the dropdown menu (10 Jul 2026, per
      Brendon) — the nav bar on phones now shows only the single menu button,
      nothing else competing for the top-right corner. Both controls are
-     re-added as sheet items by openMobileNavSheet() in the script. */
-  #theme-toggle, #nav-admin-toggle, #nav-admin-status{display:none}
-  /* !important needed — the popover's positioning is set via inline style
-     attribute in the markup, which otherwise always beats an external
-     stylesheet rule regardless of media query specificity. */
+     re-added as menu items by openMobileNavMenu() in the script.
+     !important needed on the two buttons below — both set `display:flex`
+     via an inline `style=` attribute in the markup, which otherwise always
+     beats an external stylesheet rule regardless of media query specificity
+     (this was why the admin key icon kept showing up despite this rule). */
+  #theme-toggle, #nav-admin-toggle{display:none !important}
+  #nav-admin-status{display:none}
   #nav-admin-popover{position:fixed !important;top:auto !important;
     bottom:16px !important;left:16px !important;right:16px !important;min-width:auto !important}
+  /* Anchored dropdown panel — replaces the full-width bottom sheet for nav
+     specifically. Drops down from just under the menu button, top-right,
+     instead of sliding up from the bottom of the screen. */
+  #mobile-nav-dropdown{position:fixed;top:calc(var(--nh) + 6px);right:14px;z-index:119;
+    min-width:200px;max-width:calc(100vw - 28px);background:var(--sf);border:1px solid var(--br);
+    border-radius:14px;padding:6px;box-shadow:0 14px 40px rgba(0,0,0,.28);
+    opacity:0;transform:translateY(-8px) scale(.98);transform-origin:top right;
+    pointer-events:none;transition:opacity .16s ease,transform .16s ease}
+  #mobile-nav-dropdown.show{opacity:1;transform:none;pointer-events:auto;display:block}
+  #mobile-nav-dropdown .sheet-item{padding:11px 10px;font-size:.9rem}
 }
 
 /* ── Confetti ── */
@@ -595,6 +618,28 @@ html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,
   .hero-stage .hero{background:linear-gradient(120deg,#1E3A2E,#3A6B50,#2C5E46,#1E3A2E)}
 }
 
+/* ── Mobile: scope video/scrim to the hero only, stop them showing through
+   the dashboard (10 Jul 2026, per Brendon — "the next section appears darker
+   than before"). On desktop the video+scrim are deliberately position:fixed
+   so they read as a constant backdrop behind BOTH the hero and the sliding
+   dashboard sheet. On mobile that no longer happens by accident — the
+   dashboard doesn't slide over anything now, it just flows normally below
+   the hero (see the scroll-overhaul block above) — but position:fixed still
+   kept the scrim's dark bottom gradient stop sitting behind the *entire*
+   scrollable page regardless, including well into the dashboard, which
+   combined with .ov-body's own translucent tint read as an unexpectedly
+   dark band right around the hero→dashboard boundary once scrolling was no
+   longer snapping straight past it. Scoped to just the hero's own height
+   instead, and the dashboard gets a solid-enough background since it no
+   longer needs to let video show through it on phones. */
+@media(max-width:768px){
+  #page-overview{position:relative}
+  .hero-bg-video,.hero-scrim{position:absolute;top:0;left:0;right:0;bottom:auto;
+    height:92vh;height:92svh;min-height:560px}
+  .ov-body{background:rgba(236,227,211,.93);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  html[data-theme="dark"] .ov-body{background:rgba(20,27,21,.93)}
+}
+
 /* ── Up Next strip ("next match" style) ── */
 .upnext-wrap{margin:0 0 14px}
 .upnext{position:relative;z-index:3;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
@@ -703,7 +748,7 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <option value="test">🧪 Test</option>
   </select>
   <div id="nav-admin-bar" style="position:relative;display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
-    <button id="nav-menu-toggle" class="nav-menu-btn" onclick="openMobileNavSheet()" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
+    <button id="nav-menu-toggle" class="nav-menu-btn" onclick="openMobileNavMenu(event)" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
     <button id="theme-toggle" onclick="toggleTheme()" title="Light / dark mode"><i data-lucide="moon"></i></button>
     <button id="nav-admin-toggle" onclick="toggleAdminKeyPopover(event)" title="Admin unlock" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.12);border:none;border-radius:8px;cursor:pointer;color:#fff;flex-shrink:0">
       <i data-lucide="key-round" style="width:15px;height:15px;pointer-events:none"></i>
@@ -715,6 +760,11 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     </div>
   </div>
 </nav>
+
+<!-- Mobile nav dropdown (10 Jul 2026) — anchored panel that drops down from
+     the top-right menu button, replacing the old bottom-sheet-based nav menu.
+     Populated by openMobileNavMenu() in the script. -->
+<div id="mobile-nav-dropdown"></div>
 
 <!-- Bottom sheet (slot details on mobile + "More" nav) -->
 <div id="sheet-overlay" onclick="closeSheet()"></div>
@@ -1497,6 +1547,7 @@ function navigateTo(pageId) {
   const mobileSelect = document.getElementById('nav-mobile-select');
   if (mobileSelect) mobileSelect.value = pageId;
   if (typeof closeSheet === 'function') closeSheet();
+  if (typeof closeMobileNavMenu === 'function') closeMobileNavMenu();
   location.hash = pageId;
   refreshIcons();
   // Reveal editor panels if admin mode is already unlocked
@@ -1680,10 +1731,17 @@ function openMoreSheet(){
   items.push(`<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
   openSheet(items.join(''));
 }
-// Mobile top-right menu (replaces the old fixed bottom tab bar, 10 Jul 2026).
-// Lists every destination in the same bottom-sheet component "More" already
-// used, so there's no persistent nav chrome eating screen height on phones.
-function openMobileNavSheet(){
+// Mobile top-right nav dropdown (replaces the old fixed bottom tab bar,
+// 10 Jul 2026; switched from a full-width bottom sheet to a small anchored
+// panel the same day, per Brendon — he expected it to drop down from the
+// button itself, not slide up from the bottom like the "More" sheet did).
+// Lists every destination, plus dark mode + admin unlock (moved in here
+// since the nav bar's top-right corner now shows only the menu button).
+function openMobileNavMenu(evt){
+  if (evt) evt.stopPropagation(); // don't let this same click immediately trigger the outside-click closer below
+  const dd = document.getElementById('mobile-nav-dropdown');
+  if (!dd) return;
+  if (dd.classList.contains('show')) { closeMobileNavMenu(); return; }
   const current = document.querySelector('.page.active');
   const currentId = current ? current.id.replace('page-', '') : 'overview';
   const dest = [
@@ -1700,15 +1758,26 @@ function openMobileNavSheet(){
     `<button class="sheet-item${id === currentId ? ' sheet-item-active' : ''}" onclick="navigateTo('${id}')">
        <i data-lucide="${icon}"></i>${label}${id === currentId ? '<i data-lucide="check" style="margin-left:auto;width:16px;height:16px"></i>' : ''}
      </button>`).join('');
-  // Dark mode + admin unlock live here now too (10 Jul 2026) — the nav bar's
-  // top-right corner shows only the menu button on phones, so both controls
-  // that used to sit next to it moved into this same menu.
-  const themeItem = `<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`;
+  const themeItem = `<button class="sheet-item" onclick="toggleTheme();closeMobileNavMenu()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`;
   const adminItem = isAdmin
     ? `<div class="sheet-item" style="cursor:default;color:var(--gs)"><i data-lucide="shield-check"></i>Admin mode active</div>`
-    : `<button class="sheet-item" onclick="closeSheet();toggleAdminKeyPopover(event)"><i data-lucide="key-round"></i>Admin unlock</button>`;
-  openSheet(items + themeItem + adminItem);
+    : `<button class="sheet-item" onclick="closeMobileNavMenu();toggleAdminKeyPopover(event)"><i data-lucide="key-round"></i>Admin unlock</button>`;
+  dd.innerHTML = items + themeItem + adminItem;
+  dd.classList.add('show');
+  refreshIcons();
 }
+function closeMobileNavMenu(){
+  const dd = document.getElementById('mobile-nav-dropdown');
+  if (dd) dd.classList.remove('show');
+}
+document.addEventListener('click', (evt) => {
+  const dd = document.getElementById('mobile-nav-dropdown');
+  const btn = document.getElementById('nav-menu-toggle');
+  if (dd && dd.classList.contains('show') && !dd.contains(evt.target) && (!btn || !btn.contains(evt.target))) {
+    closeMobileNavMenu();
+  }
+});
+document.addEventListener('keydown', (evt) => { if (evt.key === 'Escape') closeMobileNavMenu(); });
 function showSlotSheet(id){
   const s = (rosterData || []).find(x => String(x.id) === String(id));
   if (!s) return;
