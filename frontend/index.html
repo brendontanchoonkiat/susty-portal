@@ -402,10 +402,19 @@ html[data-theme="dark"] body::after{opacity:.05}
 .impact-ring .center .ring-val{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.25rem;color:var(--gm)}
 .impact-ring .center .ring-lbl{font-size:.6rem;color:var(--tm);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
 .equiv-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;flex:1;min-width:220px}
-.equiv{background:var(--gp);border-radius:12px;padding:12px 14px}
+.equiv{background:var(--gp);border-radius:12px;padding:12px 14px;
+  border:1px solid rgba(30,58,46,.1);box-shadow:0 1px 3px rgba(30,58,46,.08)}
 .equiv .ev{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.15rem;color:var(--gd);font-variant-numeric:tabular-nums}
 .equiv .el{font-size:.7rem;color:var(--tm);margin-top:2px}
 html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
+/* Distinct edges (10 Jul 2026, per Brendon — the 3 equiv boxes looked fused
+   into one bar) — the 12px grid gap alone wasn't enough once the impact
+   card went translucent (see #ov-body .card below): the gap's fill color is
+   the frosted card background, which can land close enough to var(--gp) in
+   tone (esp. over a green/foliage video backdrop) that the seam disappears.
+   A visible border + soft shadow keeps each box legible as its own tile
+   regardless of what's showing through behind it. */
+html[data-theme="dark"] .equiv{border-color:rgba(0,0,0,.25);box-shadow:0 1px 3px rgba(0,0,0,.2)}
 
 /* ── Bottom sheet (mobile detail + More menu) ── */
 #sheet-overlay{position:fixed;inset:0;background:rgba(10,18,12,.5);z-index:200;opacity:0;pointer-events:none;transition:opacity .25s;backdrop-filter:blur(2px)}
@@ -547,6 +556,20 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
   margin:0;padding:22px max(24px,calc((100% - 1100px)/2)) 14px;box-shadow:0 -18px 50px rgba(30,58,46,.22);
   height:100vh;height:100dvh;overflow-y:auto;scroll-snap-align:start;scroll-snap-stop:always}
 html[data-theme="dark"] .ov-body{background:rgba(20,27,21,.35);box-shadow:0 -18px 50px rgba(0,0,0,.55)}
+/* Header contrast fix (10 Jul 2026, per Brendon — "Our Impact" / "Upcoming
+   Posts" titles sit directly on the frosted .ov-body (alpha .32, see above)
+   instead of inside a .card, so over a busy patch of the tree video they can
+   blend right into the background. Titles inside cards (Recycling Trend etc)
+   already sit on the card's own .75-alpha surface and read fine — this only
+   targets the two direct-child titles that don't have that backing. A small
+   solid pill gives them a guaranteed-legible backdrop without touching the
+   .ov-body transparency itself (still "see more of the plant" per the alpha
+   note above). */
+#ov-body > .section-title{display:inline-flex;background:rgba(252,250,244,.88);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  padding:6px 14px 6px 10px;border-radius:999px;border-bottom:none;
+  box-shadow:0 1px 4px rgba(30,58,46,.12)}
+html[data-theme="dark"] #ov-body > .section-title{background:rgba(29,41,32,.88);box-shadow:0 1px 4px rgba(0,0,0,.3)}
 /* Reveal-on-scroll (class added by JS only — no-JS stays fully visible) */
 .reveal{opacity:0;transform:translateY(28px);transition:opacity .65s cubic-bezier(.2,.7,.3,1),transform .65s cubic-bezier(.2,.7,.3,1)}
 .reveal.inview{opacity:1;transform:none}
