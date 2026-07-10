@@ -444,7 +444,15 @@ html[data-theme="dark"] .equiv .ev{color:#CBE3CF}
 @media(max-width:768px){
   .nav-mobile-select{display:none !important}
   .nav-tabs{display:none}
-  nav{flex-wrap:nowrap}
+  /* height:var(--nh) re-affirmed here (last word wins) — an older ≤480px
+     rule further up (9 Jul "swap tabs for dropdown" block) sets
+     `nav{height:auto}`, which with tabs/select both hidden here left nav
+     rendering shorter than the 60px --nh the button's fixed top: calc()
+     below assumes. Result: the button's centering math was correct for a
+     60px bar but nav was actually ~46px, so the button visibly hung out
+     past the bottom edge of the green bar. Locking nav back to the full
+     --nh height fixes that regardless of what's hidden inside it. */
+  nav{flex-wrap:nowrap;height:var(--nh)}
   .nav-menu-btn{display:flex;align-items:center;justify-content:center;width:38px;height:38px;
     position:fixed;top:calc((var(--nh) - 38px) / 2);right:14px;z-index:120;
     background:rgba(255,255,255,.14);border:none;border-radius:9px;cursor:pointer;color:#fff;flex-shrink:0}
@@ -635,7 +643,7 @@ html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,
 @media(max-width:768px){
   #page-overview{position:relative}
   .hero-bg-video,.hero-scrim{position:absolute;top:0;left:0;right:0;bottom:auto;
-    height:92vh;height:92svh;min-height:560px}
+    height:100vh;height:100svh;min-height:560px}
   .ov-body{background:rgba(236,227,211,.93);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
   html[data-theme="dark"] .ov-body{background:rgba(20,27,21,.93)}
 }
@@ -671,14 +679,19 @@ html[data-theme="dark"] .upnext-chip{background:#3A311A;color:#E3C36B}
      two scroll containers (the document's own snap, plus .ov-body's own
      overflow:auto) left it ambiguous which one a given touch belonged to.
      Mobile now just scrolls like a normal page: hero is a plain (non-sticky,
-     non-pinned) section sized to most of the first screen, and the
+     non-pinned) section sized to fill the first screen, and the
      dashboard flows underneath it in ordinary document flow — one scroll
      container, no snap, no fighting recalculations. fx()/setTreeVideoProgress
      in the script both no-op under this breakpoint (matchMedia check), and
      the tree video just plays/loops normally as ambient background instead
      of being scroll-scrubbed. Desktop (>768px) is completely unaffected. */
   .hero-stage{position:relative;margin-top:calc(-1 * var(--nh));
-    height:92vh;height:92svh;min-height:560px;overflow:hidden}
+    height:100vh;height:100svh;min-height:560px;overflow:hidden}
+  /* svh, not dvh, deliberately — a static element resizing every time the
+     address bar shows/hides (what dvh does) would itself introduce a
+     layout jump on scroll, exactly what this overhaul removed. svh is
+     stable (assumes the smallest possible viewport), so the hero never
+     resizes underneath you mid-scroll. */
   .hero-stage .hero{padding-top:calc(var(--nh) + 30px)}
   .ov-body{position:static;height:auto;overflow-y:visible;
     scroll-snap-align:none;scroll-snap-stop:normal;
@@ -1867,28 +1880,24 @@ function scrollToOvBody(){
   // currentTime at all, so the poster frame (also frame 0) stays static —
   // display:none is applied in CSS instead so the animated hero gradient
   // shows through as the fallback.
-  // Mobile (≤768px) no longer pins/scroll-scrubs the hero — see the CSS
-  // "Mobile scroll overhaul" comment. Checked live (not cached) since a
-  // phone can rotate/resize without a page reload.
+  // Mobile (≤768px) no longer pins the hero with position:sticky — see the
+  // CSS "Mobile scroll overhaul" comment — but the video stays scroll-tied
+  // on phones too (confirmed with Brendon 10 Jul 2026, after briefly trying
+  // ambient autoplay to sidestep the earlier jitter/stress-test issues —
+  // he wants scrubbing back, matching desktop). Checked live (not cached)
+  // since a phone can rotate/resize without a page reload.
   const isMobileFlow = () => window.matchMedia('(max-width:768px)').matches;
   const treeVideo = document.getElementById('hero-tree-video');
   let videoReady = false;
   if (treeVideo && !reduced){
-    if (isMobileFlow()){
-      // No scroll-scrub on phones — just let it play/loop softly as ambient
-      // background instead of parking on a scroll-driven frame.
-      treeVideo.loop = true;
-      const p = treeVideo.play();
-      if (p && p.catch) p.catch(() => {}); // autoplay can be blocked pre-interaction; harmless, poster frame shows instead
-    } else {
-      // iOS Safari needs a play()+pause() cycle before currentTime seeks work
-      // reliably without a user gesture having started playback.
-      const arm = () => { videoReady = true; treeVideo.removeEventListener('loadedmetadata', arm); };
-      treeVideo.addEventListener('loadedmetadata', arm);
-      const p = treeVideo.play();
-      if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
-      else treeVideo.pause();
-    }
+    // iOS Safari needs a play()+pause() cycle before currentTime seeks work
+    // reliably without a user gesture having started playback. Same warm-up
+    // on both mobile and desktop now.
+    const arm = () => { videoReady = true; treeVideo.removeEventListener('loadedmetadata', arm); };
+    treeVideo.addEventListener('loadedmetadata', arm);
+    const p = treeVideo.play();
+    if (p && p.then) p.then(() => treeVideo.pause()).catch(() => {});
+    else treeVideo.pause();
   }
   // Full bloom lands at this fraction of the hero-to-sheet scroll range
   // instead of at the very end (1.0) — tune this down for even sooner bloom,
@@ -1913,21 +1922,33 @@ function scrollToOvBody(){
   function fx(){
     ticking = false;
     if (reduced) return;
-    if (isMobileFlow()) return; // hero isn't pinned on phones — nothing to scrub, video just loops ambiently
     try {
       const pg = document.getElementById('page-overview');
       if (!pg || !pg.classList.contains('active')) return;
       if (!stage || !body || !hero) return; // defensive — DOM refs should never actually go stale, but don't let it throw if they do
-      // Progress 0→1 = how far the sheet has slid over the pinned hero.
-      // Rect-based, so it works with both scrollers (.page-wrap on desktop, window on mobile).
-      const sr = stage.getBoundingClientRect(), br = body.getBoundingClientRect();
-      const h = sr.height || 1;
-      const p = Math.min(Math.max(1 - (br.top - sr.top) / h, 0), 1);
-      // Apple-style zoom-out: full-bleed hero shrinks + gains rounded corners as the sheet covers it
-      hero.style.transform = `scale(${(1 - p * .1).toFixed(4)}) translateY(${(-p * 20).toFixed(1)}px)`;
-      hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
-      hero.style.opacity = String(1 - p * .65);
-      if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
+      let p;
+      if (isMobileFlow()){
+        // Mobile: hero isn't pinned (position:relative, see CSS overhaul),
+        // so the desktop formula below (which assumes the sheet sliding
+        // over a fixed hero) doesn't mean anything here — both elements
+        // just scroll together at the same rate. Instead, progress = how
+        // far the hero itself has scrolled past the top of the viewport:
+        // 0 at rest (hero fully in view), 1 once it's scrolled fully out.
+        // No pin/scale/fade effect on mobile — just drives the video.
+        const sr = stage.getBoundingClientRect();
+        const h = sr.height || 1;
+        p = Math.min(Math.max(-sr.top / h, 0), 1);
+      } else {
+        // Progress 0→1 = how far the sheet has slid over the pinned hero.
+        const sr = stage.getBoundingClientRect(), br = body.getBoundingClientRect();
+        const h = sr.height || 1;
+        p = Math.min(Math.max(1 - (br.top - sr.top) / h, 0), 1);
+        // Apple-style zoom-out: full-bleed hero shrinks + gains rounded corners as the sheet covers it
+        hero.style.transform = `scale(${(1 - p * .1).toFixed(4)}) translateY(${(-p * 20).toFixed(1)}px)`;
+        hero.style.borderRadius = (p * 30).toFixed(0) + 'px';
+        hero.style.opacity = String(1 - p * .65);
+        if (cue) cue.style.opacity = String(Math.max(1 - p * 4, 0));
+      }
       // Tree video starts empty at rest (p=0). It used to reach full bloom
       // exactly as the sheet finished covering the hero (p=1) — Brendon wanted
       // it sooner, not right as the page disappears, so growth is front-loaded
