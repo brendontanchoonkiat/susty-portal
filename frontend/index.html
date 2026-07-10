@@ -1426,7 +1426,7 @@ function renderHeroStat(id, curVal, prevVal, allTimeTotal, unit) {
   if (!valEl) return;
 
   const shown = curVal !== null && curVal !== undefined ? curVal : 0;
-  const suffix = unit === 'kg' ? ' kg' : unit === 'kwh-k' ? 'k kWh' : '';
+  const suffix = unit === 'kg' ? ' kg' : unit === 'kwh-m' ? ' MWh' : '';
   animateNumber(valEl, shown, suffix); // count-up (beautify pass)
 
   if (trendEl) {
@@ -1626,17 +1626,31 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   if (wrap) wrap.scrollTop = 0;
 
   let revealed = false;
+  let gestureSeen = false;
   const SCROLL_KEYS = new Set(['ArrowDown','ArrowUp','PageDown','PageUp',' ','Spacebar']);
+  // REVEAL DELAY (10 Jul 2026, per Brendon) — the sidebar used to slide in
+  // the instant the very first wheel tick was detected, which fired before
+  // the hero's own scroll-snap transition had even started moving — so the
+  // sidebar felt like it was popping in ahead of the page, including on a
+  // stray scroll-up. Now a gesture just ARMS the reveal; the actual slide-in
+  // is held back by REVEAL_DELAY_MS so the hero's transition gets a beat to
+  // play out first.
+  const REVEAL_DELAY_MS = 600;
   function reveal(){
     if (revealed) return;
     revealed = true;
     document.body.classList.remove('nav-precroll');
     clearTimeout(fallback);
-    window.removeEventListener('wheel', reveal);
-    window.removeEventListener('touchstart', reveal);
+    window.removeEventListener('wheel', armReveal);
+    window.removeEventListener('touchstart', armReveal);
     window.removeEventListener('keydown', onKey);
   }
-  function onKey(e){ if (SCROLL_KEYS.has(e.key)) reveal(); }
+  function armReveal(){
+    if (gestureSeen) return;
+    gestureSeen = true;
+    setTimeout(reveal, REVEAL_DELAY_MS);
+  }
+  function onKey(e){ if (SCROLL_KEYS.has(e.key)) armReveal(); }
   // BUG FIXED 10 Jul 2026: 6s was way too short — reading the hero for a few
   // seconds before scrolling is completely normal, so the "safety net" was
   // actually the thing firing first, making the sidebar appear on its own
@@ -1645,8 +1659,8 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   // the viewport, so scrolling is never possible) — 20s is long enough that
   // no normal visitor reading the hero will ever trigger it by accident.
   const fallback = setTimeout(reveal, 20000);
-  window.addEventListener('wheel', reveal, { passive:true });
-  window.addEventListener('touchstart', reveal, { passive:true });
+  window.addEventListener('wheel', armReveal, { passive:true });
+  window.addEventListener('touchstart', armReveal, { passive:true });
   window.addEventListener('keydown', onKey);
 })();
 
@@ -2332,16 +2346,21 @@ async function loadEnergy() {
       // BUG FIXED 10 Jul 2026 — electricity showed no units in the hero.
       // renderHeroStat's animateNumber() count-up runs over ~950ms via
       // requestAnimationFrame; the line that used to sit here (setting
-      // textContent to "90.8k kWh" as a one-off override right after calling
-      // renderHeroStat) got raced and overwritten by the still-running
-      // animation on every subsequent frame, so by the time it finished the
-      // suffix was gone — just the bare number. Fixed by passing the
-      // pre-scaled value straight into renderHeroStat with a real unit
-      // ('kwh-k') so the animation itself carries the "k kWh" suffix the
-      // whole time, instead of fighting a separate DOM write after the fact.
-      const kwhK = Math.round(curRow.kwh / 100) / 10; // one decimal, e.g. 90827 -> 90.8
-      const prevKwhK = prevRow ? Math.round(prevRow.kwh / 100) / 10 : null;
-      renderHeroStat('ov-energy', kwhK, prevKwhK, allTimeAvg ? Math.round(allTimeAvg / 100) / 10 : null, 'kwh-k');
+      // textContent to a unit override right after calling renderHeroStat)
+      // got raced and overwritten by the still-running animation on every
+      // subsequent frame, so by the time it finished the suffix was gone —
+      // just the bare number. Fixed by passing the pre-scaled value straight
+      // into renderHeroStat with a real unit so the animation itself carries
+      // the suffix the whole time, instead of fighting a separate DOM write
+      // after the fact.
+      // UNIT FIX 10 Jul 2026 (per Brendon) — was labelled "k kWh" (thousand
+      // kWh), which read oddly ("90.8k kWh"). Same number, correct unit:
+      // kWh ÷ 1000 = MWh, so just relabelled to 'kwh-m' / "MWh" — no change
+      // to the underlying math, since dividing by 100 then by 10 already
+      // equals dividing by 1000.
+      const kwhM = Math.round(curRow.kwh / 100) / 10; // one decimal MWh, e.g. 90827 kWh -> 90.8 MWh
+      const prevKwhM = prevRow ? Math.round(prevRow.kwh / 100) / 10 : null;
+      renderHeroStat('ov-energy', kwhM, prevKwhM, allTimeAvg ? Math.round(allTimeAvg / 100) / 10 : null, 'kwh-m');
       // Electricity data lags behind W2R (it's manually entered from a monthly
       // utility sheet, not logged live) — label honestly instead of claiming
       // "this month" when we're actually showing the latest month that HAS data.
