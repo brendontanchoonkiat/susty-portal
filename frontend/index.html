@@ -543,16 +543,7 @@ html[data-theme="dark"] .hero-scrim{background:linear-gradient(180deg,rgba(8,14,
 }
 
 /* ── Up Next strip ("next match" style) ── */
-/* Sticky within .ov-body's own scroll area (10 Jul 2026, per Brendon — "next
-   duty is hidden when I scroll") — stays pinned at the top of the dashboard
-   as everything else (Impact, charts, Upcoming Posts) scrolls underneath it,
-   instead of scrolling away with the rest of the content. Sits above the
-   card content (z-index 4, below the sticky nav at 100) and keeps its own
-   frosted background since things now scroll behind it. */
-.upnext-wrap{margin:0 0 14px;position:sticky;top:0;z-index:4;
-  background:rgba(236,227,211,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
-  padding-top:6px;margin-top:-6px}
-html[data-theme="dark"] .upnext-wrap{background:rgba(20,27,21,.86)}
+.upnext-wrap{margin:0 0 14px}
 .upnext{position:relative;z-index:3;display:flex;align-items:center;gap:20px;flex-wrap:wrap;
   background:rgba(252,250,244,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border:1px solid var(--br);border-radius:20px;box-shadow:var(--sh2);padding:18px 22px}
@@ -598,7 +589,14 @@ html[data-theme="dark"] .hero-stat .lbl{color:#A5BBA5}
 html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
 @media(max-width:600px){
   .hero-stage .hero{padding-left:20px;padding-right:20px}
-  .ov-body{padding:24px 14px 8px;border-radius:24px 24px 0 0}
+  /* BUG FIXED 10 Jul 2026: this `padding:24px 14px 8px` shorthand set
+     padding-top to a flat 24px, silently overwriting the 768px rule's
+     `padding-top:calc(var(--nh) + 16px)` (~76px) — both rules match a phone
+     (≤600px matches ≤768px too), and this one comes later in the stylesheet,
+     so it won. Result: "Next Duty" rendered right underneath the sticky nav,
+     which is what Brendon saw as the card's own heading being cut off/hidden
+     on arrival at the dashboard. Split out so top keeps the nav-height offset. */
+  .ov-body{padding-top:calc(var(--nh) + 16px);padding-left:14px;padding-right:14px;padding-bottom:8px;border-radius:24px 24px 0 0}
 }
 @media(max-width:480px){
   /* Leave room for the fixed bottom tab bar so the scroll cue stays visible */
