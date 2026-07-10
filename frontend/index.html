@@ -1924,8 +1924,28 @@ function scrollToOvBody(){
   // decode error) if a seek lands while the previous one hasn't settled —
   // wrapped in try/catch so a single bad seek can never throw up into fx()'s
   // caller and (worst case) wedge the rAF scroll-handling loop.
+  // SEEK THROTTLE (10 Jul 2026, per Brendon — laggy scrubbing specifically
+  // when his laptop drove a big external display, fine on the laptop panel
+  // alone and on his phone). Each currentTime seek forces a decode of a run
+  // of B-frames back to the nearest keyframe, and that decode+scale+composite
+  // cost scales with how many pixels the video is actually being painted
+  // into — a big external monitor is far more pixels than a laptop panel or
+  // a phone viewport, so the same 60fps-ish seek rate that's fine on a small
+  // screen overwhelms decode on a large one. Rather than touching the video
+  // file, cap how often we actually issue a seek, scaling the minimum gap
+  // with viewport pixel area — small screens stay essentially unthrottled
+  // (~60fps), large/external displays get throttled down to ~8-10 seeks/sec,
+  // which is still smooth for a slow scroll-driven animation.
+  let lastSeekAt = 0;
+  function seekIntervalMs(){
+    const area = window.innerWidth * window.innerHeight;
+    return Math.min(120, Math.max(16, Math.round(area / 20000)));
+  }
   function setTreeVideoProgress(g){
     if (!treeVideo || reduced || !videoReady) return;
+    const now = performance.now();
+    if (now - lastSeekAt < seekIntervalMs()) return; // skip this tick, next one will catch up
+    lastSeekAt = now;
     try {
       const dur = treeVideo.duration;
       if (!dur || !isFinite(dur)) return; // don't seek against a bogus/未-ready duration
