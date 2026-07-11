@@ -589,8 +589,17 @@ html[data-theme="dark"] #ov-body > .section-title{background:rgba(29,41,32,.88);
    of the video tint through instead of fully opaque-ing over it, especially
    on mobile where stacked full-width cards otherwise cover nearly the whole
    screen. */
-#ov-body .card{padding:14px;margin-bottom:0;background:rgba(252,250,244,.75);
+/* margin-bottom:0 scoped to cards inside .card-grid only (11 Jul 2026, fix) —
+   .card-grid's own `gap` already spaces those cards, but this rule used to
+   target every #ov-body .card including standalone ones like .impact-card,
+   which has the SAME specificity (#id .class) and sits earlier in source
+   order, so it always lost and .impact-card's own margin-bottom got
+   silently cancelled to 0 — the Impact card was touching the chart-grid
+   below it with zero gap. Scoping to `.card-grid .card` leaves standalone
+   cards free to keep their own spacing. */
+#ov-body .card{padding:14px;background:rgba(252,250,244,.75);
   backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+#ov-body .card-grid .card{margin-bottom:0}
 html[data-theme="dark"] #ov-body .card{background:rgba(29,41,32,.75)}
 #ov-body .chart-wrap{height:min(23vh,210px)}
 #ov-cal{display:flex;overflow-x:auto;gap:12px;padding-bottom:6px;-webkit-overflow-scrolling:touch}
@@ -613,7 +622,8 @@ html[data-theme="dark"] #ov-body .card{background:rgba(29,41,32,.75)}
   #ov-body .equiv{padding:14px 16px}
   #ov-body .equiv .ev{font-size:1.25rem}
   #ov-body .card-grid{gap:16px;margin-bottom:20px}
-  #ov-body .card{padding:18px;margin-bottom:0}
+  #ov-body .card{padding:18px}
+  #ov-body .card-grid .card{margin-bottom:0}
   #ov-body .chart-wrap{height:230px}
   .upnext{padding:18px 20px;gap:16px}
   /* Old bottom-nav clearance removed 10 Jul 2026 (bar itself was already
@@ -1959,10 +1969,18 @@ function scrollToOvBody(){
   // with viewport pixel area — small screens stay essentially unthrottled
   // (~60fps), large/external displays get throttled down to ~8-10 seeks/sec,
   // which is still smooth for a slow scroll-driven animation.
+  // Floor raised 11 Jul 2026 (per Brendon — wanted a smoother/higher-framerate
+  // grow animation). Previously capped large/external displays down to
+  // ~8fps (120ms/tick); now floors at ~15fps (66ms/tick) and the divisor is
+  // smaller so mid-size screens get noticeably more seeks too. Kept as a
+  // moderate bump, not uncapped — the original throttle existed because big
+  // external displays overwhelmed decode at ~60fps seek rates (Brendon's
+  // stress-test report, 10 Jul). If lag reappears on a large external
+  // display, dial the 66/25000 back down rather than removing the cap.
   let lastSeekAt = 0;
   function seekIntervalMs(){
     const area = window.innerWidth * window.innerHeight;
-    return Math.min(120, Math.max(16, Math.round(area / 20000)));
+    return Math.min(66, Math.max(10, Math.round(area / 25000)));
   }
   function setTreeVideoProgress(g){
     if (!treeVideo || reduced || !videoReady) return;
@@ -2138,7 +2156,13 @@ async function loadRecycling() {
     buildOverviewChart();
     celebrateIfRecord();
   } catch(e) {
+    // Fixed 11 Jul 2026 (per Brendon — hero showed "Error" with zero way to
+    // debug it) — same lesson as the backend incident in PROJECT_STATE.md §7f:
+    // never let a catch block hide the real error. Logged to console + a
+    // visible toast now, instead of just a bare "Error" string.
+    console.error('[loadRecycling] failed to load W2R stats:', e);
     document.getElementById('ov-cardboard').textContent = 'Error';
+    toast(`⚠️ Couldn't load W2R stats — ${e.message || e}`, true);
   }
 }
 
@@ -2418,7 +2442,14 @@ async function loadEnergy() {
     renderEnergyEventPills();
     buildEnergyCharts();
     buildEnergyOverviewChart();
-  } catch(e) {}
+  } catch(e) {
+    // Was a totally silent `catch(e){}` (fixed 11 Jul 2026) — Electricity on
+    // the hero just sat at "—" forever with no error, no console log, nothing
+    // to debug from. Same fix as loadRecycling's catch above.
+    console.error('[loadEnergy] failed to load energy data:', e);
+    const el = document.getElementById('ov-energy');
+    if (el && el.textContent === '—') el.textContent = 'Error';
+  }
 }
 
 // Overview card (replaces the old "Next Roster Slots" table, 8 Jul 2026 — roster
@@ -2588,7 +2619,13 @@ async function loadComms() {
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - 7);
     renderCommsCalendar('all', 'ov-cal', { limit: 3, dateFrom: cutoff.toISOString().split('T')[0] });
-  } catch(e) {}
+  } catch(e) {
+    // Was a totally silent `catch(e){}` (fixed 11 Jul 2026) — same fix as
+    // loadRecycling/loadEnergy above. "Posts planned" just sat at "—" forever.
+    console.error('[loadComms] failed to load comms data:', e);
+    const el = document.getElementById('ov-posts');
+    if (el && el.textContent === '—') el.textContent = 'Error';
+  }
 }
 
 // opts: { limit, dateFrom, showActions }
