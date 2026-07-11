@@ -46,8 +46,10 @@ body{font-family:'Hanken Grotesk',system-ui,sans-serif;background:var(--bg);colo
 
 /* NAV */
 nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);display:flex;align-items:center;padding:0 24px;gap:8px;box-shadow:0 2px 12px rgba(0,0,0,.2)}
-.nav-logo{font-family:Georgia,serif;font-size:1rem;color:var(--gp);font-weight:bold;margin-right:16px;white-space:nowrap}
-.nav-logo span{color:var(--gs)}
+.nav-logo{font-family:Georgia,serif;font-size:1rem;color:var(--gp);font-weight:bold;margin-right:16px;white-space:nowrap;display:flex;align-items:center;gap:8px}
+.nav-logo-text{display:flex;flex-direction:column;line-height:1.15}
+.nav-logo-title{color:var(--gp)}
+.nav-logo-tagline{font-family:sans-serif;font-size:.6rem;font-weight:normal;color:var(--gs);white-space:nowrap;letter-spacing:.2px}
 .nav-tabs{display:flex;gap:4px;overflow-x:auto;flex:1}
 .nav-tab{background:transparent;border:none;cursor:pointer;color:rgba(216,243,220,.65);font-size:.82rem;font-family:inherit;font-weight:500;padding:6px 14px;border-radius:20px;white-space:nowrap;transition:background .18s,color .18s}
 .nav-tab:hover{background:rgba(255,255,255,.08);color:#fff}
@@ -315,6 +317,7 @@ nav{ flex-direction:column; align-items:stretch; width:250px; height:100vh;
   body{ display:block; }
   nav{ position:sticky; flex-direction:row; align-items:center; width:auto; height:var(--nh); padding:0 12px; }
   .nav-logo{ margin-bottom:0; }
+  .nav-logo-tagline{ display:none; }
   .nav-tabs{ flex-direction:row; overflow-x:auto; flex:1; -webkit-overflow-scrolling:touch; }
   .nav-tab{ width:auto; border-radius:20px; font-size:.88rem; padding:8px 16px; }
   #nav-admin-bar{ margin-top:0; }
@@ -796,7 +799,7 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
 
 <!-- NAV -->
 <nav>
-  <div class="nav-logo"><i data-lucide="sprout"></i> <span>Susty</span> Ministry</div>
+  <div class="nav-logo"><i data-lucide="sprout"></i><span class="nav-logo-text"><span class="nav-logo-title">ESM</span><span class="nav-logo-tagline">Environmental Sustainability Ministry</span></span></div>
   <div class="nav-tabs">
     <button class="nav-tab active" data-page="overview">Overview</button>
     <button class="nav-tab" data-page="energy"><i data-lucide="zap"></i> Energy</button>
@@ -805,7 +808,7 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <button class="nav-tab" data-page="roster"><i data-lucide="calendar-days"></i> Roster</button>
     <button class="nav-tab admin-only" data-page="members" style="display:none"><i data-lucide="users"></i> Members</button>
     <button class="nav-tab" data-page="faq"><i data-lucide="book-open"></i> FAQ</button>
-    <button class="nav-tab" data-page="test"><i data-lucide="flask-conical"></i> Test</button>
+    <button class="nav-tab admin-only" data-page="test" style="display:none"><i data-lucide="flask-conical"></i> Test</button>
   </div>
   <!-- Mobile dropdown nav (added 9 Jul 2026, per Jonathan's feedback — the
        scrollable tab row was cramped/small on phones). Shown in place of
@@ -818,7 +821,7 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <option value="roster">📅 Roster</option>
     <option value="members" class="admin-only" style="display:none">👥 Members</option>
     <option value="faq">📖 FAQ</option>
-    <option value="test">🧪 Test</option>
+    <option value="test" class="admin-only" style="display:none">🧪 Test</option>
   </select>
   <div id="nav-admin-bar" style="position:relative;display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0">
     <button id="nav-menu-toggle" class="nav-menu-btn" onclick="openMobileNavMenu(event)" title="Menu" aria-label="Menu"><i data-lucide="menu"></i></button>
@@ -1814,7 +1817,7 @@ function openMoreSheet(){
   const items = [];
   if (isAdmin) items.push(`<button class="sheet-item" onclick="navigateTo('members')"><i data-lucide="users"></i>Members</button>`);
   items.push(`<button class="sheet-item" onclick="navigateTo('faq')"><i data-lucide="book-open"></i>FAQ</button>`);
-  items.push(`<button class="sheet-item" onclick="navigateTo('test')"><i data-lucide="flask-conical"></i>Test</button>`);
+  if (isAdmin) items.push(`<button class="sheet-item" onclick="navigateTo('test')"><i data-lucide="flask-conical"></i>Test</button>`);
   items.push(`<button class="sheet-item" onclick="toggleTheme();closeSheet()"><i data-lucide="moon-star"></i>Toggle dark mode</button>`);
   openSheet(items.join(''));
 }
@@ -1840,7 +1843,7 @@ function openMobileNavMenu(evt){
   ];
   if (isAdmin) dest.push(['members', 'users', 'Members']);
   dest.push(['faq', 'book-open', 'FAQ']);
-  dest.push(['test', 'flask-conical', 'Test']);
+  if (isAdmin) dest.push(['test', 'flask-conical', 'Test']);
   const items = dest.map(([id, icon, label]) =>
     `<button class="sheet-item${id === currentId ? ' sheet-item-active' : ''}" onclick="navigateTo('${id}')">
        <i data-lucide="${icon}"></i>${label}${id === currentId ? '<i data-lucide="check" style="margin-left:auto;width:16px;height:16px"></i>' : ''}
