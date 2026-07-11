@@ -64,9 +64,28 @@ nav{position:sticky;top:0;z-index:100;background:var(--gd);height:var(--nh);disp
 .hero h1{font-family:Georgia,serif;font-size:1.8rem;margin-bottom:4px}
 .hero p{color:var(--gp);font-size:.9rem;margin-bottom:20px}
 .hero-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
-.hero-stat{background:rgba(255,255,255,.1);border-radius:var(--r);padding:14px 16px;border:1px solid rgba(255,255,255,.12)}
-.hero-stat .val{font-size:1.5rem;font-weight:700;color:var(--gs)}
-.hero-stat .lbl{font-size:.75rem;color:var(--gp);margin-top:2px}
+/* Restructured 11 Jul 2026, per Brendon — "align the MWh, optimise the space
+   for text, make the cards look appealing". Two problems: (1) .val had no
+   white-space control, so a value+unit combo wide enough (e.g. "90.8 MWh")
+   would wrap at the space, landing "MWh" alone on its own line while the
+   shorter cards ("32.6 kg", "3") stayed on one — visually misaligned across
+   the row. (2) .lbl had no line-clamp, so the longest label ("Electricity —
+   latest — Apr 2026 ▼7%") wrapped to 2 lines while others stayed at 1,
+   leaving uneven leftover space at the bottom of the shorter cards (grid
+   already stretches every card in a row to equal height, so that emptiness
+   was visible, not just theoretical). Fixed by making .val never wrap and
+   .lbl always clamp to a single line with ellipsis — the full detail is
+   still available via the wrap element's title tooltip on hover (already
+   set in renderHeroStat/loadEnergy). flex column + space-between anchors
+   the value to the top and label to the bottom consistently regardless of
+   content length, so all 4 cards read as the same shape at a glance. */
+.hero-stat{background:rgba(255,255,255,.1);border-radius:var(--r);padding:14px 16px;
+  border:1px solid rgba(255,255,255,.12);display:flex;flex-direction:column;
+  justify-content:space-between;gap:6px;transition:transform .18s ease,box-shadow .18s ease}
+.hero-stat .val{font-size:1.5rem;font-weight:700;color:var(--gs);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.hero-stat .lbl{font-size:.75rem;color:var(--gp);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
 
 /* CARDS */
 .section-title{font-family:Georgia,serif;font-size:1.05rem;color:var(--gd);margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid var(--gp);display:flex;align-items:center;gap:8px}
@@ -523,12 +542,20 @@ html[data-theme="dark"] .equiv{border-color:rgba(0,0,0,.25);box-shadow:0 1px 3px
    bumped from a barely-there rgba(255,255,255,.1)/blur(6px) wash to a solid
    frosted card with real contrast + lift, so the overview numbers never get
    lost in the footage behind them (10 Jul 2026, per Brendon). */
-.hero-stage .hero-stat{padding:22px 24px;border-radius:18px;
+.hero-stage .hero-stat{padding:22px 24px;border-radius:18px;min-height:120px;
   background:rgba(15,26,17,.55);border:1px solid rgba(255,255,255,.22);
   backdrop-filter:blur(14px) saturate(1.2);-webkit-backdrop-filter:blur(14px) saturate(1.2);
   box-shadow:0 8px 28px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.08)}
-.hero-stage .hero-stat .val{font-size:clamp(1.8rem,3.6vw,2.9rem);text-shadow:0 2px 12px rgba(0,0,0,.4)}
-.hero-stage .hero-stat .lbl{font-size:.8rem;margin-top:4px;text-shadow:0 1px 6px rgba(0,0,0,.35)}
+/* Ceiling brought down 2.9rem→2.35rem (11 Jul 2026) — the old max let
+   "90.8 MWh" outgrow the card at wide viewports and wrap "MWh" onto its own
+   line (see .hero-stat comment above for the full writeup); this ceiling
+   comfortably fits every current value+unit combo on one line at the
+   card's minmax(200px,1fr) floor width. */
+.hero-stage .hero-stat .val{font-size:clamp(1.7rem,3vw,2.35rem);text-shadow:0 2px 12px rgba(0,0,0,.4)}
+.hero-stage .hero-stat .lbl{font-size:.8rem;text-shadow:0 1px 6px rgba(0,0,0,.35)}
+.hero-stage .hero-stat:hover{transform:translateY(-3px);
+  box-shadow:0 14px 34px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.1);
+  border-color:rgba(255,255,255,.32)}
 .scroll-cue{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:1px;
   background:none;border:none;cursor:pointer;color:rgba(222,232,212,.85);font-family:inherit;font-size:.66rem;font-weight:700;
   letter-spacing:.14em;text-transform:uppercase;animation:cueBob 2.2s ease-in-out infinite;padding:8px;z-index:3}

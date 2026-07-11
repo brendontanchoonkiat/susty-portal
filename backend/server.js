@@ -93,16 +93,25 @@ app.use((req, res, next) => {
   next();
 });
 
-// Bumped 100 → 500 per 15min (11 Jul 2026) — a single Overview page load fires
-// ~10-12 GETs on its own (recycling x3, energy x2, comms, roster, swaps, stats),
-// and other tabs (Energy, W2R) add more on top of that. 100/15min meant as few
-// as 8-10 page reloads/tab switches exhausted the whole window, after which
-// every GET got a 429 whose body ({error:'Too many requests.'}) isn't an array —
-// the frontend passed it straight to Array.prototype.find() and crashed with a
-// cryptic "arr.find is not a function" instead of anything resembling "rate
-// limited." Frontend now also guards against a non-array response (see
-// loadRecycling), but the real fix is this limit was just too tight for normal
-// dashboard usage by a small team, not abuse traffic.
+// max bumped 100 → 500 (11 Jul 2026), THEN exempted from GET entirely (same
+// day, per Brendon — "what if 10 people refresh 50 times, wouldn't a bigger
+// number just hit the same wall later?"). Correct: a single Overview page
+// load alone fires ~10-12 GETs (recycling x3, energy x2, comms, roster,
+// swaps, stats), other tabs add more, and if several people test from the
+// same WiFi they share ONE public IP → ONE budget. Any fixed GET cap is a
+// ticking clock for a group session like that. Real fix: GETs are read-only,
+// idempotent, and already backed by recycling.js/energy.js's 5-minute
+// in-memory cache — they're cheap at any volume, so they shouldn't be
+// rate-limited at all. Only WRITES (spam submissions) are worth limiting,
+// and those already have their own dedicated, stricter limiters below
+// (writeLimiter, adminLimiter) — apiLimiter now only guards non-GET methods
+// on routes that have no dedicated limiter of their own (see
+// writeMethodsOnly() just below). A 429 body ({error:'Too many requests.'})
+// is a plain object, not an array — if one ever does slip through, the
+// frontend passed it straight to Array.prototype.find() before and crashed
+// with a cryptic "arr.find is not a function"; loadRecycling() now guards
+// against that too, so a genuine rate-limit hit fails with a clear message
+// instead of a crash either way.
 const apiLimiter   = rateLimit({ windowMs: 15*60*1000, max: 500,  standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests.' } });
 const writeLimiter  = rateLimit({ windowMs: 60*60*1000, max: 10,   message: { error: 'Submission limit reached.' } });
 const adminLimiter  = rateLimit({ windowMs: 15*60*1000, max: 20,   message: { error: 'Admin rate limit exceeded.' } });
@@ -125,7 +134,7 @@ function writeMethodsOnly(limiter) {
   };
 }
 
-app.use('/api', apiLimiter);
+app.use('/api', writeMethodsOnly(apiLimiter));
 app.use('/api/swap', writeMethodsOnly(writeLimiter));
 app.use('/api/comms', writeMethodsOnly(writeLimiter));
 app.use('/api/roster', adminLimiter);
