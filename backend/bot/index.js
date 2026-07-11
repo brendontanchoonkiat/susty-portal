@@ -2775,9 +2775,6 @@ bot.callbackQuery('action:mystats', async (ctx) => {
       .catch(() => ctx.reply(noSupaText, { reply_markup: backToMain() }));
   }
 
-  const { data: attended } = await supa.from('attendance')
-    .select('*, roster_slots(date, session)').eq('member_name', name);
-
   // Credit-splitting (added per Brendon, 9 Jul 2026): whoever taps "Log Cardboard/Plastic" was
   // just the one holding the phone — everyone rostered on roster_slots.team for that date did
   // the actual duty, so kg logged for a date is split evenly across that date's whole team
@@ -2815,7 +2812,11 @@ bot.callbackQuery('action:mystats', async (ctx) => {
   });
 
   const impact  = carbon.calcCO2e(myCb, myPl);
-  const sessions = attended?.length || rosterDates.length || (ownLogs || []).length;
+  // "Sessions" = duty already served, not future scheduled roster slots — fixed 11 Jul 2026
+  // (was counting every roster_slots row incl. months ahead, via a dead `attendance` table
+  // lookup that always returned 0 rows and fell through to the unfiltered rosterDates count).
+  const pastRosterDates = rosterDates.filter(d => d <= today());
+  const sessions = pastRosterDates.length || (ownLogs || []).length;
 
   const text =
     `🌿 <b>${name}'s Personal Impact</b>\n\n` +
