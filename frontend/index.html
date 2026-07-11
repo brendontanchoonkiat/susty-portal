@@ -2138,6 +2138,16 @@ async function loadRecycling() {
     plData = await plRes.json();
     const sum = await sumRes.json();
 
+    // Defensive check (added 11 Jul 2026, after a real "arr.find is not a
+    // function" crash) — a 429 from the rate limiter (or any other non-2xx
+    // JSON error response, e.g. {error:'Too many requests.'}) is a plain
+    // object, not an array. Fail with a clear message instead of a cryptic
+    // type error three lines further down.
+    if (!Array.isArray(cbData) || !Array.isArray(plData)) {
+      const reason = (!cbRes.ok && cbData && cbData.error) || (!plRes.ok && plData && plData.error) || 'unexpected response shape';
+      throw new Error(`W2R data endpoint returned an error instead of data (${reason})`);
+    }
+
     const curM = currentMonthLabel(0), prevM = currentMonthLabel(-1);
     renderHeroStat('ov-cardboard', findMonthRow(cbData, curM, 'kg') || 0, findMonthRow(cbData, prevM, 'kg'), sum.cardboard.total, 'kg');
     renderHeroStat('ov-plastic',   findMonthRow(plData, curM, 'kg') || 0, findMonthRow(plData, prevM, 'kg'), sum.plastic.total, 'kg');

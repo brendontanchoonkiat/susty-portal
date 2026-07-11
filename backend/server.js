@@ -93,7 +93,17 @@ app.use((req, res, next) => {
   next();
 });
 
-const apiLimiter   = rateLimit({ windowMs: 15*60*1000, max: 100,  standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests.' } });
+// Bumped 100 → 500 per 15min (11 Jul 2026) — a single Overview page load fires
+// ~10-12 GETs on its own (recycling x3, energy x2, comms, roster, swaps, stats),
+// and other tabs (Energy, W2R) add more on top of that. 100/15min meant as few
+// as 8-10 page reloads/tab switches exhausted the whole window, after which
+// every GET got a 429 whose body ({error:'Too many requests.'}) isn't an array —
+// the frontend passed it straight to Array.prototype.find() and crashed with a
+// cryptic "arr.find is not a function" instead of anything resembling "rate
+// limited." Frontend now also guards against a non-array response (see
+// loadRecycling), but the real fix is this limit was just too tight for normal
+// dashboard usage by a small team, not abuse traffic.
+const apiLimiter   = rateLimit({ windowMs: 15*60*1000, max: 500,  standardHeaders: true, legacyHeaders: false, message: { error: 'Too many requests.' } });
 const writeLimiter  = rateLimit({ windowMs: 60*60*1000, max: 10,   message: { error: 'Submission limit reached.' } });
 const adminLimiter  = rateLimit({ windowMs: 15*60*1000, max: 20,   message: { error: 'Admin rate limit exceeded.' } });
 
