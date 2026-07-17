@@ -2570,13 +2570,27 @@ async function sendAvailabilityRequest(ctx, monthGroups) {
       // em dash, which previously got matched instead of the real "—
       // <month>" header, corrupting the saved month — fixed 18 Jul 2026, see
       // avail:submit). Only possible now that sessions are Supabase-backed.
-      await primeMemberSession(m.telegram_id, {
+      const sessionPatch = {
         availMonth:          first.monthArg,
         availDates:          first.slots.map(s => s.date),
         availSlots:          first.slots,
         availSelected:       [],
         pendingCollectQueue: rest,
-      });
+      };
+      await primeMemberSession(m.telegram_id, sessionPatch);
+      // Self-test guard (found 18 Jul 2026): when the recipient IS the admin
+      // sending the request (test mode always DMs the TL themselves), admin
+      // and recipient share the exact same chat/session key. grammy still
+      // holds THIS request's admin ctx.session in memory and automatically
+      // writes it back to storage the moment this callback handler returns —
+      // which would silently clobber the priming write above with the
+      // admin's own (unrelated) session state. Mirroring the same patch onto
+      // ctx.session directly means grammy's own write-back preserves it
+      // instead of overwriting it. No effect on real sends to other members,
+      // since their session key differs from the admin's.
+      if (String(m.telegram_id) === String(ctx.from?.id)) {
+        Object.assign(ctx.session, sessionPatch);
+      }
       await bot.api.sendMessage(
         m.telegram_id,
         (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
