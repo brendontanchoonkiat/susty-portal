@@ -91,8 +91,22 @@ if (!BOT_TOKEN) {
 const bot = new Bot(BOT_TOKEN);
 
 // ─── Session ──────────────────────────────────────────────────────────────────
-bot.use(session({
-  initial: () => ({
+// Persistent (Supabase-backed) session storage — added 17 Jul 2026. grammy's
+// default session() storage is a plain in-memory Map, which is wiped on
+// every Railway restart/redeploy. That's usually harmless (nobody minds
+// losing an in-progress "type your DOB" prompt), but Brendon reported real
+// damage from it: members mid-way through "Collect Availability" losing
+// their tapped dates ("options not remembered"), and typed unavailability
+// reasons silently vanishing (the awaitingSeqUnavailReason flag resets to
+// null on restart, so the next typed message matches nothing and is
+// dropped). Backing storage with Supabase survives restarts the same way
+// bot_settings already does. Falls back to an in-memory Map if Supabase
+// isn't configured (e.g. local dev), so nothing breaks without it — but the
+// bugs above will still recur in that mode.  Needs the `bot_sessions` table
+// (see create_bot_sessions_table.sql) or every read/write below just logs a
+// warning and behaves like the old in-memory default (no crash).
+function defaultSession() {
+  return {
     awaitingName:       false,
     awaitingLogDate:    null,   // { type } — waiting for date text after choosing Log Cardboard/Plastic
     logSession:         null,   // { type, sessionDate, measurements: [{kg, fileId, imageUrl}] } — active multi-measurement log flow
@@ -139,6 +153,13 @@ bot.use(session({
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
+    // Chained multi-month Collect Availability (added 17 Jul 2026) — when a
+    // TL picks 2+ months at once, only the first month's DM goes out
+    // immediately; the rest are queued here (primed directly into the
+    // *recipient's* persisted session by primeMemberCollectQueue, before
+    // they've ever messaged the bot) and advanceToNextQueuedMonth() pops the
+    // next one once the member finishes the current month.
+    pendingCollectQueue:   [],     // [{ monthArg, slots, generatedFallback }, ...] remaining months for THIS member
     // Comms post review (added for portal planning calendar workflow)
     awaitingCommsReject:      null,  // comms_posts id: TL is typing feedback to send back to the tagged member(s)
     awaitingCommsScheduleTime: null, // comms_posts id: TL is typing a time-of-day for the scheduled "time to post" ping
@@ -146,8 +167,52 @@ bot.use(session({
     pendingGpcCheckin:         null,  // { ministry_status, other_ministry?, duration?, arrival_note? } — staged until final save
     awaitingGpcOtherMinistry:  false, // waiting for free-text ministry name after "Also another ministry" tap
     awaitingGpcArrivalNote:    false, // waiting for free-text arrival note after "Just a short while" tap
-  }),
-}));
+  };
+}
+
+// StorageAdapter interface grammy expects: read(key)/write(key,value)/delete(key).
+// Keyed the same way grammy's default session() keys private chats — by
+// chat id (== the member's own telegram id for a DM) — so priming a
+// member's queue ahead of time (before they've ever messaged the bot) uses
+// the exact same key their own session will load under.
+const memorySessionFallback = new Map();
+const sessionStorage = {
+  async read(key) {
+    const supa = db.getClient();
+    if (!supa) return memorySessionFallback.get(key);
+    const { data, error } = await supa.from('bot_sessions').select('data').eq('key', key).maybeSingle();
+    if (error) { console.warn('[Session] read failed:', error.message); return undefined; }
+    if (!data?.data) return undefined;
+    try { return JSON.parse(data.data); } catch { return undefined; }
+  },
+  async write(key, value) {
+    const supa = db.getClient();
+    if (!supa) { memorySessionFallback.set(key, value); return; }
+    const { error } = await supa.from('bot_sessions')
+      .upsert({ key, data: JSON.stringify(value), updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if (error) console.warn('[Session] write failed:', error.message);
+  },
+  async delete(key) {
+    const supa = db.getClient();
+    if (!supa) { memorySessionFallback.delete(key); return; }
+    const { error } = await supa.from('bot_sessions').delete().eq('key', key);
+    if (error) console.warn('[Session] delete failed:', error.message);
+  },
+};
+
+bot.use(session({ initial: defaultSession, storage: sessionStorage }));
+
+// Writes pendingCollectQueue into a member's own persisted session BEFORE
+// they've interacted with the bot for this request — merges into whatever
+// session they already have (if any) rather than clobbering unrelated
+// in-progress state (e.g. a half-finished recycling log).
+async function primeMemberCollectQueue(telegramId, queue) {
+  const key = String(telegramId);
+  const existing = await sessionStorage.read(key);
+  const base = existing || defaultSession();
+  base.pendingCollectQueue = queue;
+  await sessionStorage.write(key, base);
+}
 
 // ─── Group → PM redirect ──────────────────────────────────────────────────────
 // The bot should never actually interact with members inside the main group —
@@ -462,6 +527,33 @@ function parseLogDate(text) {
   if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null;
   if (!typedYear && dt > new Date()) {
     year -= 1;
+    dt = new Date(year, monIdx, day);
+    if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null; // e.g. 29 Feb on a non-leap year
+  }
+  return dt.toISOString().split('T')[0];
+}
+
+// Parse a typed date like "19 Sep" or "19 Sep 2026" for an UPCOMING date —
+// used by Collect Availability's "Add a date". Deliberately the opposite of
+// parseLogDate's "no year given + future → assume last year" rule, which is
+// right for back-adding a past collection but wrong here: Brendon reported
+// (17 Jul 2026) that adding "19 Sep" with no year silently landed on 19 Sep
+// 2025 — this rolls FORWARD to next year instead when the bare day/month has
+// already passed this year, so a no-year date always resolves to the
+// nearest upcoming occurrence.
+function parseFutureDate(text) {
+  const m = text.trim().match(/^(\d{1,2})\s+([A-Za-z]+)\.?\s*(\d{4})?$/);
+  if (!m) return null;
+  const day    = parseInt(m[1]);
+  const monIdx = MONTH_NAMES.findIndex(mn => mn.startsWith(m[2].toLowerCase()));
+  if (monIdx < 0 || day < 1 || day > 31) return null;
+  const typedYear = m[3] ? parseInt(m[3]) : null;
+  let year = typedYear || new Date().getFullYear();
+  let dt   = new Date(year, monIdx, day);
+  if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null;
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  if (!typedYear && dt < todayStart) {
+    year += 1;
     dt = new Date(year, monIdx, day);
     if (dt.getMonth() !== monIdx || dt.getDate() !== day) return null; // e.g. 29 Feb on a non-leap year
   }
@@ -1879,6 +1971,16 @@ bot.callbackQuery('menu:avail', async (ctx) => {
 
 // unavailDates = dates the member CANNOT serve (shown with ❌)
 // Unmarked dates = available
+// Session (SAT/SUN/GPC) is encoded into the callback_data itself as
+// "date|session" — not just the date — so the keyboard is always
+// self-describing and never depends on ctx.session having the slot list
+// already loaded. That matters because these DMs are pushed directly via
+// bot.api.sendMessage from an admin action, so the recipient's own session
+// was never pre-seeded with availSlots; without the session encoded in the
+// button itself, the very first tap fell back to re-deriving slots from
+// scratch with session='?' for every date, which wiped every SAT/SUN/GPC
+// badge on the whole keyboard (Brendon reported 17 Jul 2026: "yellow and
+// green differentiating dates disappear" after the first tap).
 function buildAvailKeyboard(slots, unavailDates) {
   const kb = new InlineKeyboard();
   for (const s of slots) {
@@ -1886,13 +1988,13 @@ function buildAvailKeyboard(slots, unavailDates) {
     const prefix    = isUnavail ? '❌ ' : '';
     const sessLabel = (s.session && s.session !== '?') ? ` (${s.session})` : '';
     const sessIcon  = s.session === 'GPC' ? ' 🟣' : s.session === 'SAT' ? ' 🟡' : s.session === '?' ? '' : ' 🟢';
-    kb.text(`${prefix}${fmtDateShort(s.date)}${sessIcon}${sessLabel}`, `avail:toggle:${s.date}`).row();
+    kb.text(`${prefix}${fmtDateShort(s.date)}${sessIcon}${sessLabel}`, `avail:toggle:${s.date}|${s.session || '?'}`).row();
   }
   kb.text('✅ Done — Submit', 'avail:submit').text('← Cancel', 'avail:cancel');
   return kb;
 }
 
-bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
+bot.callbackQuery(/^avail:toggle:([^|]+)\|(.*)$/, async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   const date    = ctx.match[1];
   const unavail = ctx.session.availSelected || [];
@@ -1904,17 +2006,19 @@ bot.callbackQuery(/^avail:toggle:(.+)$/, async (ctx) => {
     ctx.session.availSelected = unavail.filter(d => d !== date);
   }
 
-  // Recover slots from session, or fall back to reading dates from the keyboard buttons
-  let slots = ctx.session.availSlots || [];
-  if (!slots.length) {
-    const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
-    const dates = rows.flat()
-      .filter(b => b.callback_data?.startsWith('avail:toggle:'))
-      .map(b => b.callback_data.replace('avail:toggle:', ''));
-    slots = dates.map(d => ({ date: d, session: '?' }));
-    ctx.session.availSlots = slots;
-    ctx.session.availDates = dates;
-  }
+  // Always rebuild the full slot list (with sessions) straight from the
+  // live keyboard's own buttons — the source of truth, not ctx.session
+  // (which may be empty for admin-pushed DMs, or reset by a restart).
+  const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
+  const slots = rows.flat()
+    .filter(b => b.callback_data?.startsWith('avail:toggle:'))
+    .map(b => {
+      const raw = b.callback_data.replace('avail:toggle:', '');
+      const [d, s] = raw.split('|');
+      return { date: d, session: s || '?' };
+    });
+  ctx.session.availSlots = slots;
+  ctx.session.availDates = slots.map(s => s.date);
 
   // Per-date reason prompts removed 3 Jul 2026 per Brendon's trial feedback —
   // they cluttered the chat and buried the one question that actually
@@ -1944,11 +2048,12 @@ bot.callbackQuery('avail:submit', async (ctx) => {
     allD = ctx.session.availSlots.map(s => s.date);
   }
   if (!allD.length) {
-    // Last resort: read from the keyboard (the avail:submit button is on this message)
+    // Last resort: read from the keyboard (the avail:submit button is on this
+    // message) — callback_data is "date|session", strip the session part.
     const rows = ctx.callbackQuery.message?.reply_markup?.inline_keyboard || [];
     allD = rows.flat()
       .filter(b => b.callback_data?.startsWith('avail:toggle:'))
-      .map(b => b.callback_data.replace('avail:toggle:', ''));
+      .map(b => b.callback_data.replace('avail:toggle:', '').split('|')[0]);
   }
   const avail = allD.filter(d => !unavail.includes(d));
 
@@ -2059,7 +2164,40 @@ async function finalizeAvailability(ctx, monthlyNote) {
     `✅ <b>Submitted for ${month}!</b>\n\n${lines}${noteLine}\n\n` +
     `<i>Your TL will see this when planning the roster.</i>`;
 
-  return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: backToMain() });
+  await ctx.reply(msg, { parse_mode: 'HTML' });
+
+  // Chained multi-month Collect Availability (added 17 Jul 2026, per
+  // Brendon: "Aug appears first then when avails have been captured, it
+  // goes into Sep"). If a TL queued more than one month at once, the next
+  // one was staged in pendingCollectQueue (see primeMemberCollectQueue) —
+  // send it now instead of dumping every month on the member at once.
+  return advanceToNextQueuedMonth(ctx);
+}
+
+// Pops and sends the next queued month's request, or falls back to the main
+// menu once the queue is empty. Re-seeds a placeholder availability row for
+// the new month (mirrors what sendAvailabilityRequest does when it sends
+// the FIRST month) so the portal sees it as "pending" only once it's
+// actually been shown to the member.
+async function advanceToNextQueuedMonth(ctx) {
+  const queue = ctx.session.pendingCollectQueue || [];
+  if (!queue.length) return sendMainMenu(ctx);
+
+  const next = queue.shift();
+  ctx.session.pendingCollectQueue = queue;
+
+  ctx.session.availMonth    = next.monthArg;
+  ctx.session.availDates    = next.slots.map(s => s.date);
+  ctx.session.availSlots    = next.slots;
+  ctx.session.availSelected = [];
+
+  const name = await resolveName(ctx);
+  if (name) await db.saveAvailability(next.monthArg, name, [], next.slots.map(s => s.date));
+
+  return ctx.reply(
+    `📅 <b>Next — Unavailability Check: ${next.monthArg}</b>\n\nTap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
+    { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(next.slots, []) }
+  );
 }
 
 bot.callbackQuery('avail:skipmonthlynote', async (ctx) => {
@@ -2078,6 +2216,7 @@ bot.callbackQuery('avail:cancel', async (ctx) => {
   ctx.session.availReasonTotal         = 0;
   ctx.session.pendingAvailSave      = null;
   ctx.session.awaitingMonthlyNote   = false;
+  ctx.session.pendingCollectQueue   = []; // Cancel stops the whole chain, not just this month
   const kb = await buildMainMenu(ctx);
   await ctx.editMessageText('🌿 <b>Susty Ministry Bot</b>\n\nWhat do you need?', {
     parse_mode: 'HTML', reply_markup: kb,
@@ -2189,10 +2328,14 @@ bot.callbackQuery('admin:menu', async (ctx) => {
 
 // Next N calendar months (current + upcoming) as picker options, in the same
 // "Month YYYY" canonical form used everywhere else for roster_slots lookups.
+// Starts at NEXT month, not the current one — availability is almost always
+// being collected ahead of time, and Brendon reported (17 Jul 2026) the
+// current month (July) showing as a pickable option was just noise/a
+// mistap risk this late into it.
 function upcomingMonthOptions(n = 6) {
   const now = new Date();
   const out = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = 1; i <= n; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
     out.push(d.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' }));
   }
@@ -2376,11 +2519,14 @@ bot.callbackQuery('collect:confirm', async (ctx) => {
   return sendAvailabilityRequest(ctx, monthGroups);
 });
 
-// DMs the resolved+reviewed date list to every eligible member, once per
-// month group (so a 2-month request sends each member two separate,
-// correctly-scoped messages rather than one ambiguous combined one — the
-// recipient-side submit/save flow is single-month per message). Combines
-// results from every group into one final summary reply.
+// DMs the FIRST month's request to every eligible member right away. If
+// there's more than one month group, the rest are queued into each member's
+// own persisted session (primeMemberCollectQueue) rather than sent all at
+// once — per Brendon (17 Jul 2026): "Aug appears first then when avails
+// have been captured, it goes into Sep." advanceToNextQueuedMonth() (fired
+// from finalizeAvailability once a member submits) pops and sends each
+// subsequent month in turn. Month groups are sorted chronologically first so
+// "first" is always the earliest month regardless of pick order.
 async function sendAvailabilityRequest(ctx, monthGroups) {
   const exemptNames = new Set(await db.getDutyExemptNames());
   let members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
@@ -2398,44 +2544,45 @@ async function sendAvailabilityRequest(ctx, monthGroups) {
     return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
   }
 
-  const summaries = [];
-  for (const { monthArg, slots: monthSlots, generatedFallback } of monthGroups) {
-    let sent = 0;
-    const failed = []; // { name, reason }
+  const sorted = [...monthGroups].sort((a, b) => new Date(`1 ${a.monthArg}`) - new Date(`1 ${b.monthArg}`));
+  const [first, ...rest] = sorted;
 
-    for (const m of members) {
-      if (!m.telegram_id) {
-        failed.push({ name: m.name, reason: 'no telegram_id on file (never registered with the bot)' });
-        continue;
-      }
-      try {
-        await bot.api.sendMessage(
-          m.telegram_id,
-          (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
-          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
-          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
-        );
-        await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
-        sent++;
-      } catch (err) {
-        console.warn(`[Bot] collect: failed to DM ${m.name} for ${monthArg}:`, err.message);
-        failed.push({ name: m.name, reason: err.message });
-      }
+  let sent = 0;
+  const failed = []; // { name, reason }
+
+  for (const m of members) {
+    if (!m.telegram_id) {
+      failed.push({ name: m.name, reason: 'no telegram_id on file (never registered with the bot)' });
+      continue;
     }
-    summaries.push({ monthArg, sent, total: members.length, generatedFallback, failed });
+    try {
+      if (rest.length) await primeMemberCollectQueue(m.telegram_id, rest);
+      await bot.api.sendMessage(
+        m.telegram_id,
+        (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
+        `📅 <b>Unavailability Check — ${first.monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>` +
+        (rest.length ? `\n\n<i>You'll be asked about ${rest.map(r => r.monthArg).join(', ')} right after you submit this one.</i>` : ''),
+        { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(first.slots, []) }
+      );
+      await db.saveAvailability(first.monthArg, m.name, [], first.slots.map(s => s.date));
+      sent++;
+    } catch (err) {
+      console.warn(`[Bot] collect: failed to DM ${m.name} for ${first.monthArg}:`, err.message);
+      failed.push({ name: m.name, reason: err.message });
+    }
   }
 
-  const parts = summaries.map(s => {
-    const note     = s.generatedFallback ? ' <i>(no roster yet — generated Sat/Sun dates)</i>' : '';
-    const failNote = s.failed.length
-      ? `\n  ⚠️ Not sent to: ${s.failed.map(f => `${f.name} (${f.reason})`).join(', ')}`
-      : '';
-    return `📅 <b>${s.monthArg}</b>: ${s.sent}/${s.total}${note}${failNote}`;
-  });
+  const note     = first.generatedFallback ? ' <i>(no roster yet — generated Sat/Sun dates)</i>' : '';
+  const failNote = failed.length
+    ? `\n\n⚠️ <b>Not sent to:</b>\n${failed.map(f => `  • <b>${f.name}</b> — ${f.reason}`).join('\n')}`
+    : '';
+  const chainNote = rest.length
+    ? `\n\n<i>${rest.map(r => r.monthArg).join(', ')} will follow automatically for each member right after they submit ${first.monthArg}.</i>`
+    : '';
 
   const t =
     (testMode ? '🧪 <b>Test mode</b> — ' : '') +
-    `✅ Availability request${monthGroups.length > 1 ? 's' : ''} sent${testMode ? ' (test names only)' : ''}:\n\n${parts.join('\n')}`;
+    `✅ Availability request for <b>${first.monthArg}</b> sent to <b>${sent}/${members.length}</b>${testMode ? ' test' : ''} members.${note}${failNote}${chainNote}`;
   return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
     .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
 }
@@ -3501,7 +3648,7 @@ bot.on('message:text', async (ctx) => {
     const pc = ctx.session.pendingCollect;
     if (!pc) return ctx.reply('⚠️ Session expired — start over from /admin.', { reply_markup: backToAdmin() });
 
-    const iso = parseLogDate(text.trim());
+    const iso = parseFutureDate(text.trim());
     if (!iso) {
       return ctx.reply(
         `⚠️ Couldn't parse "${text.trim()}". Try: <code>9 Aug</code> or <code>9 Aug 2026</code>`,
