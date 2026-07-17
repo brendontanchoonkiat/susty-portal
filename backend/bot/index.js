@@ -156,7 +156,7 @@ function defaultSession() {
     // Chained multi-month Collect Availability (added 17 Jul 2026) — when a
     // TL picks 2+ months at once, only the first month's DM goes out
     // immediately; the rest are queued here (primed directly into the
-    // *recipient's* persisted session by primeMemberCollectQueue, before
+    // *recipient's* persisted session by primeMemberSession, before
     // they've ever messaged the bot) and advanceToNextQueuedMonth() pops the
     // next one once the member finishes the current month.
     pendingCollectQueue:   [],     // [{ monthArg, slots, generatedFallback }, ...] remaining months for THIS member
@@ -206,11 +206,11 @@ bot.use(session({ initial: defaultSession, storage: sessionStorage }));
 // they've interacted with the bot for this request — merges into whatever
 // session they already have (if any) rather than clobbering unrelated
 // in-progress state (e.g. a half-finished recycling log).
-async function primeMemberCollectQueue(telegramId, queue) {
+async function primeMemberSession(telegramId, patch) {
   const key = String(telegramId);
   const existing = await sessionStorage.read(key);
   const base = existing || defaultSession();
-  base.pendingCollectQueue = queue;
+  Object.assign(base, patch);
   await sessionStorage.write(key, base);
 }
 
@@ -2034,11 +2034,18 @@ bot.callbackQuery('avail:submit', async (ctx) => {
   const name    = await resolveName(ctx);
   const unavail = ctx.session.availSelected || [];
 
-  // Recover month from session or parse from the message header text
+  // Recover month from session or parse from the message header text.
+  // Anchored specifically on "Unavailability Check —" rather than a bare
+  // /—\s+(.+)/ — the 🧪 test-mode banner ("[TEST — not the real request]")
+  // prepended above the real header also contains an em dash, and a bare
+  // pattern greedily matches THAT one first, corrupting the saved month
+  // into literally "not the real request]" (caught 18 Jul 2026 testing test
+  // mode — every test-mode submission was silently saving under a garbage
+  // month string until this fix).
   let month = ctx.session.availMonth;
   if (!month) {
     const msgText = ctx.callbackQuery.message?.text || '';
-    const mm = msgText.match(/—\s+(.+)/);
+    const mm = msgText.match(/Unavailability Check\s*—\s*(.+)/);
     if (mm) month = mm[1].trim();
   }
 
@@ -2169,7 +2176,7 @@ async function finalizeAvailability(ctx, monthlyNote) {
   // Chained multi-month Collect Availability (added 17 Jul 2026, per
   // Brendon: "Aug appears first then when avails have been captured, it
   // goes into Sep"). If a TL queued more than one month at once, the next
-  // one was staged in pendingCollectQueue (see primeMemberCollectQueue) —
+  // one was staged in pendingCollectQueue (see primeMemberSession) —
   // send it now instead of dumping every month on the member at once.
   return advanceToNextQueuedMonth(ctx);
 }
@@ -2521,7 +2528,7 @@ bot.callbackQuery('collect:confirm', async (ctx) => {
 
 // DMs the FIRST month's request to every eligible member right away. If
 // there's more than one month group, the rest are queued into each member's
-// own persisted session (primeMemberCollectQueue) rather than sent all at
+// own persisted session (primeMemberSession) rather than sent all at
 // once — per Brendon (17 Jul 2026): "Aug appears first then when avails
 // have been captured, it goes into Sep." advanceToNextQueuedMonth() (fired
 // from finalizeAvailability once a member submits) pops and sends each
@@ -2556,7 +2563,20 @@ async function sendAvailabilityRequest(ctx, monthGroups) {
       continue;
     }
     try {
-      if (rest.length) await primeMemberCollectQueue(m.telegram_id, rest);
+      // Prime the recipient's own persisted session with the month/dates
+      // BEFORE sending, so avail:submit reads availMonth/availSlots straight
+      // from session instead of falling back to parsing the message header
+      // text — that fallback is fragile (the 🧪 test-mode banner has its own
+      // em dash, which previously got matched instead of the real "—
+      // <month>" header, corrupting the saved month — fixed 18 Jul 2026, see
+      // avail:submit). Only possible now that sessions are Supabase-backed.
+      await primeMemberSession(m.telegram_id, {
+        availMonth:          first.monthArg,
+        availDates:          first.slots.map(s => s.date),
+        availSlots:          first.slots,
+        availSelected:       [],
+        pendingCollectQueue: rest,
+      });
       await bot.api.sendMessage(
         m.telegram_id,
         (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
