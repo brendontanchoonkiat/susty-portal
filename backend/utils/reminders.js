@@ -26,6 +26,7 @@ function startReminderCron(bot) {
     await sendDutyReminders(bot);
     await sendBirthdayReminders(bot);
     await sendCommsReminders(bot);
+    await sendAvailabilityReminders(bot);
   }, { timezone: 'UTC' });
 
   // Every 5 minutes — checks for comms posts whose TL-scheduled "time to
@@ -413,7 +414,83 @@ async function checkScheduledCommsPosts(bot) {
   }
 }
 
+// ─── Availability request reminders (added 18 Jul 2026, per Brendon) ──────
+// Members get a max-3-day response window. Day 1 = gentle nudge, day 3 =
+// final call — both driven off `requested_at` (set once when the request
+// DM is sent) vs `submitted_at` (only set on a real submission), so this
+// never double-counts someone who's genuinely unavailable every date as
+// "hasn't responded" (the old dates_unavail=all-dates placeholder was
+// ambiguous that way). reminder1_sent_at/reminder3_sent_at stop each tier
+// from re-firing on the next day's cron run.
+// Deliberately text-only, not a re-send of the toggle keyboard — the
+// original request message's buttons are still fully live (session state
+// now persists across restarts, see bot/index.js's Supabase-backed session
+// storage), so members can just scroll back up to it rather than needing a
+// fresh copy.
+async function sendAvailabilityReminders(bot) {
+  const supa = db.getClient();
+  if (!supa) return;
+
+  const outstanding = await db.getOutstandingAvailability();
+  if (!outstanding.length) return;
+
+  const DAY = 86400000;
+  const now = Date.now();
+  const idCache = {};
+  async function telegramIdFor(name) {
+    if (name in idCache) return idCache[name];
+    const { data } = await supa.from('members').select('telegram_id').ilike('name', name).single();
+    idCache[name] = data?.telegram_id || null;
+    return idCache[name];
+  }
+
+  let day1Sent = 0, day3Sent = 0;
+
+  for (const row of outstanding) {
+    if (!row.requested_at) continue;
+    const daysSince = (now - new Date(row.requested_at).getTime()) / DAY;
+
+    if (daysSince >= 1 && !row.reminder1_sent_at) {
+      const id = await telegramIdFor(row.member_name);
+      if (id) {
+        const msg =
+          `📅 <b>Reminder</b> — you haven't submitted your availability for <b>${row.month}</b> yet.\n\n` +
+          `Scroll up to the "Unavailability Check — ${row.month}" message and tap through it when you get a chance.`;
+        try {
+          await bot.api.sendMessage(id, msg, { parse_mode: 'HTML' });
+          await db.markAvailabilityReminderSent(row.month, row.member_name, 'reminder1_sent_at');
+          day1Sent++;
+        } catch (err) {
+          console.warn(`[Reminders] Availability day-1 nudge to ${row.member_name} failed:`, err.message);
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+
+    if (daysSince >= 3 && !row.reminder3_sent_at) {
+      const id = await telegramIdFor(row.member_name);
+      if (id) {
+        const msg =
+          `⏰ <b>Final call</b> — your availability for <b>${row.month}</b> was due today and we still don't have your response.\n\n` +
+          `Please submit as soon as you can so the roster isn't held up. Scroll up to the "Unavailability Check — ${row.month}" message to answer.`;
+        try {
+          await bot.api.sendMessage(id, msg, { parse_mode: 'HTML' });
+          await db.markAvailabilityReminderSent(row.month, row.member_name, 'reminder3_sent_at');
+          day3Sent++;
+        } catch (err) {
+          console.warn(`[Reminders] Availability day-3 final call to ${row.member_name} failed:`, err.message);
+        }
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+  }
+
+  if (day1Sent || day3Sent) {
+    console.log(`[Reminders] Availability: ${day1Sent} day-1 nudge(s), ${day3Sent} day-3 final call(s).`);
+  }
+}
+
 module.exports = {
   startReminderCron, postSessionSummary, sendBirthdayReminders, sendDutyReminders,
-  sendCommsReminders, checkScheduledCommsPosts,
+  sendCommsReminders, checkScheduledCommsPosts, sendAvailabilityReminders,
 };

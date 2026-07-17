@@ -490,6 +490,15 @@ function fmtDateShort(d) {
 
 function today() { return new Date().toISOString().split('T')[0]; }
 
+// "Please respond by <date>" line for availability-request DMs — 3 days out
+// from right now, per Brendon's 3-day response window (18 Jul 2026).
+function availabilityDeadlineText() {
+  const d = new Date();
+  d.setDate(d.getDate() + 3);
+  const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return `\n\n⏰ <i>Please respond by ${label}.</i>`;
+}
+
 // Last calendar day of the current month, ISO format. Regular members can
 // only see roster info up to this date; TLs can see beyond it (e.g. next
 // month's roster, while it's still being finalized/unannounced).
@@ -742,6 +751,7 @@ const adminMenu = new InlineKeyboard()
   .text('🧪 Toggle Roster Test Mode', 'admin:togglerostertest').row()
   .text('🧪 Toggle Availability Test Mode', 'admin:toggleavailtest').row()
   .text('🔔 Test Reminders Now', 'admin:testreminders').row()
+  .text('📣 Remind Non-Responders Now', 'admin:remindavail').row()
   .text('📋 Send GPC W2R Check-in', 'admin:gpccheckin').row()
   .text('← Back', 'menu:main');
 
@@ -2148,7 +2158,7 @@ async function finalizeAvailability(ctx, monthlyNote) {
   const notes = (hasReasons || note)
     ? JSON.stringify({ reasons, monthlyNote: note })
     : '';
-  await db.saveAvailability(month, name, avail, unavail, notes);
+  await db.saveAvailability(month, name, avail, unavail, notes, { submitted_at: new Date().toISOString() });
 
   ctx.session.availMonth               = null;
   ctx.session.availDates               = [];
@@ -2199,10 +2209,13 @@ async function advanceToNextQueuedMonth(ctx) {
   ctx.session.availSelected = [];
 
   const name = await resolveName(ctx);
-  if (name) await db.saveAvailability(next.monthArg, name, [], next.slots.map(s => s.date));
+  if (name) {
+    await db.saveAvailability(next.monthArg, name, [], next.slots.map(s => s.date), '', { requested_at: new Date().toISOString() });
+  }
 
   return ctx.reply(
-    `📅 <b>Next — Unavailability Check: ${next.monthArg}</b>\n\nTap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
+    `📅 <b>Next — Unavailability Check: ${next.monthArg}</b>\n\nTap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>` +
+    availabilityDeadlineText(),
     { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(next.slots, []) }
   );
 }
@@ -2275,10 +2288,11 @@ bot.command('collect', async (ctx) => {
       const kb = buildAvailKeyboard(monthSlots, []);
       await bot.api.sendMessage(
         m.telegram_id,
-        `📅 <b>Unavailability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
+        `📅 <b>Unavailability Check — ${args}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>` +
+        availabilityDeadlineText(),
         { parse_mode: 'HTML', reply_markup: kb }
       );
-      await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date));
+      await db.saveAvailability(args, m.name, [], monthSlots.map(s => s.date), '', { requested_at: new Date().toISOString() });
       sent++;
     } catch (err) {
       console.warn(`[Bot] collect: failed to DM ${m.name}:`, err.message);
@@ -2595,10 +2609,11 @@ async function sendAvailabilityRequest(ctx, monthGroups) {
         m.telegram_id,
         (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
         `📅 <b>Unavailability Check — ${first.monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>` +
-        (rest.length ? `\n\n<i>You'll be asked about ${rest.map(r => r.monthArg).join(', ')} right after you submit this one.</i>` : ''),
+        (rest.length ? `\n\n<i>You'll be asked about ${rest.map(r => r.monthArg).join(', ')} right after you submit this one.</i>` : '') +
+        availabilityDeadlineText(),
         { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(first.slots, []) }
       );
-      await db.saveAvailability(first.monthArg, m.name, [], first.slots.map(s => s.date));
+      await db.saveAvailability(first.monthArg, m.name, [], first.slots.map(s => s.date), '', { requested_at: new Date().toISOString() });
       sent++;
     } catch (err) {
       console.warn(`[Bot] collect: failed to DM ${m.name} for ${first.monthArg}:`, err.message);
@@ -3167,6 +3182,7 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
     await reminders.sendBirthdayReminders(bot);
     if (reminders.sendCommsReminders) await reminders.sendCommsReminders(bot);
     if (reminders.checkScheduledCommsPosts) await reminders.checkScheduledCommsPosts(bot);
+    if (reminders.sendAvailabilityReminders) await reminders.sendAvailabilityReminders(bot);
     const doneMsg =
       `✅ <b>Test run complete.</b>\n\n` +
       `This only sends to members who actually have a slot exactly 5 or 1 day from today, ` +
@@ -3180,6 +3196,48 @@ bot.callbackQuery('admin:testreminders', async (ctx) => {
     await ctx.editMessageText(failMsg, { reply_markup: backToAdmin() })
       .catch(() => ctx.reply(failMsg, { reply_markup: backToAdmin() }));
   }
+});
+
+// ─── Admin: manual "Remind Non-Responders Now" (added 18 Jul 2026) ────────
+// Ad-hoc nudge, independent of the automatic day-1/day-3 cron schedule —
+// DMs EVERYONE currently outstanding (any month, submitted_at IS NULL)
+// immediately, regardless of how long it's been since the request went out.
+// Deliberately does NOT touch reminder1_sent_at/reminder3_sent_at, so using
+// this doesn't skip or double up the scheduled nudges.
+bot.callbackQuery('admin:remindavail', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
+
+  const outstanding = await db.getOutstandingAvailability();
+  if (!outstanding.length) {
+    return ctx.editMessageText('✅ Nobody outstanding right now — everyone with an open request has submitted.', { reply_markup: backToAdmin() });
+  }
+
+  const supa = db.getClient();
+  let sent = 0;
+  const failed = [];
+  for (const row of outstanding) {
+    const { data: member } = await supa.from('members').select('telegram_id').ilike('name', row.member_name).single();
+    if (!member?.telegram_id) { failed.push(row.member_name); continue; }
+    try {
+      await bot.api.sendMessage(
+        member.telegram_id,
+        `📣 <b>Reminder</b> — you still haven't submitted your availability for <b>${row.month}</b>.\n\n` +
+        `Scroll up to the "Unavailability Check — ${row.month}" message and tap through it when you get a chance.`,
+        { parse_mode: 'HTML' }
+      );
+      sent++;
+    } catch (err) {
+      console.warn(`[Bot] admin:remindavail DM to ${row.member_name} failed:`, err.message);
+      failed.push(row.member_name);
+    }
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  const failNote = failed.length ? `\n\n⚠️ Couldn't reach: ${failed.join(', ')}` : '';
+  const t = `✅ Reminded <b>${sent}/${outstanding.length}</b> outstanding member${outstanding.length === 1 ? '' : 's'} across all open requests.${failNote}`;
+  return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+    .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
 });
 
 // ─── Admin: Excuse member from roster ─────────────────────────────────────────

@@ -161,15 +161,45 @@ async function getDutyExemptNames() {
   return (data || []).map(r => r.name.toLowerCase());
 }
 
-async function saveAvailability(month, memberName, datesAvail, datesUnavail, notes = '') {
+// `extra` merges additional columns into the upsert (added 18 Jul 2026 for
+// reminder tracking: requested_at set once at send time, submitted_at set
+// only on a real submission). PostgREST upsert only touches columns present
+// in the payload, so omitting a field here leaves its existing DB value
+// untouched on conflict — e.g. calling this again at submit time without
+// requested_at in `extra` does NOT clobber the timestamp set when the
+// request was first sent.
+async function saveAvailability(month, memberName, datesAvail, datesUnavail, notes = '', extra = {}) {
   const db = getClient();
   if (!db) return null;
   const { data, error } = await db.from('availability').upsert(
-    { month, member_name: memberName, dates_avail: datesAvail, dates_unavail: datesUnavail, notes, updated_at: new Date().toISOString() },
+    { month, member_name: memberName, dates_avail: datesAvail, dates_unavail: datesUnavail, notes, updated_at: new Date().toISOString(), ...extra },
     { onConflict: 'month,member_name' }
   ).select().single();
   if (error) { console.error('[Supabase] saveAvailability:', error.message); return null; }
   return data;
+}
+
+// Members with an outstanding (unsubmitted) availability request, joined to
+// their telegram_id for DMing. Used by the reminder cron and the manual
+// "Remind Non-Responders" admin action.
+async function getOutstandingAvailability() {
+  const db = getClient();
+  if (!db) return [];
+  const { data, error } = await db.from('availability')
+    .select('month, member_name, requested_at, reminder1_sent_at, reminder3_sent_at')
+    .is('submitted_at', null)
+    .not('requested_at', 'is', null);
+  if (error) { console.error('[Supabase] getOutstandingAvailability:', error.message); return []; }
+  return data || [];
+}
+
+async function markAvailabilityReminderSent(month, memberName, column) {
+  const db = getClient();
+  if (!db) return;
+  const { error } = await db.from('availability')
+    .update({ [column]: new Date().toISOString() })
+    .eq('month', month).eq('member_name', memberName);
+  if (error) console.error('[Supabase] markAvailabilityReminderSent:', error.message);
 }
 
 async function getAvailabilitySummary(month) {
@@ -336,6 +366,7 @@ module.exports = {
   uploadImage,
   getAllRegisteredMembers, getDutyExemptNames,
   saveAvailability, getAvailabilitySummary,
+  getOutstandingAvailability, markAvailabilityReminderSent,
   getMemberRoster, updateMemberRosterStats,
   saveGpcCheckin, getGpcCheckinResponses,
 };
