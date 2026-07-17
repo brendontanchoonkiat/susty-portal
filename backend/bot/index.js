@@ -299,6 +299,24 @@ async function rosterBroadcastTestMode() {
   const { data } = await supa.from('bot_settings').select('value').eq('key', 'roster_broadcast_test_mode').maybeSingle();
   return data?.value === 'true';
 }
+// Availability broadcast test mode — when ON, "Collect Availability" only DMs
+// the names listed in TEST_AS_REGULAR_NAMES instead of every registered
+// member. Unlike the roster broadcast (which reroutes to a whole separate
+// test channel), there's no equivalent "test DM" concept — individual DMs
+// always go to a real person — so this reuses TEST_AS_REGULAR_NAMES (the
+// existing "who's dogfooding right now" list) as the recipient allowlist.
+// Deliberately NOT getBoolSetting() for the same reason as roster test mode:
+// that helper force-returns true once currentPhase() >= 3, which would
+// wrongly force this on after the 11 Jul full launch. Toggle via /admin →
+// "🧪 Toggle Availability Test Mode".
+async function availabilityBroadcastTestMode() {
+  if (process.env.AVAILABILITY_TEST_MODE === 'true') return true;
+  if (process.env.AVAILABILITY_TEST_MODE === 'false') return false;
+  const supa = db.getClient();
+  if (!supa) return false;
+  const { data } = await supa.from('bot_settings').select('value').eq('key', 'availability_broadcast_test_mode').maybeSingle();
+  return data?.value === 'true';
+}
 // Non-TL members who also get the full menu early (testers), on top of TLs.
 const EARLY_ACCESS_NAMES = (process.env.EARLY_ACCESS_NAMES || 'Jonathan Poon,Esther')
   .split(',').map(n => n.trim().toLowerCase());
@@ -628,6 +646,7 @@ const adminMenu = new InlineKeyboard()
   .text('🚀 Toggle Recycling Logs Live', 'admin:togglerecycling').row()
   .text('🔄 Toggle Swap Requests Live', 'admin:toggleswaps').row()
   .text('🧪 Toggle Roster Test Mode', 'admin:togglerostertest').row()
+  .text('🧪 Toggle Availability Test Mode', 'admin:toggleavailtest').row()
   .text('🔔 Test Reminders Now', 'admin:testreminders').row()
   .text('📋 Send GPC W2R Check-in', 'admin:gpccheckin').row()
   .text('← Back', 'menu:main');
@@ -2156,9 +2175,12 @@ bot.callbackQuery('admin:menu', async (ctx) => {
 bot.callbackQuery('admin:collect', async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   ctx.session.awaitingCollectMonth = true;
+  const testMode = await availabilityBroadcastTestMode();
   await ctx.editMessageText(
     `📅 <b>Collect Availability</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)\n\n` +
-    `<i>This will DM all registered members asking for their availability.</i>`,
+    (testMode
+      ? `🧪 <b>Test mode is ON</b> — this will only DM ${TEST_AS_REGULAR_NAMES.join(', ')}, not the real team.`
+      : `<i>This will DM all registered members asking for their availability.</i>`),
     { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
   );
 });
@@ -2650,6 +2672,38 @@ bot.callbackQuery('admin:togglerostertest', async (ctx) => {
     (goingOn
       ? '🧪 <b>Roster Test Mode is now ON.</b> "Send Roster to Group" will post to the test channel instead of the real group.'
       : '✅ <b>Roster Test Mode is now OFF.</b> "Send Roster to Group" will post to the real group again.') + note,
+    { parse_mode: 'HTML', reply_markup: backToAdmin() }
+  );
+});
+
+// Availability broadcast test mode toggle — see availabilityBroadcastTestMode()
+// for why this isn't handleAdminToggle/getBoolSetting.
+bot.callbackQuery('admin:toggleavailtest', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!(await isTL(ctx))) return ctx.answerCallbackQuery('⚠️ TL only.').catch(() => {});
+
+  if (!TEST_AS_REGULAR_NAMES.length) {
+    return ctx.editMessageText(
+      '⚠️ <b>TEST_AS_REGULAR_NAMES</b> is not set on Railway — add your name(s) there first (e.g. <code>TEST_AS_REGULAR_NAMES=Brendon</code>), then this toggle will know who to DM.',
+      { parse_mode: 'HTML', reply_markup: backToAdmin() }
+    );
+  }
+
+  const wasOn   = await availabilityBroadcastTestMode();
+  const goingOn = !wasOn;
+  const { error } = await setBoolSetting('availability_broadcast_test_mode', goingOn);
+  if (error) {
+    console.error('[Bot] toggle availability_broadcast_test_mode failed:', error.message);
+    return ctx.editMessageText(`⚠️ Couldn't save: ${error.message}`, { reply_markup: backToAdmin() });
+  }
+
+  const note = process.env.AVAILABILITY_TEST_MODE === 'true'
+    ? `\n\n<i>Note: AVAILABILITY_TEST_MODE=true is also set on Railway, which forces this on regardless of this toggle.</i>`
+    : '';
+  await ctx.editMessageText(
+    (goingOn
+      ? `🧪 <b>Availability Test Mode is now ON.</b> "Collect Availability" will only DM: ${TEST_AS_REGULAR_NAMES.join(', ')} — not the real team.`
+      : '✅ <b>Availability Test Mode is now OFF.</b> "Collect Availability" will DM every registered member again.') + note,
     { parse_mode: 'HTML', reply_markup: backToAdmin() }
   );
 });
@@ -3210,7 +3264,18 @@ bot.on('message:text', async (ctx) => {
     }
 
     const exemptNames = new Set(await db.getDutyExemptNames());
-    const members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
+    let members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
+
+    const testMode = await availabilityBroadcastTestMode();
+    if (testMode) {
+      members = members.filter(m => TEST_AS_REGULAR_NAMES.includes((m.name || '').toLowerCase()));
+      if (!members.length) {
+        return ctx.reply(
+          `⚠️ Test mode is ON but none of TEST_AS_REGULAR_NAMES (${TEST_AS_REGULAR_NAMES.join(', ') || 'none set'}) are registered with the bot yet.`,
+          { reply_markup: backToAdmin() }
+        );
+      }
+    }
     if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
 
     let sent = 0;
@@ -3224,6 +3289,7 @@ bot.on('message:text', async (ctx) => {
       try {
         await bot.api.sendMessage(
           m.telegram_id,
+          (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
           `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
           { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
         );
@@ -3242,7 +3308,8 @@ bot.on('message:text', async (ctx) => {
       ? `\n\n⚠️ <b>Not sent to:</b>\n${failed.map(f => `  • <b>${f.name}</b> — ${f.reason}`).join('\n')}`
       : '';
     return ctx.reply(
-      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> members.${note}${failNote}`,
+      (testMode ? '🧪 <b>Test mode</b> — ' : '') +
+      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> ${testMode ? 'test ' : ''}members.${note}${failNote}`,
       { parse_mode: 'HTML', reply_markup: backToAdmin() }
     );
   }
