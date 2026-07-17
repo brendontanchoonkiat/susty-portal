@@ -132,7 +132,9 @@ bot.use(session({
     awaitingProfileMinistries: false,
     awaitingProfileDob:        false,
     // Admin flows
-    awaitingCollectMonth:  false,  // TL: waiting for month input for /collect
+    collectMonthSelection: [],     // TL: months ticked so far in the Collect Availability month picker
+    pendingCollect:        null,   // { monthLabels, generatedFallbackMonths, slots: [{date, session, month, excluded}] } — staged review before sending
+    awaitingCollectAddDate: false, // TL: waiting for a typed date to add to the review list
     awaitingSendCalendarMonth: false, // TL: waiting for month input for Send Roster to Group
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
@@ -2171,19 +2173,272 @@ bot.callbackQuery('admin:menu', async (ctx) => {
   ));
 });
 
-// Admin: Collect Availability — ask for month
+// ─── Collect Availability: month picker + review-before-send (added 17 Jul,
+// rebuilt same day per Brendon to (a) use buttons instead of typing the
+// month, and (b) support collecting 2+ months in one go) ───────────────────
+// Some months have roster weekends with no actual service (e.g. Aug 1/2,
+// Aug 22/23 2026), so the resolved date list is always shown for review
+// (remove/re-add/add-a-date) before anything sends — see below. Multiple
+// months can be picked at once; each date carries its own `month` (derived
+// from the date itself, not just whichever months were ticked in step 1) so
+// dates from different months can sit in one combined review list and still
+// get sent as separate, correctly-scoped requests per month (the recipient
+// side — buildAvailKeyboard/saveAvailability/finalizeAvailability — is
+// single-month per message, so this fans out into one DM per month per
+// member rather than merging months into one DM).
+
+// Next N calendar months (current + upcoming) as picker options, in the same
+// "Month YYYY" canonical form used everywhere else for roster_slots lookups.
+function upcomingMonthOptions(n = 6) {
+  const now = new Date();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    out.push(d.toLocaleDateString('en-SG', { month: 'long', year: 'numeric' }));
+  }
+  return out;
+}
+
+function buildMonthPickerKeyboard(selected) {
+  const kb = new InlineKeyboard();
+  for (const label of upcomingMonthOptions(6)) {
+    const isSel = selected.includes(label);
+    kb.text(`${isSel ? '✅' : '⬜️'} ${label}`, `collect:pickmonth:${label}`).row();
+  }
+  kb.text(`➡️ Continue (${selected.length} selected)`, 'collect:monthsdone').row();
+  kb.text('✖️ Cancel', 'admin:menu');
+  return kb;
+}
+
+async function renderMonthPicker(ctx, { edit }) {
+  const selected = ctx.session.collectMonthSelection || [];
+  const testMode = await availabilityBroadcastTestMode();
+  const testNote = testMode
+    ? `\n\n🧪 <b>Test mode is ON</b> — sending will only DM ${TEST_AS_REGULAR_NAMES.join(', ') || '(no names set — this will fail)'}.`
+    : '';
+  const text = `📅 <b>Collect Availability</b>\n\nTap the month(s) to request — you can pick more than one.${testNote}`;
+  const kb = buildMonthPickerKeyboard(selected);
+  return edit
+    ? ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {})
+    : ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
+}
+
 bot.callbackQuery('admin:collect', async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
-  ctx.session.awaitingCollectMonth = true;
+  ctx.session.collectMonthSelection = [];
+  return renderMonthPicker(ctx, { edit: true });
+});
+
+bot.callbackQuery(/^collect:pickmonth:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const label = ctx.match[1];
+  const sel   = ctx.session.collectMonthSelection || [];
+  ctx.session.collectMonthSelection = sel.includes(label) ? sel.filter(m => m !== label) : [...sel, label];
+  return renderMonthPicker(ctx, { edit: true });
+});
+
+// Resolves every selected month's dates (roster_slots, falling back to
+// generated Sat/Sun weekends) into one combined, chronologically-sorted
+// review list and hands off to renderCollectReview.
+bot.callbackQuery('collect:monthsdone', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const months = ctx.session.collectMonthSelection || [];
+  if (!months.length) return renderMonthPicker(ctx, { edit: true });
+
+  const supa = db.getClient();
+  if (!supa) return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
+
+  const { data: allSlots } = await supa.from('roster_slots').select('date, session').order('date');
+
+  const slots = [];
+  const generatedFallbackMonths = [];
+  const seen = new Set();
+  for (const monthArg of months) {
+    let monthSlots = (allSlots || []).filter(s => {
+      const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+      return label.toLowerCase() === monthArg.toLowerCase();
+    });
+    let generatedFallback = false;
+    if (!monthSlots.length) {
+      monthSlots = generateWeekends(monthArg);
+      generatedFallback = true;
+    }
+    if (generatedFallback) generatedFallbackMonths.push(monthArg);
+    for (const s of monthSlots) {
+      if (seen.has(s.date)) continue;
+      seen.add(s.date);
+      slots.push({ date: s.date, session: s.session || '?', month: monthArg, excluded: false });
+    }
+  }
+  slots.sort((a, b) => a.date.localeCompare(b.date));
+
+  ctx.session.pendingCollect = { monthLabels: months, generatedFallbackMonths, slots };
+  ctx.session.collectMonthSelection = [];
+  return renderCollectReview(ctx, { edit: true });
+});
+
+function buildCollectReviewKeyboard(pc) {
+  const kb = new InlineKeyboard();
+  for (const s of pc.slots) {
+    const sessIcon = s.session === 'GPC' ? ' 🟣' : s.session === 'SAT' ? ' 🟡' : s.session === 'SUN' ? ' 🟢' : '';
+    const label = s.excluded
+      ? `➕ ${fmtDateShort(s.date)}${sessIcon} (removed — tap to re-add)`
+      : `➖ ${fmtDateShort(s.date)}${sessIcon}`;
+    kb.text(label, `collect:toggle:${s.date}`).row();
+  }
+  kb.text('➕ Add a date', 'collect:add').row();
+  const activeCount = pc.slots.filter(s => !s.excluded).length;
+  kb.text(`✅ Confirm & Send (${activeCount} date${activeCount === 1 ? '' : 's'})`, 'collect:confirm').row();
+  kb.text('✖️ Cancel', 'collect:cancel');
+  return kb;
+}
+
+async function renderCollectReview(ctx, { edit }) {
+  const pc = ctx.session.pendingCollect;
+  if (!pc) {
+    const t = '⚠️ Session expired — start over from /admin.';
+    return edit
+      ? ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }))
+      : ctx.reply(t, { reply_markup: backToAdmin() });
+  }
   const testMode = await availabilityBroadcastTestMode();
+  const fallbackNote = pc.generatedFallbackMonths?.length
+    ? `\n\n<i>⚠️ No roster created yet for ${pc.generatedFallbackMonths.join(', ')} — showing generated Sat/Sun dates.</i>`
+    : '';
+  const testNote = testMode
+    ? `\n\n🧪 <b>Test mode is ON</b> — sending will only DM ${TEST_AS_REGULAR_NAMES.join(', ') || '(no names set — this will fail)'}.`
+    : '';
+  const text =
+    `📅 <b>Collect Availability — ${pc.monthLabels.join(' + ')}</b>\n\n` +
+    `Tap a date to remove it (e.g. weekends with no service) or re-add it. "Add a date" for anything missing.` +
+    fallbackNote + testNote;
+  const kb = buildCollectReviewKeyboard(pc);
+  return edit
+    ? ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }))
+    : ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
+}
+
+bot.callbackQuery(/^collect:toggle:(.+)$/, async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const pc = ctx.session.pendingCollect;
+  if (!pc) return renderCollectReview(ctx, { edit: true });
+  const slot = pc.slots.find(s => s.date === ctx.match[1]);
+  if (slot) slot.excluded = !slot.excluded;
+  return renderCollectReview(ctx, { edit: true });
+});
+
+bot.callbackQuery('collect:add', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  if (!ctx.session.pendingCollect) return renderCollectReview(ctx, { edit: true });
+  ctx.session.awaitingCollectAddDate = true;
   await ctx.editMessageText(
-    `📅 <b>Collect Availability</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)\n\n` +
-    (testMode
-      ? `🧪 <b>Test mode is ON</b> — this will only DM ${TEST_AS_REGULAR_NAMES.join(', ')}, not the real team.`
-      : `<i>This will DM all registered members asking for their availability.</i>`),
-    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+    `📅 <b>Add a Date</b>\n\nType the date to add (e.g. <code>9 Aug</code> or <code>9 Aug 2026</code>). Its month is detected automatically.`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Back to list', 'collect:back') }
   );
 });
+
+bot.callbackQuery('collect:back', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  ctx.session.awaitingCollectAddDate = false;
+  return renderCollectReview(ctx, { edit: true });
+});
+
+bot.callbackQuery('collect:cancel', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  ctx.session.pendingCollect = null;
+  ctx.session.collectMonthSelection = [];
+  ctx.session.awaitingCollectAddDate = false;
+  const t = '✖️ Cancelled — nothing sent.';
+  return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+});
+
+bot.callbackQuery('collect:confirm', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const pc = ctx.session.pendingCollect;
+  if (!pc) return renderCollectReview(ctx, { edit: true });
+  const active = pc.slots.filter(s => !s.excluded);
+  if (!active.length) {
+    const t = '⚠️ No dates left to send — every date is removed.';
+    return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+  }
+  // Group by each slot's own month — covers both the months ticked in step 1
+  // and any ad-hoc date added via "Add a date" that landed in a different month.
+  const byMonth = {};
+  for (const s of active) {
+    (byMonth[s.month] ||= []).push({ date: s.date, session: s.session });
+  }
+  const monthGroups = Object.entries(byMonth).map(([monthArg, monthSlots]) => ({
+    monthArg,
+    slots: monthSlots,
+    generatedFallback: (pc.generatedFallbackMonths || []).includes(monthArg),
+  }));
+  ctx.session.pendingCollect = null;
+  return sendAvailabilityRequest(ctx, monthGroups);
+});
+
+// DMs the resolved+reviewed date list to every eligible member, once per
+// month group (so a 2-month request sends each member two separate,
+// correctly-scoped messages rather than one ambiguous combined one — the
+// recipient-side submit/save flow is single-month per message). Combines
+// results from every group into one final summary reply.
+async function sendAvailabilityRequest(ctx, monthGroups) {
+  const exemptNames = new Set(await db.getDutyExemptNames());
+  let members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
+
+  const testMode = await availabilityBroadcastTestMode();
+  if (testMode) {
+    members = members.filter(m => TEST_AS_REGULAR_NAMES.includes((m.name || '').toLowerCase()));
+    if (!members.length) {
+      const t = `⚠️ Test mode is ON but none of TEST_AS_REGULAR_NAMES (${TEST_AS_REGULAR_NAMES.join(', ') || 'none set'}) are registered with the bot yet.`;
+      return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+    }
+  }
+  if (!members.length) {
+    const t = '⚠️ No registered members yet.';
+    return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+  }
+
+  const summaries = [];
+  for (const { monthArg, slots: monthSlots, generatedFallback } of monthGroups) {
+    let sent = 0;
+    const failed = []; // { name, reason }
+
+    for (const m of members) {
+      if (!m.telegram_id) {
+        failed.push({ name: m.name, reason: 'no telegram_id on file (never registered with the bot)' });
+        continue;
+      }
+      try {
+        await bot.api.sendMessage(
+          m.telegram_id,
+          (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
+          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
+          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
+        );
+        await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
+        sent++;
+      } catch (err) {
+        console.warn(`[Bot] collect: failed to DM ${m.name} for ${monthArg}:`, err.message);
+        failed.push({ name: m.name, reason: err.message });
+      }
+    }
+    summaries.push({ monthArg, sent, total: members.length, generatedFallback, failed });
+  }
+
+  const parts = summaries.map(s => {
+    const note     = s.generatedFallback ? ' <i>(no roster yet — generated Sat/Sun dates)</i>' : '';
+    const failNote = s.failed.length
+      ? `\n  ⚠️ Not sent to: ${s.failed.map(f => `${f.name} (${f.reason})`).join(', ')}`
+      : '';
+    return `📅 <b>${s.monthArg}</b>: ${s.sent}/${s.total}${note}${failNote}`;
+  });
+
+  const t =
+    (testMode ? '🧪 <b>Test mode</b> — ' : '') +
+    `✅ Availability request${monthGroups.length > 1 ? 's' : ''} sent${testMode ? ' (test names only)' : ''}:\n\n${parts.join('\n')}`;
+  return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+    .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+}
 
 // Admin: Send Roster to Group — choose "upcoming" (old default: next 2
 // months, auto-grouped) or a specific month (added 4 Jul 2026 per Brendon).
@@ -3238,80 +3493,33 @@ bot.on('message:text', async (ctx) => {
     return sendRosterToGroup(ctx, text.trim());
   }
 
-  // Admin: collect availability month
-  if (ctx.session.awaitingCollectMonth) {
-    ctx.session.awaitingCollectMonth = false;
-    const monthArg = canonicalizeMonthLabel(text.trim()) || text.trim();
+  // Admin: typed date to add to the collect-review list ("➕ Add a date").
+  // Month is auto-detected from the date itself (not restricted to whichever
+  // months were ticked in the picker) — see "Collect Availability" above.
+  if (ctx.session.awaitingCollectAddDate) {
+    ctx.session.awaitingCollectAddDate = false;
+    const pc = ctx.session.pendingCollect;
+    if (!pc) return ctx.reply('⚠️ Session expired — start over from /admin.', { reply_markup: backToAdmin() });
 
-    const supa = db.getClient();
-    if (!supa) return ctx.reply('⚠️ Supabase not configured.');
-
-    const { data: allSlots } = await supa.from('roster_slots').select('date, session').order('date');
-    let monthSlots = (allSlots || []).filter(s => {
-      const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
-      return label.toLowerCase() === monthArg.toLowerCase();
-    });
-
-    let generatedFallback = false;
-    if (!monthSlots.length) {
-      monthSlots = generateWeekends(monthArg);
-      if (!monthSlots.length) {
-        return ctx.reply(`⚠️ Could not parse "${monthArg}". Try: <code>Aug 2026</code>`, {
-          parse_mode: 'HTML', reply_markup: backToAdmin(),
-        });
-      }
-      generatedFallback = true;
+    const iso = parseLogDate(text.trim());
+    if (!iso) {
+      return ctx.reply(
+        `⚠️ Couldn't parse "${text.trim()}". Try: <code>9 Aug</code> or <code>9 Aug 2026</code>`,
+        { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Back to list', 'collect:back') }
+      );
     }
-
-    const exemptNames = new Set(await db.getDutyExemptNames());
-    let members = (await db.getAllRegisteredMembers()).filter(m => !exemptNames.has((m.name || '').toLowerCase()));
-
-    const testMode = await availabilityBroadcastTestMode();
-    if (testMode) {
-      members = members.filter(m => TEST_AS_REGULAR_NAMES.includes((m.name || '').toLowerCase()));
-      if (!members.length) {
-        return ctx.reply(
-          `⚠️ Test mode is ON but none of TEST_AS_REGULAR_NAMES (${TEST_AS_REGULAR_NAMES.join(', ') || 'none set'}) are registered with the bot yet.`,
-          { reply_markup: backToAdmin() }
-        );
-      }
+    const existing = pc.slots.find(s => s.date === iso);
+    if (existing) {
+      existing.excluded = false; // re-adding an already-excluded date just un-excludes it
+    } else {
+      const dow = new Date(iso + 'T00:00:00').getDay();
+      const session  = dow === 6 ? 'SAT' : dow === 0 ? 'SUN' : '?';
+      const monthArg = new Date(iso + 'T00:00:00').toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
+      pc.slots.push({ date: iso, session, month: monthArg, excluded: false });
+      pc.slots.sort((a, b) => a.date.localeCompare(b.date));
+      if (!pc.monthLabels.includes(monthArg)) pc.monthLabels.push(monthArg);
     }
-    if (!members.length) return ctx.reply('⚠️ No registered members yet.', { reply_markup: backToAdmin() });
-
-    let sent = 0;
-    const failed = []; // { name, reason } — surfaced below instead of only console.warn
-
-    for (const m of members) {
-      if (!m.telegram_id) {
-        failed.push({ name: m.name, reason: 'no telegram_id on file (never registered with the bot)' });
-        continue;
-      }
-      try {
-        await bot.api.sendMessage(
-          m.telegram_id,
-          (testMode ? '🧪 <b>[TEST — not the real request]</b>\n\n' : '') +
-          `📅 <b>Unavailability Check — ${monthArg}</b>\n\nHi <b>${m.name}</b>! Tap any date you <b>cannot</b> serve.\nLeave dates untouched if you're available.\n\n<i>❌ = can't serve  ·  no mark = available</i>`,
-          { parse_mode: 'HTML', reply_markup: buildAvailKeyboard(monthSlots, []) }
-        );
-        await db.saveAvailability(monthArg, m.name, [], monthSlots.map(s => s.date));
-        sent++;
-      } catch (err) {
-        console.warn(`[Bot] collect: failed to DM ${m.name}:`, err.message);
-        failed.push({ name: m.name, reason: err.message });
-      }
-    }
-
-    const note = generatedFallback
-      ? `\n\n<i>⚠️ No roster created for ${monthArg} yet — used generated Sat/Sun dates.</i>`
-      : '';
-    const failNote = failed.length
-      ? `\n\n⚠️ <b>Not sent to:</b>\n${failed.map(f => `  • <b>${f.name}</b> — ${f.reason}`).join('\n')}`
-      : '';
-    return ctx.reply(
-      (testMode ? '🧪 <b>Test mode</b> — ' : '') +
-      `✅ Availability request for <b>${monthArg}</b> sent to <b>${sent}/${members.length}</b> ${testMode ? 'test ' : ''}members.${note}${failNote}`,
-      { parse_mode: 'HTML', reply_markup: backToAdmin() }
-    );
+    return renderCollectReview(ctx, { edit: false });
   }
 
   // Admin: edit (clear) member availability
