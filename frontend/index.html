@@ -3222,40 +3222,56 @@ function renderCommsImagePreview() {
   preview.innerHTML = existingThumbs + pendingThumbs;
 }
 
-async function saveCommsPost() {
+// Persists whatever's currently typed/picked in the open editor (caption,
+// details, theme, date, assignees, pending image files) to the DB. Returns
+// true on success, false on failure (toasts the reason itself either way).
+// Shared by saveCommsPost() and submitCommsForReview() — extracted 19 Jul
+// 2026 after a bug where "Submit for Review" flipped a post straight to
+// pending_review without ever saving the form first, so a member could type
+// a caption + pick a photo, hit Submit, and have it all silently discarded
+// (the /submit endpoint only ever touches status + submitted_at, never the
+// content fields) — see Alan's "World Cup Finals" post, submitted 12 Jul
+// with blank caption/details/image because of exactly this gap.
+async function persistCommsFormFields() {
   const date    = document.getElementById('cm-date').value.trim();
   const theme   = document.getElementById('cm-theme').value.trim();
   const caption = document.getElementById('cm-caption').value.trim();
   const details = document.getElementById('cm-details').value.trim();
 
-  if (!theme) { toast('Theme is required', true); return; }
-  if (!date)  { toast('Date is required', true); return; }
+  if (!theme) { toast('Theme is required', true); return false; }
+  if (!date)  { toast('Date is required', true); return false; }
 
   const body = { date, theme, caption, details, assignees: commsAssigneeTags };
 
-  try {
-    const url    = commsEditingId ? `${API}/comms/${commsEditingId}` : `${API}/comms`;
-    const method = commsEditingId ? 'PATCH' : 'POST';
-    const res = await fetch(url, { method, headers: { 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error||'Save failed', true); return; }
-    const saved = await res.json();
-    commsEditingId = saved.id;
+  const url    = commsEditingId ? `${API}/comms/${commsEditingId}` : `${API}/comms`;
+  const method = commsEditingId ? 'PATCH' : 'POST';
+  const res = await fetch(url, { method, headers: { 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) { const e = await res.json().catch(()=>({})); toast(e.error||'Save failed', true); return false; }
+  const saved = await res.json();
+  commsEditingId = saved.id;
 
-    // Multi-photo (added 9 Jul 2026): the upload endpoint takes one image
-    // per call and appends it server-side, so pending files go up one at a
-    // time, in the order they were picked.
-    if (commsPendingImageFiles.length) {
-      let uploadFailures = 0;
-      for (const file of commsPendingImageFiles) {
-        const fd = new FormData();
-        fd.append('image', file);
-        const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
-        if (!imgRes.ok) uploadFailures++;
-      }
-      if (uploadFailures) toast(`Post saved, but ${uploadFailures} image${uploadFailures>1?'s':''} failed to upload`, true);
-      commsPendingImageFiles = [];
+  // Multi-photo (added 9 Jul 2026): the upload endpoint takes one image
+  // per call and appends it server-side, so pending files go up one at a
+  // time, in the order they were picked.
+  if (commsPendingImageFiles.length) {
+    let uploadFailures = 0;
+    for (const file of commsPendingImageFiles) {
+      const fd = new FormData();
+      fd.append('image', file);
+      const imgRes = await fetch(`${API}/comms/${saved.id}/image`, { method: 'POST', body: fd });
+      if (!imgRes.ok) uploadFailures++;
     }
+    if (uploadFailures) { toast(`${uploadFailures} image${uploadFailures>1?'s':''} failed to upload`, true); return false; }
+    commsPendingImageFiles = [];
+  }
 
+  return true;
+}
+
+async function saveCommsPost() {
+  try {
+    const ok = await persistCommsFormFields();
+    if (!ok) return;
     toast(commsEditingId ? '✅ Post saved!' : '✅ Post added!');
     closeCommsEditor();
     await loadComms();
@@ -3269,6 +3285,13 @@ async function submitCommsForReview(id) {
   if (!postId) return;
   if (!confirm('Submit this post for TL review? They\'ll get a preview in the bot to approve or send back.')) return;
   try {
+    // If the editor for this exact post is open, save whatever's currently
+    // typed/picked before flipping status — otherwise Submit can fire on
+    // stale/empty DB content that was never actually persisted.
+    if (commsEditingId && postId === commsEditingId) {
+      const ok = await persistCommsFormFields();
+      if (!ok) return;
+    }
     const res = await fetch(`${API}/comms/${postId}/submit`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
     });
