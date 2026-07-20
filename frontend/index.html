@@ -1034,7 +1034,14 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <div class="editor-panel">
       <h3>♻️ Edit Recycling Data</h3>
       <div class="form-row">
-        <div class="form-field"><label>Month (e.g. Jun 2026)</label><input type="text" id="we-month" placeholder="Jun 2026"></div>
+        <div class="form-field"><label>Month</label>
+          <select id="we-month">
+            <option value="1">Jan</option><option value="2">Feb</option><option value="3">Mar</option>
+            <option value="4">Apr</option><option value="5">May</option><option value="6">Jun</option>
+            <option value="7">Jul</option><option value="8">Aug</option><option value="9">Sep</option>
+            <option value="10">Oct</option><option value="11">Nov</option><option value="12">Dec</option>
+          </select>
+        </div>
         <div class="form-field"><label>Year</label><input type="number" id="we-year" placeholder="2026" min="2020" max="2099"></div>
       </div>
       <div class="form-row">
@@ -1218,10 +1225,10 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
         <thead>
           <tr>
             <th>Week</th><th>Date</th><th>Session</th><th>Team</th>
-            <th>Weight (kg)</th><th class="admin-only" style="display:none">Actions</th>
+            <th class="admin-only" style="display:none">Actions</th>
           </tr>
         </thead>
-        <tbody><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+        <tbody><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1238,10 +1245,6 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
       <div class="form-field">
         <label>Session</label>
         <select id="ed-session"><option value="SAT">Saturday (SAT)</option><option value="SUN">Sunday (SUN)</option><option value="GPC">GPC</option></select>
-      </div>
-      <div class="form-field">
-        <label>Weight logged (kg) — optional</label>
-        <input type="number" id="ed-kg" placeholder="e.g. 12.5" step="0.01"/>
       </div>
     </div>
     <div class="form-field" style="margin-bottom:12px">
@@ -1879,7 +1882,6 @@ function showSlotSheet(id){
     <div style="margin-bottom:12px"><span class="badge badge-${(s.session||'').toLowerCase()}">${esc(s.session)}</span>
       <span style="font-size:.75rem;color:var(--tm);margin-left:6px">${esc(s.week || '')}</span></div>
     <div style="font-size:.85rem;margin-bottom:8px"><strong>Team:</strong> ${(s.team||[]).map(esc).join(', ') || '—'}</div>
-    ${s.kg !== null && s.kg !== undefined ? `<div style="font-size:.85rem;margin-bottom:8px"><strong>Collected:</strong> ${esc(String(s.kg))} kg</div>` : ''}
     ${s.notes ? `<div style="font-size:.8rem;color:var(--tm)">📝 ${esc(s.notes)}</div>` : ''}
   `);
 }
@@ -3488,7 +3490,7 @@ async function loadRoster() {
     renderRoster('all');
     renderCalendarView();
   } catch(e) {
-    document.querySelector('#full-roster tbody').innerHTML = '<tr><td colspan="6" class="loading">Could not load roster.</td></tr>';
+    document.querySelector('#full-roster tbody').innerHTML = '<tr><td colspan="5" class="loading">Could not load roster.</td></tr>';
   }
 }
 
@@ -3497,17 +3499,14 @@ function renderRoster(filter) {
   const tbody = document.querySelector('#full-roster tbody');
   const data = filter==='all' ? rosterData : rosterData.filter(s=>s.session===filter);
 
-  if (!data.length) { tbody.innerHTML = `<tr><td colspan="6" class="loading">No slots found.</td></tr>`; return; }
+  if (!data.length) { tbody.innerHTML = `<tr><td colspan="5" class="loading">No slots found.</td></tr>`; return; }
 
+  // Weight/kg logging lives on the W2R tab only now (per Brendon) — roster
+  // slots no longer show or edit a weight column here.
   tbody.innerHTML = data.map(s=>{
-    const kgCell = s.kg !== null
-      ? `<div class="weight-cell"><span class="kg-val">${esc(s.kg)} kg</span></div>`
-      : `<div class="weight-cell"><span class="kg-pending">Not logged</span></div>`;
-
     const actionCell = isAdmin
       ? `<td><div style="display:flex;gap:6px">
           <button class="action-btn" onclick="openEditSlot(${Number(s.id)})">✏️ Edit</button>
-          <button class="action-btn" onclick="quickLogWeight(${Number(s.id)})">⚖️ Log kg</button>
          </div></td>`
       : `<td class="admin-only" style="display:none"></td>`;
 
@@ -3516,7 +3515,6 @@ function renderRoster(filter) {
       <td>${esc(fmtDateLikeBot(s.date))}</td>
       <td><span class="badge badge-${esc(s.session.toLowerCase())}">${esc(s.session)}</span></td>
       <td>${s.team.map(esc).join(', ')}</td>
-      <td>${kgCell}</td>
       ${actionCell}
     </tr>`;
   }).join('');
@@ -3581,7 +3579,6 @@ function openAddSlot() {
   document.getElementById('ed-week').value = '';
   document.getElementById('ed-date').value = '';
   document.getElementById('ed-session').value = 'SAT';
-  document.getElementById('ed-kg').value = '';
   document.getElementById('ed-notes').value = '';
   document.getElementById('delete-btn').style.display = 'none';
   renderTags();
@@ -3599,7 +3596,6 @@ function openEditSlot(id) {
   document.getElementById('ed-week').value = slot.week;
   document.getElementById('ed-date').value = fmtDateLikeBot(slot.date);
   document.getElementById('ed-session').value = slot.session;
-  document.getElementById('ed-kg').value = slot.kg !== null ? slot.kg : '';
   document.getElementById('ed-notes').value = slot.notes || '';
   document.getElementById('delete-btn').style.display = 'inline-flex';
   renderTags();
@@ -3617,13 +3613,13 @@ async function saveSlot() {
   const week    = document.getElementById('ed-week').value.trim();
   const date    = document.getElementById('ed-date').value.trim();
   const session = document.getElementById('ed-session').value;
-  const kgRaw   = document.getElementById('ed-kg').value;
   const notes   = document.getElementById('ed-notes').value.trim();
 
   if (!week || !date) { toast('Week and date are required', true); return; }
   if (teamTags.length === 0) { toast('Add at least one team member', true); return; }
 
-  const body = { week, date, session, team: teamTags, notes, kg: kgRaw !== '' ? parseFloat(kgRaw) : null };
+  // Weight/kg is logged from the W2R tab only (not part of roster slot edits).
+  const body = { week, date, session, team: teamTags, notes };
 
   try {
     const url    = editingId ? `${API}/roster/${editingId}` : `${API}/roster`;
@@ -3654,25 +3650,6 @@ async function deleteSlot() {
     await loadRoster();
   } catch(e) {
     toast('❌ Could not connect', true);
-  }
-}
-
-async function quickLogWeight(id) {
-  const kg = prompt('Enter weight collected (kg):');
-  if (kg === null || kg.trim() === '') return;
-  const val = parseFloat(kg);
-  if (isNaN(val) || val < 0 || val > 2000) { toast('Invalid weight', true); return; }
-  try {
-    const res = await fetch(`${API}/roster/${id}`, {
-      method:'PATCH',
-      headers:{'Content-Type':'application/json','x-api-key':adminKey},
-      body: JSON.stringify({kg: val}),
-    });
-    if (!res.ok) { toast('Log failed', true); return; }
-    toast(`✅ Logged ${val} kg!`);
-    await loadRoster();
-  } catch(e) {
-    toast('❌ Connection error', true);
   }
 }
 
@@ -4180,37 +4157,42 @@ async function loadW2RRows() {
     }
     let rows = await res.json();
     if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="color:var(--tm);padding:12px">No records yet.</td></tr>'; return; }
-    // Sort chronologically — month is text so alphabetical order is wrong
-    const MN = {Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12};
-    rows.sort((a,b) => a.year !== b.year ? a.year - b.year : (MN[a.month.split(' ')[0]]||0) - (MN[b.month.split(' ')[0]]||0));
+    // month is stored in the DB as text '1'–'12' (not a name) — format it as
+    // "Jan 2026" for display so it's obvious what it refers to (was showing
+    // the raw number, per Brendon's feedback), and sort on the numeric value.
+    const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const fmtMonthYear = r => `${MONTH_ABBR[(Number(r.month)||1) - 1]} ${r.year}`;
+    rows.sort((a,b) => a.year !== b.year ? a.year - b.year : Number(a.month) - Number(b.month));
     tbody.innerHTML = rows.map(r => `
       <tr>
-        <td><b>${r.month}</b></td>
+        <td><b>${fmtMonthYear(r)}</b></td>
         <td>${Number(r.cardboard_kg || 0).toFixed(2)}</td>
         <td>${Number(r.plastic_kg   || 0).toFixed(2)}</td>
         <td style="font-size:.78rem;color:var(--tm)">${r.notes || ''}</td>
         <td style="white-space:nowrap">
           <button class="action-btn" onclick="editW2RRow(${r.id},'${r.month}',${r.year},${r.cardboard_kg||0},${r.plastic_kg||0},'${(r.notes||'').replace(/'/g,"\'")}')">Edit</button>
-          <button class="action-btn danger" onclick="deleteW2RRow(${r.id},'${r.month}')">Delete</button>
+          <button class="action-btn danger" onclick="deleteW2RRow(${r.id},'${fmtMonthYear(r)}')">Delete</button>
         </td>
       </tr>`).join('');
   } catch(e) { tbody.innerHTML = `<tr><td colspan="5" style="color:#c62828">${e.message}</td></tr>`; }
 }
 
 function editW2RRow(id, month, year, cb, pl, notes) {
+  const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   weEditId = id;
-  document.getElementById('we-month').value    = month;
+  document.getElementById('we-month').value    = String(month);
   document.getElementById('we-year').value     = year;
   document.getElementById('we-cardboard').value = cb;
   document.getElementById('we-plastic').value   = pl;
   document.getElementById('we-notes').value    = notes || '';
-  document.getElementById('we-status').textContent = `Editing: ${month}`;
+  document.getElementById('we-status').textContent = `Editing: ${MONTH_ABBR[(Number(month)||1)-1]} ${year}`;
   document.getElementById('we-status').style.color = 'var(--am)';
 }
 
 function clearW2RForm() {
   weEditId = null;
-  ['we-month','we-year','we-cardboard','we-plastic','we-notes'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('we-month').value = '1';
+  ['we-year','we-cardboard','we-plastic','we-notes'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('we-status').textContent = '';
 }
 
@@ -4221,6 +4203,8 @@ async function saveW2RRow() {
   const plastic     = parseFloat(document.getElementById('we-plastic').value)   || 0;
   const notes       = document.getElementById('we-notes').value.trim();
   if (!month || !year) { toast('Month and Year are required', true); return; }
+  const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const label = `${MONTH_ABBR[(Number(month)||1)-1]} ${year}`;
   const status = document.getElementById('we-status');
   status.textContent = 'Saving…'; status.style.color = 'var(--tm)';
   try {
@@ -4231,19 +4215,19 @@ async function saveW2RRow() {
       res = await fetch(`${API}/recycling`, { method:'POST', headers:{'Content-Type':'application/json','x-api-key':adminKey}, body: JSON.stringify({month, year, cardboard_kg:cardboard, plastic_kg:plastic, notes}) });
     }
     if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.status); }
-    status.textContent = `✅ Saved: ${month}`; status.style.color = 'var(--gm)';
+    status.textContent = `✅ Saved: ${label}`; status.style.color = 'var(--gm)';
     clearW2RForm();
     await loadW2RRows();
     toast('Recycling data saved');
   } catch(e) { status.textContent = `❌ ${e.message}`; status.style.color = '#c62828'; }
 }
 
-async function deleteW2RRow(id, month) {
-  if (!confirm(`Delete ${month}? This cannot be undone.`)) return;
+async function deleteW2RRow(id, label) {
+  if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
   try {
     const res = await fetch(`${API}/recycling/${id}`, { method:'DELETE', headers:{'x-api-key':adminKey} });
     if (!res.ok) throw new Error((await res.json()).error);
-    toast(`Deleted ${month}`);
+    toast(`Deleted ${label}`);
     await loadW2RRows();
   } catch(e) { toast(e.message, true); }
 }
