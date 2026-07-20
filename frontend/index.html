@@ -1247,7 +1247,8 @@ html[data-theme="dark"] .hero-stat .trend.flat{color:#9FB49F}
     <div class="form-field" style="margin-bottom:12px">
       <label>Team Members (type name + Enter)</label>
       <div class="tag-input-wrap" id="team-tags" onclick="document.getElementById('team-tag-input').focus()"></div>
-      <input class="tag-input" id="team-tag-input" placeholder="Type a name and press Enter…" onkeydown="handleTagKey(event)"/>
+      <input class="tag-input" id="team-tag-input" list="member-names-list" placeholder="Type a name and press Enter…" onkeydown="handleTagKey(event)"/>
+      <datalist id="member-names-list"></datalist>
     </div>
     <div class="form-field" style="margin-bottom:16px">
       <label>Notes</label>
@@ -2115,6 +2116,7 @@ function unlockAdmin() {
   const key = document.getElementById('admin-key-input').value.trim();
   if (!key) { toast('Enter your admin key', true); return; }
   adminKey = key; isAdmin = true;
+  try { localStorage.setItem('sustyAdminKey', key); } catch(e){}
   document.getElementById('admin-lock-panel').style.display = 'none';
   // Also fill the nav key input so nav bar reflects state
   document.getElementById('nav-admin-key').value = key;
@@ -2126,11 +2128,35 @@ function unlockAdminNav() {
   const key = document.getElementById('nav-admin-key').value.trim();
   if (!key) { toast('Enter your admin key', true); return; }
   adminKey = key; isAdmin = true;
+  try { localStorage.setItem('sustyAdminKey', key); } catch(e){}
   const lockPanel = document.getElementById('admin-lock-panel');
   if (lockPanel) lockPanel.style.display = 'none';
   applyAdminMode();
   closeAdminKeyPopover();
   toast('✅ Admin mode unlocked');
+}
+
+function lockAdmin() {
+  adminKey = ''; isAdmin = false;
+  try { localStorage.removeItem('sustyAdminKey'); } catch(e){}
+  location.reload();
+}
+
+// Restore admin session on page load (previously adminKey/isAdmin only lived
+// in memory, so every refresh silently logged the admin out — added per
+// Brendon's bug report). We don't validate the stored key against the
+// server up front; any stale/invalid key will just fail on the next actual
+// admin API call (requireApiKey rejects it), same as re-typing a wrong key.
+function restoreAdminSession() {
+  let stored = '';
+  try { stored = localStorage.getItem('sustyAdminKey') || ''; } catch(e){}
+  if (!stored) return;
+  adminKey = stored; isAdmin = true;
+  const lockPanel = document.getElementById('admin-lock-panel');
+  if (lockPanel) lockPanel.style.display = 'none';
+  const navKeyInput = document.getElementById('nav-admin-key');
+  if (navKeyInput) navKeyInput.value = stored;
+  applyAdminMode();
 }
 
 // Admin key input (added 9 Jul 2026, per Jonathan's feedback — the always-
@@ -3527,6 +3553,26 @@ function renderTags() {
   ).join('');
 }
 
+// ─── Member name autocomplete ─────────────────────────────────────────────────
+// Populates <datalist id="member-names-list"> from the active member_roster
+// so the team-name field offers real names instead of requiring the full
+// name to be typed out by hand. Cached in-memory for the session; admin-only
+// endpoint, so this only runs once the editor (admin feature) is opened.
+let memberNamesLoaded = false;
+async function populateMemberNamesDatalist() {
+  if (memberNamesLoaded || !isAdmin) return;
+  try {
+    const res = await fetch(`${API}/members/roster`, { headers: { 'x-api-key': adminKey } });
+    if (!res.ok) return;
+    const rows = await res.json();
+    const dl = document.getElementById('member-names-list');
+    if (dl && Array.isArray(rows)) {
+      dl.innerHTML = rows.map(m => `<option value="${esc(m.name)}">`).join('');
+      memberNamesLoaded = true;
+    }
+  } catch(e) { /* silent — dropdown just stays empty, manual typing still works */ }
+}
+
 // ─── Open editor ──────────────────────────────────────────────────────────────
 function openAddSlot() {
   editingId = null; teamTags = [];
@@ -3539,6 +3585,7 @@ function openAddSlot() {
   document.getElementById('ed-notes').value = '';
   document.getElementById('delete-btn').style.display = 'none';
   renderTags();
+  populateMemberNamesDatalist();
   document.getElementById('slot-editor').style.display = 'block';
   document.getElementById('slot-editor').scrollIntoView({behavior:'smooth'});
 }
@@ -3556,6 +3603,7 @@ function openEditSlot(id) {
   document.getElementById('ed-notes').value = slot.notes || '';
   document.getElementById('delete-btn').style.display = 'inline-flex';
   renderTags();
+  populateMemberNamesDatalist();
   document.getElementById('slot-editor').style.display = 'block';
   document.getElementById('slot-editor').scrollIntoView({behavior:'smooth'});
 }
@@ -4008,6 +4056,7 @@ async function testTelegram() {
 
 // ═══ INIT ════════════════════════════════════════════════════════════════════
 (async () => {
+  restoreAdminSession();
   renderManualChecklist();
   renderEventPills();
   await Promise.all([loadRecycling(), loadEnergy(), loadComms(), loadRoster(), loadSwaps(), loadImpact()]);

@@ -282,9 +282,7 @@ router.post('/', (req, res, next) => req.app.get('requireApiKey')(req, res, next
   if (team.length < 1 || team.length > 5)
     return res.status(400).json({ error: 'team must have 1–5 members' });
 
-  const { data: roster } = await getRoster();
   const newSlot = {
-    id:      Date.now(),
     week:    sanitise(week),
     date:    sanitise(date),
     session: session.toUpperCase(),
@@ -292,10 +290,28 @@ router.post('/', (req, res, next) => req.app.get('requireApiKey')(req, res, next
     kg:      null,
     notes:   notes ? sanitise(notes) : '',
   };
-  roster.push(newSlot);
+
+  // Supabase is the primary source of truth (GET always reads it first when
+  // available) — writes MUST go there too, or a save here would be silently
+  // invisible on the very next reload. Previously this only wrote to the
+  // local roster.json fallback, which GET ignores whenever Supabase is up.
+  const db = getClient();
+  if (db) {
+    const { data, error } = await db.from('roster_slots').insert(newSlot).select().single();
+    if (error) {
+      console.error('[Roster] Supabase insert failed:', error.message);
+      return res.status(502).json({ error: `Supabase insert failed: ${error.message}` });
+    }
+    return res.status(201).json(data);
+  }
+
+  // Fallback path only used if Supabase isn't configured at all.
+  const { data: roster } = await getRoster();
+  const localSlot = { ...newSlot, id: Date.now() };
+  roster.push(localSlot);
   saveRoster(roster);
   sheetCache.data = roster;
-  res.status(201).json(newSlot);
+  res.status(201).json(localSlot);
 });
 
 // ─── PATCH — update a slot ────────────────────────────────────────────────────
@@ -303,32 +319,46 @@ router.patch('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res, 
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 
-  const { data: roster } = await getRoster();
-  const slot = roster.find(s => s.id === id);
-  if (!slot) return res.status(404).json({ error: 'Slot not found' });
-
   const { team, kg, notes, week, date, session } = req.body;
+  const patch = {};
   if (team !== undefined) {
     if (!Array.isArray(team) || team.length < 1 || team.length > 10)
       return res.status(400).json({ error: 'team must be an array of 1–10 names' });
     if (team.some(t => String(t).length > 60))
       return res.status(400).json({ error: 'Each team member name must be under 60 chars' });
-    slot.team = team.map(t => sanitise(String(t)));
+    patch.team = team.map(t => sanitise(String(t)));
   }
   if (kg !== undefined) {
     if (typeof kg !== 'number' || kg < 0 || kg > 2000)
       return res.status(400).json({ error: 'kg must be a number 0–2000' });
-    slot.kg = kg;
+    patch.kg = kg;
   }
-  if (notes   !== undefined) slot.notes   = sanitise(String(notes));
-  if (week    !== undefined) slot.week    = sanitise(String(week));
-  if (date    !== undefined) slot.date    = sanitise(String(date));
+  if (notes   !== undefined) patch.notes   = sanitise(String(notes));
+  if (week    !== undefined) patch.week    = sanitise(String(week));
+  if (date    !== undefined) patch.date    = sanitise(String(date));
   if (session !== undefined) {
     if (!['SAT','SUN','GPC'].includes(session.toUpperCase()))
       return res.status(400).json({ error: 'session must be SAT, SUN, or GPC' });
-    slot.session = session.toUpperCase();
+    patch.session = session.toUpperCase();
   }
 
+  const db = getClient();
+  if (db) {
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await db.from('roster_slots').update(patch).eq('id', id).select().single();
+    if (error) {
+      console.error('[Roster] Supabase update failed:', error.message);
+      return res.status(502).json({ error: `Supabase update failed: ${error.message}` });
+    }
+    if (!data) return res.status(404).json({ error: 'Slot not found' });
+    return res.json(data);
+  }
+
+  // Fallback path only used if Supabase isn't configured at all.
+  const { data: roster } = await getRoster();
+  const slot = roster.find(s => s.id === id);
+  if (!slot) return res.status(404).json({ error: 'Slot not found' });
+  Object.assign(slot, patch);
   saveRoster(roster);
   sheetCache.data = roster;
   res.json(slot);
@@ -339,10 +369,20 @@ router.delete('/:id', (req, res, next) => req.app.get('requireApiKey')(req, res,
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Invalid ID' });
 
+  const db = getClient();
+  if (db) {
+    const { error } = await db.from('roster_slots').delete().eq('id', id);
+    if (error) {
+      console.error('[Roster] Supabase delete failed:', error.message);
+      return res.status(502).json({ error: `Supabase delete failed: ${error.message}` });
+    }
+    return res.json({ ok: true });
+  }
+
+  // Fallback path only used if Supabase isn't configured at all.
   const { data: roster } = await getRoster();
   const idx = roster.findIndex(s => s.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Slot not found' });
-
   roster.splice(idx, 1);
   saveRoster(roster);
   sheetCache.data = roster;
