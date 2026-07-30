@@ -2751,6 +2751,13 @@ async function sendRosterToGroup(ctx, monthLabel) {
   const posted  = [];
   const skipped = [];
 
+  // Render every month's calendar PNG first (without sending), so multiple
+  // months can be combined into a single Telegram post instead of one photo
+  // per month (per Brendon, 31 Jul 2026 — "combine these 2 months into 1
+  // post"). Each month is still validated/skipped independently — a bad
+  // month doesn't block the others, it's just left out of the combined image.
+  const rendered = []; // [{ month, png }]
+
   for (const [month, mSlots] of Object.entries(byMonth)) {
     // Safety check 1: team names must match the current active member_roster
     // (name or alias) — catches typos and stale names (e.g. someone who's
@@ -2770,38 +2777,49 @@ async function sendRosterToGroup(ctx, monthLabel) {
     }
 
     // Calendar image next. If the sharp/rosterImage module is missing, or
-    // rendering/sending it fails for any reason, do NOT fall back to
-    // text-only — silently posting a degraded version could look like it
-    // worked when it didn't. Instead skip this month, alert Brendon with the
-    // exact error so it can be pasted back here to debug, and move on.
+    // rendering fails for any reason, do NOT fall back to text-only —
+    // silently posting a degraded version could look like it worked when it
+    // didn't. Instead skip this month, alert Brendon with the exact error so
+    // it can be pasted back here to debug, and move on.
     if (!rosterImage) {
       await notifyRosterAlert(`⚠️ <b>Roster broadcast skipped — ${month}</b>\n\nrosterImage module isn't available (sharp not installed?). Nothing was posted to the group.`);
       skipped.push({ month, reason: 'rosterImage module unavailable' });
       continue;
     }
-    // Image is now the ONLY post per month — per Brendon, the separate
-    // detailed text listing that used to follow it was redundant clutter
-    // (4 Jul 2026: "the listed roster got sent together with the image
-    // which I don't want"). Caption is a plain label — 🧪 (test) tag only
-    // when it's actually going to the test channel, nothing extra otherwise.
     try {
       const png = await rosterImage.generateRosterImage(month, mSlots);
-      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '') +
-        `\n\n🌿 Check your duties, log recycling & more on the Susty Portal:\n${PORTAL_URL}`;
-      await bot.api.sendPhoto(targetChatId, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
-        caption,
-      });
+      rendered.push({ month, png });
     } catch (err) {
-      console.warn('[sendcalendar] image generation/send failed:', err.message);
+      console.warn('[sendcalendar] image generation failed:', err.message);
       await notifyRosterAlert(
-        `⚠️ <b>Roster broadcast skipped — ${month}</b>\n\nImage generation/send failed, nothing was posted to the group. Error:\n<code>${escapeHtml(err.message)}</code>`
+        `⚠️ <b>Roster broadcast skipped — ${month}</b>\n\nImage generation failed, nothing was posted to the group. Error:\n<code>${escapeHtml(err.message)}</code>`
       );
       skipped.push({ month, reason: 'image failed' });
-      continue;
     }
+  }
 
-    posted.push(month);
-    await new Promise(r => setTimeout(r, 600));
+  // Send whatever rendered successfully as ONE combined photo (one image per
+  // month stacked vertically, each keeping its own month header) — a single
+  // month still goes out exactly as before (combineRosterImages is a no-op
+  // for a 1-element array). Caption is a plain label — 🧪 (test) tag only
+  // when it's actually going to the test channel, nothing extra otherwise.
+  if (rendered.length) {
+    try {
+      const combinedPng = await rosterImage.combineRosterImages(rendered.map(r => r.png));
+      const monthList = rendered.map(r => r.month).join(' & ');
+      const caption = `📋 W2R Roster — ${monthList}` + (testMode ? ' 🧪 (test)' : '') +
+        `\n\n🌿 Check your duties, log recycling & more on the Susty Portal:\n${PORTAL_URL}`;
+      await bot.api.sendPhoto(targetChatId, new InputFile(combinedPng, `roster-${monthList.replace(/\s+/g, '-').replace(/&/g, 'and')}.png`), {
+        caption,
+      });
+      posted.push(...rendered.map(r => r.month));
+    } catch (err) {
+      console.warn('[sendcalendar] combined image send failed:', err.message);
+      await notifyRosterAlert(
+        `⚠️ <b>Roster broadcast skipped — ${rendered.map(r => r.month).join(' & ')}</b>\n\nCombining/sending the image failed, nothing was posted to the group. Error:\n<code>${escapeHtml(err.message)}</code>`
+      );
+      skipped.push(...rendered.map(r => ({ month: r.month, reason: 'combined image send failed' })));
+    }
   }
 
   const dest = testMode ? 'the 🧪 test channel' : 'the group';

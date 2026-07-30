@@ -213,4 +213,32 @@ async function generateRosterImage(monthLabel, slots) {
   return sharp(Buffer.from(svg)).png().toBuffer();
 }
 
-module.exports = { generateRosterImage };
+// Stacks several already-rendered month PNGs (from generateRosterImage) into
+// one tall PNG, top to bottom, on a white canvas — used when a broadcast
+// spans multiple months and Brendon wants one Telegram post instead of one
+// per month. Each input image keeps its own "August 2026" / "September
+// 2026" header, so no extra text layer is needed here (avoids re-touching
+// the font/glyph pipeline documented above). Widths are already identical
+// across months (grid is always 7 columns wide); heights differ by how many
+// week-rows a given month needs, so this measures each one via sharp's
+// metadata rather than assuming a fixed height.
+async function combineRosterImages(pngBuffers, gap = 32) {
+  if (pngBuffers.length === 1) return pngBuffers[0];
+  const metas = await Promise.all(pngBuffers.map((b) => sharp(b).metadata()));
+  const width = Math.max(...metas.map((m) => m.width));
+  const height = metas.reduce((sum, m) => sum + m.height, 0) + gap * (pngBuffers.length - 1);
+
+  const composite = [];
+  let top = 0;
+  for (let i = 0; i < pngBuffers.length; i++) {
+    composite.push({ input: pngBuffers[i], top, left: 0 });
+    top += metas[i].height + gap;
+  }
+
+  return sharp({ create: { width, height, channels: 4, background: '#ffffff' } })
+    .composite(composite)
+    .png()
+    .toBuffer();
+}
+
+module.exports = { generateRosterImage, combineRosterImages };
