@@ -31,6 +31,11 @@ function getRosterImage() {
 // names, set ROSTER_ALERT_NAMES on Railway to add more.
 const ROSTER_ALERT_NAMES = (process.env.ROSTER_ALERT_NAMES || 'Brendon').split(',').map(n => n.trim());
 
+// Public web portal URL — same default as utils/commsNotify.js's PORTAL_URL,
+// kept as a separate constant here since bot/index.js doesn't import that
+// module. Used to point members to the Susty Portal from roster broadcasts.
+const PORTAL_URL = process.env.PORTAL_URL || 'https://susty-portal-production.up.railway.app';
+
 // DMs each name in ROSTER_ALERT_NAMES (looked up in `members` by telegram_id,
 // same pattern as reminders.js's ccDutyReminders/TL digest). Best-effort —
 // a missing/un-registered alert name is skipped silently, but any send
@@ -2781,7 +2786,8 @@ async function sendRosterToGroup(ctx, monthLabel) {
     // when it's actually going to the test channel, nothing extra otherwise.
     try {
       const png = await rosterImage.generateRosterImage(month, mSlots);
-      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '');
+      const caption = `📋 W2R Roster — ${month}` + (testMode ? ' 🧪 (test)' : '') +
+        `\n\n🌿 Check your duties, log recycling & more on the Susty Portal:\n${PORTAL_URL}`;
       await bot.api.sendPhoto(targetChatId, new InputFile(png, `roster-${month.replace(/\s+/g, '-')}.png`), {
         caption,
       });
@@ -3909,4 +3915,14 @@ const webhookHandler = process.env.TELEGRAM_USE_WEBHOOK === 'true'
   ? webhookCallback(bot, 'express')
   : null;
 
-module.exports = { bot, start, webhookHandler };
+// Lets code outside a Telegram update (e.g. a one-off server.js scheduler)
+// trigger sendRosterToGroup without a real admin ctx. sendRosterToGroup only
+// calls ctx.editMessageText/ctx.reply to report status back to the admin who
+// pressed the button — for a headless call there's no one to report to, so
+// those are no-ops. Errors/skips still go out via notifyRosterAlert as usual.
+function broadcastRosterNow(monthLabel = null) {
+  const stubCtx = { editMessageText: async () => {}, reply: async () => {} };
+  return sendRosterToGroup(stubCtx, monthLabel);
+}
+
+module.exports = { bot, start, webhookHandler, broadcastRosterNow };

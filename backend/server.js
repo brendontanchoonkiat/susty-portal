@@ -320,5 +320,30 @@ app.listen(PORT, () => {
     } catch (err) {
       console.warn('[Reminders] Failed to start:', err.message);
     }
+
+    // ─── One-off: broadcast the updated Aug/Sep roster at next 9am SGT ─────
+    // Requested 31 Jul 2026 after Brendon finalized both months' rosters —
+    // fires ONCE (setTimeout, not a recurring cron) at the next 09:00 SGT
+    // after deploy, then posts the roster image(s) + portal link to the
+    // group exactly like the "Send Roster to Group" admin button
+    // (monthLabel=null → auto-picks everything in the next 2 months, which
+    // covers both Aug and Sep from any date in between). Safe to leave this
+    // block in after it fires — it only ever schedules once per process
+    // start, and Railway restarts don't replay past setTimeouts.
+    try {
+      const { broadcastRosterNow } = require('./bot/index');
+      const now = new Date();
+      const nowUTC = now.getTime();
+      // Next 09:00 SGT = 01:00 UTC, today or tomorrow if already past.
+      let next9am = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 1, 0, 0));
+      if (next9am.getTime() <= nowUTC) next9am = new Date(next9am.getTime() + 24 * 60 * 60 * 1000);
+      const msUntil = next9am.getTime() - nowUTC;
+      console.log(`🗓  One-off roster broadcast scheduled for ${next9am.toISOString()} (in ${Math.round(msUntil / 60000)} min)`);
+      setTimeout(() => {
+        broadcastRosterNow(null).catch(err => console.error('[RosterBroadcast] one-off send failed:', err.message));
+      }, msUntil);
+    } catch (err) {
+      console.warn('[RosterBroadcast] Failed to schedule one-off send:', err.message);
+    }
   }
 });
