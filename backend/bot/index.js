@@ -155,6 +155,8 @@ function defaultSession() {
     pendingCollect:        null,   // { monthLabels, generatedFallbackMonths, slots: [{date, session, month, excluded}] } — staged review before sending
     awaitingCollectAddDate: false, // TL: waiting for a typed date to add to the review list
     awaitingSendCalendarMonth: false, // TL: waiting for month input for Send Roster to Group
+    awaitingPreviewCalendarMonth: false, // TL: waiting for month input for Preview Roster Calendar
+    awaitingAvailStatusMonth: false, // TL: waiting for month input for Availability Status report
     awaitingEditAvailName: false,  // TL: waiting for member name to clear availability
     awaitingExcuseName:    false,  // TL: waiting for "Name YYYY-MM-DD" to excuse a member
     awaitingExcuseDate:    null,   // member name once entered, now waiting for end date
@@ -746,7 +748,9 @@ const statsMenu = new InlineKeyboard()
 
 const adminMenu = new InlineKeyboard()
   .text('📅 Collect Availability', 'admin:collect').row()
+  .text('👀 Preview Roster Calendar', 'admin:previewcalendar').row()
   .text('📋 Send Roster to Group', 'admin:sendcalendar').row()
+  .text('📊 Availability Status', 'admin:availstatus').row()
   .text('✏️ Edit Member Availability', 'admin:editavail').row()
   .text('🤰 Excuse Member from Roster', 'admin:excuse').row()
   .text('👥 View Registered Members', 'admin:members').row()
@@ -2677,26 +2681,179 @@ bot.callbackQuery('admin:sendcalendar:specific', async (ctx) => {
   );
 });
 
-// Fetches + posts the roster to GROUP_ID. monthLabel === null → old default
-// behavior (everything in the next 2 months from today, auto-grouped and
-// posted one message per month found). monthLabel = a specific month string
-// (e.g. "Aug 2026") → only that month, straight from roster_slots — no
-// generated Sat/Sun placeholder fallback here, since posting placeholder
-// dates with no real team assignments into the group would be misleading.
-async function sendRosterToGroup(ctx, monthLabel) {
+// ─── Preview Roster Calendar (added 29 Sep 2026, per Brendon) ────────────────
+// Same rendering pipeline as "Send Roster to Group" (generateRosterImage +
+// combineRosterImages), but the result is DMed only to whoever tapped the
+// button — never posted to the real group or the test channel. Lets a TL
+// check the calendar actually looks right before committing to a broadcast.
+bot.callbackQuery('admin:previewcalendar', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  const kb = new InlineKeyboard()
+    .text('📅 Upcoming (next 2 months)', 'admin:previewcalendar:upcoming').row()
+    .text('🗓 Specific Month', 'admin:previewcalendar:specific').row()
+    .text('← Cancel', 'admin:menu');
+  await ctx.editMessageText(
+    `👀 <b>Preview Roster Calendar</b>\n\nSends you a private preview only — nothing is posted to the group.\n\nPreview everything upcoming, or just one specific month?`,
+    { parse_mode: 'HTML', reply_markup: kb }
+  );
+});
+
+bot.callbackQuery('admin:previewcalendar:upcoming', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  return previewRosterCalendar(ctx, null);
+});
+
+bot.callbackQuery('admin:previewcalendar:specific', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  ctx.session.awaitingPreviewCalendarMonth = true;
+  await ctx.editMessageText(
+    `🗓 <b>Preview Roster Calendar — Specific Month</b>\n\nWhich month? (e.g. <code>Aug 2026</code>)`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
+// Renders the same combined calendar image sendRosterToGroup would send, but
+// replies privately (DM to whoever invoked it) instead of posting anywhere.
+// Also surfaces name mismatches as a warning rather than silently skipping
+// the month, since the whole point of a preview is to catch problems before
+// the real broadcast.
+async function previewRosterCalendar(ctx, monthLabel) {
+  const { byMonth, errorText } = await resolveRosterSlotsByMonth(monthLabel);
+  if (errorText) {
+    return ctx.editMessageText(errorText, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(errorText, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+  }
+
+  const rosterImage = getRosterImage();
+  if (!rosterImage) {
+    const t = '⚠️ rosterImage module isn\'t available (sharp not installed?). Can\'t generate a preview.';
+    return ctx.editMessageText(t, { reply_markup: backToAdmin() }).catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+  }
+
+  const warnings = [];
+  const rendered = [];
+  for (const [month, mSlots] of Object.entries(byMonth)) {
+    const mismatches = await findRosterNameMismatches(mSlots);
+    if (mismatches.length) {
+      const detail = mismatches.map(m => `${fmtDateShort(m.date)} (${m.session}): "${m.name}"`).join(', ');
+      warnings.push(`⚠️ <b>${month}</b> has name mismatch(es) that would block a real broadcast: ${detail}`);
+    }
+    try {
+      const png = await rosterImage.generateRosterImage(month, mSlots);
+      rendered.push({ month, png });
+    } catch (err) {
+      warnings.push(`⚠️ <b>${month}</b> failed to render: <code>${escapeHtml(err.message)}</code>`);
+    }
+  }
+
+  if (!rendered.length) {
+    const t = `❌ Nothing to preview.\n\n${warnings.join('\n')}`;
+    return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+  }
+
+  try {
+    const combinedPng = await rosterImage.combineRosterImages(rendered.map(r => r.png));
+    const monthList = rendered.map(r => r.month).join(' & ');
+    const caption = `👀 <b>Preview</b> — W2R Roster — ${monthList}\n<i>Not sent to the group — this is a private preview only.</i>` +
+      (warnings.length ? `\n\n${warnings.join('\n')}` : '');
+    await ctx.replyWithPhoto(new InputFile(combinedPng, `preview-${monthList.replace(/\s+/g, '-').replace(/&/g, 'and')}.png`), {
+      caption, parse_mode: 'HTML',
+    });
+    const doneText = `✅ Preview sent above (${monthList}). Use "📋 Send Roster to Group" when you're ready to actually broadcast it.`;
+    await ctx.editMessageText(doneText, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(doneText, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+  } catch (err) {
+    const t = `⚠️ Preview generation failed: <code>${escapeHtml(err.message)}</code>`;
+    await ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+  }
+}
+
+// ─── Availability Status report (added 29 Sep 2026, per Brendon) ─────────────
+// Read-only view of where a month's availability collection stands, split
+// into three buckets against the active, non-duty-exempt roster:
+//   - Submitted: has a row for this month with submitted_at set
+//   - Waiting: has a row (was DMed) but hasn't submitted yet
+//   - Not yet requested: no row at all for this month — most commonly
+//     because Collect Availability sends multi-month requests as a queue
+//     (see §4a in PROJECT_STATE.md) and this member hasn't cleared an
+//     earlier month yet, so this one was never sent.
+// This is the report the old "📋 View Responses" line in PROJECT_STATE.md's
+// admin command list referred to but never actually had code behind it
+// (only a GPC-specific version existed) — flagged 29 Sep 2026, built now.
+bot.callbackQuery('admin:availstatus', async (ctx) => {
+  await ctx.answerCallbackQuery().catch(() => {});
+  ctx.session.awaitingAvailStatusMonth = true;
+  await ctx.editMessageText(
+    `📊 <b>Availability Status</b>\n\nWhich month? (e.g. <code>Oct 2026</code>)`,
+    { parse_mode: 'HTML', reply_markup: new InlineKeyboard().text('← Cancel', 'admin:menu') }
+  );
+});
+
+async function showAvailabilityStatus(ctx, monthLabel) {
+  const canonical = canonicalizeMonthLabel(monthLabel);
+  if (!canonical) {
+    const t = `⚠️ Couldn't parse "<b>${escapeHtml(monthLabel)}</b>". Try: <code>Oct 2026</code>`;
+    return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+  }
+
+  const supa = db.getClient();
+  if (!supa) {
+    return ctx.editMessageText('⚠️ Supabase not configured.', { reply_markup: backToAdmin() });
+  }
+
+  // Active, non-duty-exempt members are the ones Collect Availability ever
+  // DMs (see the same filter in the /collect handler above) — duty-exempt
+  // members like Clarice or Jonathan Poon are excluded from this report
+  // entirely rather than showing up as perpetually "not yet requested".
+  const roster = (await db.getMemberRoster()).filter(m => !m.duty_exempt);
+  const { data: rows, error } = await supa.from('availability')
+    .select('member_name, submitted_at').eq('month', canonical);
+  if (error) {
+    const t = `⚠️ Query failed: <code>${escapeHtml(error.message)}</code>`;
+    return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() });
+  }
+
+  const byName = new Map();
+  for (const r of (rows || [])) byName.set(r.member_name.toLowerCase(), r.submitted_at);
+
+  const submitted = [];
+  const waiting    = [];
+  const notYetReq  = [];
+  for (const m of roster) {
+    const key = m.name.toLowerCase();
+    if (!byName.has(key)) notYetReq.push(m.name);
+    else if (byName.get(key)) submitted.push(m.name);
+    else waiting.push(m.name);
+  }
+
+  const list = (arr) => arr.length ? arr.sort().join(', ') : '—';
+  const t =
+    `📊 <b>Availability Status — ${canonical}</b>\n\n` +
+    `✅ <b>Submitted (${submitted.length})</b>\n${list(submitted)}\n\n` +
+    `⏳ <b>Requested, not submitted yet (${waiting.length})</b>\n${list(waiting)}\n\n` +
+    `⚪ <b>Not yet requested (${notYetReq.length})</b>\n${list(notYetReq)}` +
+    (notYetReq.length
+      ? `\n\n<i>Multi-month requests go out as a queue — these members likely haven't cleared an earlier month yet, so this one was never sent.</i>`
+      : '');
+
+  await ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+    .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+}
+
+// Shared by sendRosterToGroup and previewRosterCalendar. monthLabel === null
+// → everything in the next 2 months from today, auto-grouped by month.
+// monthLabel = a specific month string (e.g. "Aug 2026") → only that month,
+// straight from roster_slots — no generated Sat/Sun placeholder fallback
+// here, since a placeholder with no real team assignments would be
+// misleading whether it's being broadcast or previewed.
+// Returns { byMonth } on success, or { errorText } if nothing could be
+// resolved (caller decides how to display the error).
+async function resolveRosterSlotsByMonth(monthLabel) {
   const supa = db.getClient();
   const byMonth = {};
-
-  // Resolve destination chat — test mode routes to TELEGRAM_TEST_CHAT_ID
-  // instead of the real group. If test mode is on but the test chat ID isn't
-  // configured, fail loudly rather than silently posting to the real group.
-  const testMode = await rosterBroadcastTestMode();
-  const targetChatId = testMode ? TEST_GROUP_ID : GROUP_ID;
-  if (testMode && !TEST_GROUP_ID) {
-    const t = '⚠️ Roster Test Mode is ON but TELEGRAM_TEST_CHAT_ID isn\'t set on Railway. Set it, or turn test mode off, then try again.';
-    return ctx.editMessageText(t, { reply_markup: backToAdmin() })
-      .catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
-  }
 
   if (monthLabel) {
     // Normalize typed input ("Jul 2026" → "July 2026") — roster_slots dates
@@ -2705,9 +2862,7 @@ async function sendRosterToGroup(ctx, monthLabel) {
     // created yet" even when one exists (fixed 4 Jul 2026).
     const canonical = canonicalizeMonthLabel(monthLabel);
     if (!canonical) {
-      const t = `⚠️ Couldn't parse "<b>${escapeHtml(monthLabel)}</b>". Try: <code>Aug 2026</code>`;
-      return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
-        .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+      return { errorText: `⚠️ Couldn't parse "<b>${escapeHtml(monthLabel)}</b>". Try: <code>Aug 2026</code>` };
     }
     monthLabel = canonical;
 
@@ -2720,9 +2875,7 @@ async function sendRosterToGroup(ctx, monthLabel) {
       });
     }
     if (!slots.length) {
-      const t = `No roster created for <b>${monthLabel}</b> yet.`;
-      return ctx.editMessageText(t, { parse_mode: 'HTML', reply_markup: backToAdmin() })
-        .catch(() => ctx.reply(t, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
+      return { errorText: `No roster created for <b>${monthLabel}</b> yet.` };
     }
     byMonth[monthLabel] = slots;
   } else {
@@ -2738,13 +2891,35 @@ async function sendRosterToGroup(ctx, monthLabel) {
     }
     if (!slots.length) slots = getFallbackRoster().filter(s => s.date >= today());
     if (!slots.length) {
-      return ctx.editMessageText('No upcoming roster slots found.', { reply_markup: backToAdmin() });
+      return { errorText: 'No upcoming roster slots found.' };
     }
     for (const s of slots) {
       const m = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
       if (!byMonth[m]) byMonth[m] = [];
       byMonth[m].push(s);
     }
+  }
+
+  return { byMonth };
+}
+
+// Fetches + posts the roster to GROUP_ID (or the test channel, in test mode).
+async function sendRosterToGroup(ctx, monthLabel) {
+  // Resolve destination chat — test mode routes to TELEGRAM_TEST_CHAT_ID
+  // instead of the real group. If test mode is on but the test chat ID isn't
+  // configured, fail loudly rather than silently posting to the real group.
+  const testMode = await rosterBroadcastTestMode();
+  const targetChatId = testMode ? TEST_GROUP_ID : GROUP_ID;
+  if (testMode && !TEST_GROUP_ID) {
+    const t = '⚠️ Roster Test Mode is ON but TELEGRAM_TEST_CHAT_ID isn\'t set on Railway. Set it, or turn test mode off, then try again.';
+    return ctx.editMessageText(t, { reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(t, { reply_markup: backToAdmin() }));
+  }
+
+  const { byMonth, errorText } = await resolveRosterSlotsByMonth(monthLabel);
+  if (errorText) {
+    return ctx.editMessageText(errorText, { parse_mode: 'HTML', reply_markup: backToAdmin() })
+      .catch(() => ctx.reply(errorText, { parse_mode: 'HTML', reply_markup: backToAdmin() }));
   }
 
   const rosterImage = getRosterImage();
@@ -3754,6 +3929,18 @@ bot.on('message:text', async (ctx) => {
   if (ctx.session.awaitingSendCalendarMonth) {
     ctx.session.awaitingSendCalendarMonth = false;
     return sendRosterToGroup(ctx, text.trim());
+  }
+
+  // Admin: preview roster calendar — specific month
+  if (ctx.session.awaitingPreviewCalendarMonth) {
+    ctx.session.awaitingPreviewCalendarMonth = false;
+    return previewRosterCalendar(ctx, text.trim());
+  }
+
+  // Admin: availability status report — specific month
+  if (ctx.session.awaitingAvailStatusMonth) {
+    ctx.session.awaitingAvailStatusMonth = false;
+    return showAvailabilityStatus(ctx, text.trim());
   }
 
   // Admin: typed date to add to the collect-review list ("➕ Add a date").
