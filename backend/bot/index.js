@@ -623,37 +623,58 @@ function generateWeekends(monthStr) {
   const mIdx = months.findIndex(m => m.startsWith(parts[0].toLowerCase()));
   const year = parseInt(parts[1]);
   if (mIdx < 0 || isNaN(year)) return [];
+  // Walk the month in UTC so the YYYY-MM-DD string is never shifted a day by
+  // the host timezone (local-midnight + toISOString turns SGT Saturdays into
+  // Fridays when this runs anywhere other than a UTC server).
   const dates = [];
-  const d = new Date(year, mIdx, 1);
-  while (d.getMonth() === mIdx) {
-    const dow = d.getDay();
+  const d = new Date(Date.UTC(year, mIdx, 1));
+  while (d.getUTCMonth() === mIdx) {
+    const dow = d.getUTCDay();
     if (dow === 0 || dow === 6) {
-      dates.push({ date: d.toISOString().split('T')[0], session: dow === 6 ? 'SAT' : 'SUN' });
+      dates.push({ date: d.toISOString().slice(0, 10), session: dow === 6 ? 'SAT' : 'SUN' });
     }
-    d.setDate(d.getDate() + 1);
+    d.setUTCDate(d.getUTCDate() + 1);
   }
   return dates;
 }
 
-// Resolves roster slots for a given month label (e.g. "Aug 2026") from
-// Supabase, falling back to generated Sat/Sun placeholder dates if that
-// month's roster hasn't been created yet. Shared by every availability
-// collection path (self-service My Availability, admin:collect, /collect).
-async function getMonthSlots(monthLabel) {
+// Resolves the dates to ask about for a month label (e.g. "Aug 2026"): every
+// roster_slots row in that month PLUS every calendar Sat/Sun in it, merged.
+//
+// Previously this used roster_slots alone whenever the month had ANY rows,
+// and only generated weekends when it had none. A partially-seeded month
+// therefore silently dropped whichever weekends weren't seeded — that's how
+// Sep 12/13 and Oct 31/Nov 1 2026 never got asked about (2 Oct 2026 fix).
+// Weekends with no service (e.g. Aug 1/2 2026) now show up and are removed in
+// the admin Collect Availability review step instead of being lost silently.
+//
+// Returns { slots, generatedFallback (month had no roster rows at all),
+// addedWeekends (calendar weekends that weren't in roster_slots) }.
+// Shared by every availability collection path (self-service My
+// Availability, admin:collect, /collect).
+function resolveMonthSlots(allSlots, monthLabel) {
   monthLabel = canonicalizeMonthLabel(monthLabel) || monthLabel;
+  const parts = monthLabel.trim().split(/\s+/);
+  const mIdx  = MONTH_NAMES.findIndex(m => m.startsWith((parts[0] || '').toLowerCase()));
+  const year  = parseInt(parts[1], 10);
+  if (mIdx < 0 || isNaN(year)) return { slots: [], generatedFallback: false, addedWeekends: [] };
+  const prefix = `${year}-${String(mIdx + 1).padStart(2, '0')}-`;
+
+  const rosterSlots = (allSlots || [])
+    .filter(s => String(s.date).startsWith(prefix))
+    .map(s => ({ date: String(s.date).slice(0, 10), session: s.session }));
+  const have = new Set(rosterSlots.map(s => s.date));
+  const addedWeekends = generateWeekends(monthLabel).filter(w => !have.has(w.date));
+
+  const slots = [...rosterSlots, ...addedWeekends].sort((a, b) => a.date.localeCompare(b.date));
+  return { slots, generatedFallback: rosterSlots.length === 0 && slots.length > 0, addedWeekends };
+}
+
+async function getMonthSlots(monthLabel) {
   const supa = db.getClient();
-  if (!supa) return { slots: [], generatedFallback: false };
+  if (!supa) return { slots: [], generatedFallback: false, addedWeekends: [] };
   const { data: allSlots } = await supa.from('roster_slots').select('date, session').order('date');
-  let slots = (allSlots || []).filter(s => {
-    const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
-    return label.toLowerCase() === monthLabel.toLowerCase();
-  });
-  let generatedFallback = false;
-  if (!slots.length) {
-    slots = generateWeekends(monthLabel);
-    generatedFallback = slots.length > 0;
-  }
-  return { slots, generatedFallback };
+  return resolveMonthSlots(allSlots, monthLabel);
 }
 
 // Returns "August 2026" for the month after today
@@ -2270,19 +2291,11 @@ bot.command('collect', async (ctx) => {
   const { data: allSlots } = await supa.from('roster_slots')
     .select('date, session').order('date');
 
-  let monthSlots = (allSlots || []).filter(s => {
-    const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
-    return label.toLowerCase() === args.toLowerCase();
-  });
-
-  // If the month hasn't been created yet, generate Sat/Sun dates as placeholders
-  let generatedFallback = false;
+  // Roster dates for the month merged with every calendar Sat/Sun, so no
+  // weekend is skipped just because roster_slots is only partly seeded.
+  const { slots: monthSlots, generatedFallback, addedWeekends } = resolveMonthSlots(allSlots, args);
   if (!monthSlots.length) {
-    monthSlots = generateWeekends(args);
-    if (!monthSlots.length) {
-      return ctx.reply(`⚠️ Could not parse "${args}". Use format: <code>Aug 2026</code>`, { parse_mode: 'HTML' });
-    }
-    generatedFallback = true;
+    return ctx.reply(`⚠️ Could not parse "${args}". Use format: <code>Aug 2026</code>`, { parse_mode: 'HTML' });
   }
 
   // Get all registered members, minus anyone duty-exempt (active on the team
@@ -2310,7 +2323,9 @@ bot.command('collect', async (ctx) => {
 
   const note = generatedFallback
     ? `\n\n<i>⚠️ No roster created for ${args} yet — used generated Sat/Sun dates. Update the portal roster and re-run /collect if needed.</i>`
-    : '';
+    : addedWeekends.length
+      ? `\n\n<i>⚠️ Also asked about weekends not yet in the roster: ${addedWeekends.map(w => fmtDateShort(w.date)).join(', ')}.</i>`
+      : '';
 
   await ctx.reply(
     `✅ Sent availability request for <b>${args}</b> to <b>${sent}/${members.length}</b> registered members.${note}\n\n` +
@@ -2425,18 +2440,12 @@ bot.callbackQuery('collect:monthsdone', async (ctx) => {
 
   const slots = [];
   const generatedFallbackMonths = [];
+  const addedWeekendDates = [];
   const seen = new Set();
   for (const monthArg of months) {
-    let monthSlots = (allSlots || []).filter(s => {
-      const label = new Date(s.date).toLocaleDateString('en-SG', { month: 'long', year: 'numeric' });
-      return label.toLowerCase() === monthArg.toLowerCase();
-    });
-    let generatedFallback = false;
-    if (!monthSlots.length) {
-      monthSlots = generateWeekends(monthArg);
-      generatedFallback = true;
-    }
+    const { slots: monthSlots, generatedFallback, addedWeekends } = resolveMonthSlots(allSlots, monthArg);
     if (generatedFallback) generatedFallbackMonths.push(monthArg);
+    else addedWeekendDates.push(...addedWeekends.map(w => w.date));
     for (const s of monthSlots) {
       if (seen.has(s.date)) continue;
       seen.add(s.date);
@@ -2445,7 +2454,7 @@ bot.callbackQuery('collect:monthsdone', async (ctx) => {
   }
   slots.sort((a, b) => a.date.localeCompare(b.date));
 
-  ctx.session.pendingCollect = { monthLabels: months, generatedFallbackMonths, slots };
+  ctx.session.pendingCollect = { monthLabels: months, generatedFallbackMonths, addedWeekendDates, slots };
   ctx.session.collectMonthSelection = [];
   return renderCollectReview(ctx, { edit: true });
 });
@@ -2478,13 +2487,16 @@ async function renderCollectReview(ctx, { edit }) {
   const fallbackNote = pc.generatedFallbackMonths?.length
     ? `\n\n<i>⚠️ No roster created yet for ${pc.generatedFallbackMonths.join(', ')} — showing generated Sat/Sun dates.</i>`
     : '';
+  const addedNote = pc.addedWeekendDates?.length
+    ? `\n\n<i>⚠️ Not in the roster yet, added so no weekend is missed: ${pc.addedWeekendDates.map(fmtDateShort).join(', ')}. Remove any with no service.</i>`
+    : '';
   const testNote = testMode
     ? `\n\n🧪 <b>Test mode is ON</b> — sending will only DM ${TEST_AS_REGULAR_NAMES.join(', ') || '(no names set — this will fail)'}.`
     : '';
   const text =
     `📅 <b>Collect Availability — ${pc.monthLabels.join(' + ')}</b>\n\n` +
     `Tap a date to remove it (e.g. weekends with no service) or re-add it. "Add a date" for anything missing.` +
-    fallbackNote + testNote;
+    fallbackNote + addedNote + testNote;
   const kb = buildCollectReviewKeyboard(pc);
   return edit
     ? ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb }))
